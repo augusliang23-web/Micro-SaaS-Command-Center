@@ -1,0 +1,6 @@
+{
+  "name": "Micro-SaaS Command Center",
+  "description": "AI-native Micro-SaaS Development Control Center for situational awareness, attention management, and execution governance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
