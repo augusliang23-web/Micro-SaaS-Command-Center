@@ -46,7 +46,7 @@ export const ChatGPTBridgeModal: React.FC<ChatGPTBridgeModalProps> = ({
   // Generate the high-density structured prompt payload for ChatGPT
   const fullBridgePrompt = `[BRIDGE HANDOVER: CHATGPT ARCHITECT SESSION]
 Timestamp: ${new Date().toISOString()}
-Repository: ${project.repository} (${project.branch})
+Repository: ${project.repository} (${project.executionContext.branch})
 Project Stage: ${project.stage} | Current Health: ${project.health}
 
 === CURRENT TASK & WORKFLOW STATE ===

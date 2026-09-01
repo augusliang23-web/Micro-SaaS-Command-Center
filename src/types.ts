@@ -60,12 +60,43 @@ export interface ProjectEnvironment {
     url?: string;
     metrics?: { uptime: string; p95Latency: string };
   };
-  uat: {
-    status: 'Ready' | 'Active' | 'Stale' | 'Not Deployed' | 'Verifying';
+  staging: {
+    status: 'Ready' | 'Active' | 'Deploying' | 'Stale' | 'Not Deployed' | 'Verifying';
     lastRefreshed: string;
+    version?: string;
+    branch?: string;
+    url?: string;
+    commit?: string;
+  };
+  uat?: {
+    status: 'Ready' | 'Active' | 'Deploying' | 'Stale' | 'Not Deployed' | 'Verifying';
+    lastRefreshed: string;
+    version?: string;
     branch?: string;
     url?: string;
   };
+  targetReleaseVersion?: string;
+  releaseType?: 'major' | 'minor' | 'patch' | 'hotfix';
+}
+
+export type FeatureCategory = 'Core' | 'UI/UX' | 'Integration' | 'Infra' | 'AI' | 'Security';
+export type FeatureStageStatus = 'Verified' | 'Testing' | 'Blocked' | 'Backlog';
+export type FeatureProdStatus = 'Live' | 'Flag Disabled' | 'Pending Release' | 'Planned';
+
+export interface FeatureItem {
+  id: string;
+  name: string;
+  description: string;
+  category: FeatureCategory;
+  stageStatus: FeatureStageStatus;
+  prodStatus: FeatureProdStatus;
+  featureFlagKey: string;
+  flagEnabledInProd: boolean;
+  shippedVersion?: string;
+  targetReleaseVersion?: string;
+  githubIssue?: string;
+  authorModel?: CodexModelName;
+  addedAt: string;
 }
 
 export interface ExecutionContext {
@@ -115,6 +146,7 @@ export interface MicroSaaSProject {
   activityHistory: ActivityItem[];
   repository: string;
   tags: string[];
+  features?: FeatureItem[];
 }
 
 export interface AttentionItem {

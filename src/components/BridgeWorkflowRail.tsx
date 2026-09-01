@@ -10,6 +10,13 @@ import {
   FileCode2,
   FileCheck2,
   ExternalLink,
+  Bot,
+  Terminal,
+  ShieldCheck,
+  PlayCircle,
+  CheckCircle2,
+  Rocket,
+  GitBranch,
 } from 'lucide-react';
 import { GateStepInfo, GateStatus, TestOutcome, ReviewOutcome } from '../types';
 
@@ -33,7 +40,7 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
       case 'COMPLETED':
         return {
           icon: <Check className="h-3 w-3 stroke-[3]" />,
-          circleClass: 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs',
+          circleClass: 'bg-emerald-50 text-emerald-800 border-emerald-400 shadow-xs',
           lineClass: 'bg-emerald-300',
           tagClass: 'text-emerald-800 bg-emerald-50 border-emerald-200',
           badgeText: '✓ Complete',
@@ -49,7 +56,7 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
       case 'CHANGES_REQUIRED':
         return {
           icon: <AlertTriangle className="h-3 w-3 text-amber-700" />,
-          circleClass: 'bg-amber-50 text-amber-900 border-amber-300 ring-4 ring-amber-100 shadow-xs',
+          circleClass: 'bg-amber-50 text-amber-900 border-amber-400 ring-4 ring-amber-100 shadow-xs',
           lineClass: 'bg-stone-200',
           tagClass: 'text-amber-900 bg-amber-50 border-amber-200 font-bold',
           badgeText: '⚠️ Changes Req.',
@@ -57,7 +64,7 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
       case 'FAILED':
         return {
           icon: <X className="h-3 w-3 stroke-[3] text-rose-700" />,
-          circleClass: 'bg-rose-50 text-rose-900 border-rose-300 ring-4 ring-rose-100 shadow-xs',
+          circleClass: 'bg-rose-50 text-rose-900 border-rose-400 ring-4 ring-rose-100 shadow-xs',
           lineClass: 'bg-stone-200',
           tagClass: 'text-rose-900 bg-rose-50 border-rose-200 font-bold',
           badgeText: '✕ Failed',
@@ -65,7 +72,7 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
       case 'PENDING':
       default:
         return {
-          icon: <Circle className="h-2.5 w-2.5 text-stone-400" />,
+          icon: <Circle className="h-2 w-2 text-stone-400" />,
           circleClass: 'bg-stone-100 text-stone-400 border-stone-300',
           lineClass: 'bg-stone-200',
           tagClass: 'text-stone-400 bg-stone-50 border-stone-200',
@@ -74,13 +81,90 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
     }
   };
 
+  const getCiCdPhaseMeta = (gateId: string) => {
+    switch (gateId) {
+      case 'DISCUSS':
+        return { tool: 'ChatGPT Bridge', role: 'Architecture Spec' };
+      case 'SPECIFY':
+        return { tool: 'PRD Contracts', role: 'API & Schema' };
+      case 'ROUTE':
+        return { tool: 'Model Router', role: 'Luna/Terra/Sol' };
+      case 'IMPLEMENT':
+        return { tool: 'Codex Worker', role: 'Branch Commit' };
+      case 'TEST':
+        return { tool: 'CI Runners', role: 'Unit / Security' };
+      case 'REVIEW':
+        return { tool: 'AI Reviewer', role: 'Tests ≠ Review' };
+      case 'APPROVE':
+        return { tool: 'Gatekeeper', role: 'Human Signoff' };
+      case 'DONE':
+        return { tool: 'CD Pipeline', role: 'Auto Deploy' };
+      default:
+        return { tool: 'Pipeline', role: 'Automated' };
+    }
+  };
+
+  // Determine current active phase
+  const isCurrentGateInPhase = (gateIds: string[]) => {
+    return gateIds.includes(currentGateId);
+  };
+
   return (
-    <div className="w-full">
+    <div className="w-full space-y-2">
+      {/* 3-Zone CI/CD Pipeline Phase Visual Header */}
+      <div className="grid grid-cols-8 gap-1 text-[10px] font-mono select-none px-2">
+        {/* Phase 1: Pre-Commit & Planning (Gates 1-3) */}
+        <div
+          className={`col-span-3 py-1 px-2 rounded-t-md border border-b-0 transition-colors flex items-center justify-between ${
+            isCurrentGateInPhase(['DISCUSS', 'SPECIFY', 'ROUTE'])
+              ? 'bg-amber-50/80 border-amber-300 text-amber-900 font-semibold'
+              : 'bg-stone-100 border-stone-300 text-stone-600'
+          }`}
+        >
+          <span className="flex items-center gap-1">
+            <Bot className="h-3 w-3 text-amber-700" />
+            <strong className="tracking-wider">PHASE 1: PRE-COMMIT</strong> (AI 決策區)
+          </span>
+          <span className="text-[9px] text-stone-500 hidden sm:inline">ChatGPT ↔ Spec</span>
+        </div>
+
+        {/* Phase 2: Continuous Integration (CI) (Gates 4-6) */}
+        <div
+          className={`col-span-3 py-1 px-2 rounded-t-md border border-b-0 transition-colors flex items-center justify-between ${
+            isCurrentGateInPhase(['IMPLEMENT', 'TEST', 'REVIEW'])
+              ? 'bg-sky-50/80 border-sky-300 text-sky-950 font-semibold'
+              : 'bg-stone-100 border-stone-300 text-stone-600'
+          }`}
+        >
+          <span className="flex items-center gap-1">
+            <Terminal className="h-3 w-3 text-sky-700" />
+            <strong className="tracking-wider">PHASE 2: CI</strong> (持續整合驗證)
+          </span>
+          <span className="text-[9px] text-stone-500 hidden sm:inline">GitHub Actions</span>
+        </div>
+
+        {/* Phase 3: Continuous Delivery (CD) (Gates 7-8) */}
+        <div
+          className={`col-span-2 py-1 px-2 rounded-t-md border border-b-0 transition-colors flex items-center justify-between ${
+            isCurrentGateInPhase(['APPROVE', 'DONE'])
+              ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950 font-semibold'
+              : 'bg-stone-100 border-stone-300 text-stone-600'
+          }`}
+        >
+          <span className="flex items-center gap-1">
+            <Rocket className="h-3 w-3 text-emerald-700" />
+            <strong className="tracking-wider">PHASE 3: CD</strong> (交付發布)
+          </span>
+          <span className="text-[9px] text-stone-500 hidden sm:inline">Release</span>
+        </div>
+      </div>
+
       {/* Horizontal Lifecycle Gate Flow Rail */}
-      <div className="relative overflow-x-auto pb-3 pt-2 scrollbar-thin">
+      <div className="relative bg-white border border-stone-300 rounded-lg p-3 overflow-x-auto shadow-xs">
         <div className="flex items-start min-w-[720px] px-2">
           {gates.map((gate, index) => {
             const visual = getGateVisual(gate);
+            const meta = getCiCdPhaseMeta(gate.id);
             const isLast = index === gates.length - 1;
             const isSelected = selectedGateId === gate.id;
 
@@ -90,7 +174,7 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
                 className="flex-1 flex flex-col items-center relative group cursor-pointer"
                 onClick={() => onSelectGate?.(gate)}
               >
-                {/* Connecting Line */}
+                {/* Connecting Line between nodes */}
                 {!isLast && (
                   <div
                     className={`absolute top-4 left-1/2 w-full h-[2px] -z-0 transition-colors ${
@@ -110,8 +194,8 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
                   {visual.icon}
                 </div>
 
-                {/* Gate Label & Sub-State */}
-                <div className="mt-2 text-center flex flex-col items-center max-w-[100px]">
+                {/* Gate Label & CI/CD Mapping Details */}
+                <div className="mt-2 text-center flex flex-col items-center max-w-[95px]">
                   <span
                     className={`text-[11px] font-mono font-semibold tracking-tight transition-colors ${
                       gate.status === 'CURRENT'
@@ -126,6 +210,11 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
                     {gate.shortLabel}
                   </span>
 
+                  {/* CI/CD tool badge */}
+                  <span className="text-[9px] font-mono text-stone-500 bg-stone-50 px-1 py-0.2 rounded border border-stone-200 mt-0.5">
+                    {meta.tool}
+                  </span>
+
                   {/* Sub-status tag (e.g. Tests: PASS vs Review: CHANGES) */}
                   {gate.testOutcome && (
                     <span
@@ -137,7 +226,7 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
                           : 'bg-sky-50 text-sky-800 border-sky-200'
                       }`}
                     >
-                      {gate.testOutcome}
+                      CI: {gate.testOutcome}
                     </span>
                   )}
 
@@ -151,19 +240,13 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
                           : 'bg-stone-100 text-stone-600 border-stone-200'
                       }`}
                     >
-                      {gate.reviewOutcome === 'CHANGES_REQUIRED' ? 'CHANGES REQ' : gate.reviewOutcome}
-                    </span>
-                  )}
-
-                  {gate.agentModel && (
-                    <span className="text-[9px] font-mono text-stone-500 mt-0.5">
-                      [{gate.agentModel}]
+                      {gate.reviewOutcome === 'CHANGES_REQUIRED' ? 'REV: CHANGES' : `REV: ${gate.reviewOutcome}`}
                     </span>
                   )}
 
                   {/* Timestamp if completed */}
                   {gate.timestamp && (
-                    <span className="text-[9px] text-stone-400 font-mono mt-0.5 truncate max-w-[90px]">
+                    <span className="text-[9px] text-stone-400 font-mono mt-0.5 truncate max-w-[85px]">
                       {gate.timestamp}
                     </span>
                   )}

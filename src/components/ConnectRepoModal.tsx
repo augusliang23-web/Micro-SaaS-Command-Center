@@ -273,11 +273,20 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
           status: 'Not Deployed',
           lastDeployed: 'Pending initial release',
         },
+        staging: {
+          status: 'Ready',
+          lastRefreshed: 'Just connected',
+          version: 'v0.1.0-alpha.1',
+          branch: branch,
+          url: `https://staging-${repoName.toLowerCase().replace(/[^a-z0-9]/g, '')}.dev`,
+        },
         uat: {
           status: 'Ready',
           lastRefreshed: 'Just connected',
           branch: branch,
         },
+        targetReleaseVersion: 'v0.1.0',
+        releaseType: 'major',
       },
       executionContext: {
         githubIssue: '#1 Initial Onboarding',

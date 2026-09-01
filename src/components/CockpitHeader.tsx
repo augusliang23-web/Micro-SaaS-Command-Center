@@ -1,5 +1,5 @@
 import React from 'react';
-import { Terminal, ShieldAlert, Cpu, Search, Sparkles, SlidersHorizontal, RefreshCw, Plus, Github } from 'lucide-react';
+import { Terminal, ShieldAlert, Cpu, Search, Sparkles, SlidersHorizontal, RefreshCw, Plus, Github, Layers, Workflow } from 'lucide-react';
 import { AIExecutionSnapshotData } from '../types';
 
 interface CockpitHeaderProps {
@@ -12,6 +12,7 @@ interface CockpitHeaderProps {
   attentionCount: number;
   onOpenModelGuide: () => void;
   onOpenConnectRepo: () => void;
+  onOpenCiCdMap?: () => void;
   onRefreshSim: () => void;
 }
 
@@ -25,6 +26,7 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
   attentionCount,
   onOpenModelGuide,
   onOpenConnectRepo,
+  onOpenCiCdMap,
   onRefreshSim,
 }) => {
   return (
@@ -58,7 +60,7 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
         {/* Global Search & Quick Filters */}
         <div className="flex items-center flex-wrap gap-2">
           {/* Search */}
-          <div className="relative min-w-[200px] sm:min-w-[240px]">
+          <div className="relative min-w-[180px] sm:min-w-[220px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-stone-400" />
             <input
               type="text"
@@ -122,6 +124,18 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
               Production
             </button>
           </div>
+
+          {/* CI/CD Pipeline Map Trigger */}
+          {onOpenCiCdMap && (
+            <button
+              onClick={onOpenCiCdMap}
+              className="px-2.5 py-1.5 text-xs rounded-md bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 hover:text-stone-900 hover:border-stone-400 flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+              title="查看 Bridge 8-Gate ↔ CI/CD 流程映射圖"
+            >
+              <Workflow className="h-3.5 w-3.5 text-sky-700" />
+              <span className="font-mono text-[11px]">CI/CD 流程圖</span>
+            </button>
+          )}
 
           {/* Model Routing Guide Trigger */}
           <button

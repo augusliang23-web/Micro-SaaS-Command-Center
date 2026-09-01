@@ -24,9 +24,11 @@ import {
   Bot,
   MessageSquare,
 } from 'lucide-react';
-import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome } from '../types';
+import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome, FeatureItem } from '../types';
 import { BridgeWorkflowRail } from './BridgeWorkflowRail';
 import { ChatGPTBridgeModal } from './ChatGPTBridgeModal';
+import { CiCdWorkflowModal } from './CiCdWorkflowModal';
+import { FeatureDeliveryMatrix } from './FeatureDeliveryMatrix';
 import {
   getHealthBadgeStyle,
   getStageBadgeStyle,
@@ -40,6 +42,15 @@ interface ProjectDetailDrawerProps {
   onResolveBlocker: (projectId: string, resolution: string) => void;
   onApproveCurrentGate: (projectId: string) => void;
   onAdvanceToNextGate: (projectId: string) => void;
+  onStartNewIteration?: (projectId: string, type: 'major' | 'minor' | 'hotfix') => void;
+  onUpdateFeatures?: (projectId: string, updatedFeatures: FeatureItem[]) => void;
+  onConfirmSelectiveRelease?: (
+    projectId: string,
+    selectedFeatureIds: string[],
+    releaseVersion: string,
+    releaseNotes: string
+  ) => void;
+  onShowToast?: (msg: string) => void;
 }
 
 export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
@@ -48,15 +59,32 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   onResolveBlocker,
   onApproveCurrentGate,
   onAdvanceToNextGate,
+  onStartNewIteration,
+  onUpdateFeatures,
+  onConfirmSelectiveRelease,
+  onShowToast,
 }) => {
   if (!project) return null;
 
-  const [selectedGate, setSelectedGate] = useState<GateStepInfo>(
-    () => project.gates.find((g) => g.id === project.currentGate) || project.gates[0]
-  );
+  const [selectedGateId, setSelectedGateId] = useState<string | null>(null);
+
+  // Derive active gate: user-selected gate or current active gate
+  const activeGateId = selectedGateId || project.currentGate;
+  const selectedGate: GateStepInfo =
+    project.gates.find((g) => g.id === activeGateId) ||
+    project.gates.find((g) => g.id === project.currentGate) ||
+    project.gates[0] || {
+      id: 'DISCUSS',
+      label: 'Discuss & Ideate',
+      shortLabel: 'DISCUSS',
+      status: 'CURRENT',
+    };
+
   const [decisionOption, setDecisionOption] = useState<string>('option1');
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [isChatGPTModalOpen, setIsChatGPTModalOpen] = useState(false);
+  const [isCiCdModalOpen, setIsCiCdModalOpen] = useState(false);
+  const [iterationPromptOpen, setIterationPromptOpen] = useState(false);
 
   const healthStyle = getHealthBadgeStyle(project.health);
   const stageStyle = getStageBadgeStyle(project.stage);
@@ -105,6 +133,14 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsCiCdModalOpen(true)}
+              className="px-2.5 py-1.5 text-xs font-mono bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-300 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+              title="查看 CI/CD 流程映射圖"
+            >
+              <Layers className="h-3.5 w-3.5 text-sky-700" />
+              <span>CI/CD 映射圖</span>
+            </button>
             <button
               onClick={() => setIsChatGPTModalOpen(true)}
               className="px-2.5 py-1.5 text-xs font-mono bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
@@ -262,31 +298,71 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Production Live & Next Iteration Trigger Banner */}
+            {project.currentGate === 'DONE' && (
+              <div className="bg-emerald-50/70 border border-emerald-300 rounded-lg p-4 mt-2 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-600 animate-pulse" />
+                    <span className="text-xs font-bold text-emerald-950 font-mono">
+                      🚀 Production 發布已完成，隨時可發起下一輪改版迭代 (New Iteration Run)
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-mono text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
+                    Live Baseline: {project.environment.production.version || 'v1.0.0'}
+                  </span>
+                </div>
+
+                <p className="text-xs text-stone-600 leading-relaxed font-mono">
+                  改版並非直接退回舊關卡，而是建立獨立新分支並依據需求型態自動分流至 <strong>Phase 1 (新架構 PRD)</strong> 或 <strong>Phase 2 (快速 Hotfix/維護)</strong>。
+                </p>
+
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  <button
+                    onClick={() => onStartNewIteration?.(project.id, 'major')}
+                    className="px-3 py-1.5 text-xs font-mono font-semibold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>發起重大改版 (走 Phase 1 對齊)</span>
+                  </button>
+
+                  <button
+                    onClick={() => onStartNewIteration?.(project.id, 'hotfix')}
+                    className="px-3 py-1.5 text-xs font-mono font-semibold bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-300 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5 text-rose-700" />
+                    <span>緊急 Hotfix 修復 (直進 Phase 2 CI)</span>
+                  </button>
+
+                  <button
+                    onClick={() => setIsCiCdModalOpen(true)}
+                    className="px-2.5 py-1.5 text-xs font-mono text-stone-600 hover:text-stone-900 underline ml-auto cursor-pointer"
+                  >
+                    查看改版流程圖解說明 ➔
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* SECTION 2: Bridge Workflow Lifecycle Visualization */}
           <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-stone-200">
+            <div className="flex items-center justify-between pb-2 border-b border-stone-200 flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <Layers className="h-4 w-4 text-stone-700" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 font-mono">
-                  2. Bridge Workflow Gate Rail
+                  2. Bridge ↔ CI/CD 8-Gate 流水線軌道
                 </h3>
               </div>
 
-              <div className="flex items-center gap-3 text-xs font-mono text-stone-600">
-                <span className="flex items-center gap-1">
-                  <span className="inline-block h-2 w-2 rounded-full bg-emerald-600" /> Complete
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="inline-block h-2 w-2 rounded-full bg-stone-900 animate-pulse" /> Current
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="inline-block h-2 w-2 rounded-full bg-amber-600" /> Changes Req
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="inline-block h-2 w-2 rounded-full bg-stone-300" /> Pending
-                </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsCiCdModalOpen(true)}
+                  className="text-xs font-mono text-sky-800 hover:text-sky-950 underline px-2 py-0.5 rounded hover:bg-sky-50 transition-colors cursor-pointer"
+                >
+                  🔗 查看 CI/CD 標準階段映射說明
+                </button>
               </div>
             </div>
 
@@ -296,7 +372,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                 gates={project.gates}
                 currentGateId={project.currentGate}
                 selectedGateId={selectedGate.id}
-                onSelectGate={(gate) => setSelectedGate(gate)}
+                onSelectGate={(gate) => setSelectedGateId(gate.id)}
                 workflowType={project.workflowType}
               />
             </div>
@@ -389,7 +465,10 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                     <span>Approve Current Gate ({project.currentGate})</span>
                   </button>
                   <button
-                    onClick={() => onAdvanceToNextGate(project.id)}
+                    onClick={() => {
+                      setSelectedGateId(null);
+                      onAdvanceToNextGate(project.id);
+                    }}
                     className="px-3 py-1.5 text-xs font-mono bg-stone-900 hover:bg-stone-800 text-stone-50 rounded flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                   >
                     <span>Advance to Next Gate</span>
@@ -472,118 +551,246 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
               </div>
             </section>
 
-            {/* Environment Status */}
-            <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-3">
+            {/* Environment Status & Version Tracking */}
+            <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-4">
               <div className="flex items-center justify-between pb-2 border-b border-stone-200">
                 <div className="flex items-center gap-2">
                   <Server className="h-4 w-4 text-stone-700" />
                   <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 font-mono">
-                    4. Environment Status
+                    4. 環境架構與版本改版監控 (Environments & Versioning)
                   </h3>
                 </div>
-                <span className="text-[11px] font-mono text-stone-500">
-                  Live Telemetry
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-stone-500 bg-stone-100 px-2 py-0.5 rounded border border-stone-300">
+                    Dual-Track: Stage ➔ Prod
+                  </span>
+                </div>
               </div>
 
-              {/* Production block */}
-              <div className="bg-stone-50 p-3 rounded-lg border border-stone-200 space-y-1.5 text-xs font-mono">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-stone-900 flex items-center gap-1.5">
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        project.environment.production.status === 'Healthy' || project.environment.production.status === 'Live'
-                          ? 'bg-emerald-600'
-                          : project.environment.production.status === 'Not Deployed'
-                          ? 'bg-stone-400'
-                          : 'bg-amber-600'
-                      }`}
-                    />
-                    Production Environment
+              {/* Version Evolution / Upgrade Pathway Banner */}
+              <div className="bg-stone-50 p-3.5 rounded-lg border border-stone-200 space-y-2">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-stone-600 font-semibold flex items-center gap-1.5">
+                    <Activity className="h-3.5 w-3.5 text-stone-700" />
+                    版本改版流向 (Release Upgrade Path)
                   </span>
-                  <span
-                    className={`text-[11px] font-semibold ${
-                      project.environment.production.status === 'Healthy' || project.environment.production.status === 'Live'
-                        ? 'text-emerald-700'
-                        : 'text-stone-500'
-                    }`}
-                  >
-                    {project.environment.production.status}
+                  <span className="text-[11px] text-stone-500">
+                    類型: <strong className="uppercase text-stone-800">{project.environment.releaseType || 'minor'} release</strong>
                   </span>
                 </div>
-                <div className="flex items-center justify-between text-stone-500 text-[11px]">
-                  <span>Last Deployment:</span>
-                  <span className="text-stone-700">{project.environment.production.lastDeployed}</span>
+
+                <div className="flex items-center justify-between gap-2 p-2.5 bg-white rounded border border-stone-200 text-xs font-mono">
+                  {/* Step 1: Prod current */}
+                  <div className="text-center flex-1">
+                    <div className="text-[10px] text-stone-400">目前線上 (Prod)</div>
+                    <div className="font-bold text-emerald-800 text-sm mt-0.5">
+                      {project.environment.production.version || 'v0.0.0'}
+                    </div>
+                  </div>
+
+                  <ArrowRight className="h-4 w-4 text-stone-400 shrink-0" />
+
+                  {/* Step 2: Stage RC */}
+                  <div className="text-center flex-1 bg-amber-50/70 p-1.5 rounded border border-amber-200">
+                    <div className="text-[10px] text-amber-800 font-medium">預發測試 (Stage)</div>
+                    <div className="font-bold text-amber-900 text-sm mt-0.5">
+                      {project.environment.staging?.version || project.environment.uat?.version || 'v0.1.0-rc'}
+                    </div>
+                  </div>
+
+                  <ArrowRight className="h-4 w-4 text-stone-400 shrink-0" />
+
+                  {/* Step 3: Target Release */}
+                  <div className="text-center flex-1">
+                    <div className="text-[10px] text-stone-400">目標發布 (Target)</div>
+                    <div className="font-bold text-stone-900 text-sm mt-0.5">
+                      {project.environment.targetReleaseVersion || 'v1.0.0'}
+                    </div>
+                  </div>
                 </div>
-                {project.environment.production.metrics && (
-                  <div className="flex items-center justify-between text-stone-500 text-[11px]">
-                    <span>Uptime / Latency:</span>
-                    <span className="text-emerald-800 font-medium">
-                      {project.environment.production.metrics.uptime} • {project.environment.production.metrics.p95Latency}
-                    </span>
-                  </div>
-                )}
-                {project.environment.production.url && (
-                  <div className="pt-1">
-                    <a
-                      href={project.environment.production.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[11px] text-sky-700 hover:underline flex items-center gap-1"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      <span>{project.environment.production.url}</span>
-                    </a>
-                  </div>
-                )}
               </div>
 
-              {/* UAT block */}
-              <div className="bg-stone-50 p-3 rounded-lg border border-stone-200 space-y-1.5 text-xs font-mono">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-stone-900 flex items-center gap-1.5">
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        project.environment.uat.status === 'Ready' || project.environment.uat.status === 'Active'
-                          ? 'bg-emerald-600'
-                          : project.environment.uat.status === 'Not Deployed'
-                          ? 'bg-stone-400'
-                          : 'bg-amber-600'
-                      }`}
-                    />
-                    UAT Staging Environment
-                  </span>
-                  <span
-                    className={`text-[11px] font-semibold ${
-                      project.environment.uat.status === 'Ready' || project.environment.uat.status === 'Active'
-                        ? 'text-emerald-700'
-                        : 'text-stone-500'
-                    }`}
-                  >
-                    {project.environment.uat.status}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-stone-500 text-[11px]">
-                  <span>Last Refresh:</span>
-                  <span className="text-stone-700">{project.environment.uat.lastRefreshed}</span>
-                </div>
-                {project.environment.uat.branch && (
-                  <div className="flex items-center justify-between text-stone-500 text-[11px]">
-                    <span>Tracked Branch:</span>
-                    <span className="text-stone-800">{project.environment.uat.branch}</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {/* 1. Production block */}
+                <div className="bg-stone-50 p-3.5 rounded-lg border border-stone-200 space-y-2 text-xs font-mono flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-stone-900 flex items-center gap-1.5">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            project.environment.production.status === 'Healthy' || project.environment.production.status === 'Live'
+                              ? 'bg-emerald-600'
+                              : project.environment.production.status === 'Not Deployed'
+                              ? 'bg-stone-400'
+                              : 'bg-amber-600'
+                          }`}
+                        />
+                        Production (正式生產環境)
+                      </span>
+                      <span
+                        className={`text-[11px] font-bold px-1.5 py-0.2 rounded border ${
+                          project.environment.production.status === 'Healthy' || project.environment.production.status === 'Live'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : 'bg-stone-100 text-stone-600 border-stone-300'
+                        }`}
+                      >
+                        {project.environment.production.version || '未發布'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 text-stone-500 text-[11px] pt-1">
+                      <div className="flex items-center justify-between">
+                        <span>環境狀態:</span>
+                        <span className="text-stone-800 font-semibold">{project.environment.production.status}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span>最近上線:</span>
+                        <span className="text-stone-700">{project.environment.production.lastDeployed}</span>
+                      </div>
+                      {project.environment.production.metrics && (
+                        <div className="flex items-center justify-between">
+                          <span>即時指標:</span>
+                          <span className="text-emerald-800 font-medium">
+                            {project.environment.production.metrics.uptime} • {project.environment.production.metrics.p95Latency}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
+
+                  {project.environment.production.url ? (
+                    <div className="pt-2 border-t border-stone-200">
+                      <a
+                        href={project.environment.production.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-emerald-800 bg-emerald-50 hover:bg-emerald-100 p-2 rounded border border-emerald-200 flex items-center justify-between transition-colors"
+                      >
+                        <span className="font-semibold truncate">{project.environment.production.url}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0 ml-1" />
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="pt-2 text-[11px] text-stone-400">尚未完成初次 Production 部署</div>
+                  )}
+                </div>
+
+                {/* 2. Staging block */}
+                {(() => {
+                  const stg = project.environment.staging || project.environment.uat || {
+                    status: 'Ready',
+                    lastRefreshed: 'Just now',
+                    version: 'v0.1.0-alpha',
+                    branch: 'main',
+                    url: 'https://staging.dev',
+                  };
+                  return (
+                    <div className="bg-stone-50 p-3.5 rounded-lg border border-stone-200 space-y-2 text-xs font-mono flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-stone-900 flex items-center gap-1.5">
+                            <span
+                              className={`h-2 w-2 rounded-full ${
+                                stg.status === 'Ready' || stg.status === 'Active'
+                                  ? 'bg-amber-500'
+                                  : stg.status === 'Not Deployed'
+                                  ? 'bg-stone-400'
+                                  : 'bg-rose-500'
+                              }`}
+                            />
+                            Stage / UAT (預發測試環境)
+                          </span>
+                          <span className="text-[11px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-900 border border-amber-300">
+                            {stg.version || 'v0.0.0-rc'}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1 text-stone-500 text-[11px] pt-1">
+                          <div className="flex items-center justify-between">
+                            <span>驗證狀態:</span>
+                            <span className="text-amber-900 font-semibold">{stg.status} (Isolated Preview)</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>測試分支:</span>
+                            <span className="text-stone-800 font-medium">{stg.branch || 'main'}</span>
+                          </div>
+                          {'commit' in stg && (stg as any).commit && (
+                            <div className="flex items-center justify-between">
+                              <span>Commit Hash:</span>
+                              <span className="text-stone-700 bg-stone-200 px-1 py-0.2 rounded text-[10px]">
+                                {(stg as any).commit}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between">
+                            <span>最新刷新:</span>
+                            <span className="text-stone-700">{stg.lastRefreshed}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {stg.url ? (
+                        <div className="pt-2 border-t border-stone-200 flex items-center gap-2">
+                          <a
+                            href={stg.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] text-amber-900 bg-amber-50 hover:bg-amber-100 p-2 rounded border border-amber-200 flex items-center justify-between transition-colors flex-1"
+                          >
+                            <span className="font-semibold truncate">預發測試網址</span>
+                            <ExternalLink className="h-3 w-3 shrink-0 ml-1" />
+                          </a>
+                          <button
+                            onClick={() => onAdvanceToNextGate(project.id)}
+                            className="px-2.5 py-2 text-[11px] font-bold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded border border-stone-900 transition-colors cursor-pointer shadow-xs whitespace-nowrap"
+                            title="驗證無誤後推進關卡或上線"
+                          >
+                            {project.currentGate === 'APPROVE'
+                              ? '🚀 1-Click Promote'
+                              : '推進關卡'}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="pt-2 text-[11px] text-stone-400">尚未啟用 Stage 測試環境</div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </section>
           </div>
 
-          {/* SECTION 5: Context Memory Timeline (Returning after days) */}
+          {/* SECTION 5: 功能交付與 Feature Flag 矩陣 (Feature Delivery Matrix & Selective Release) */}
+          <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-stone-200">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-stone-700" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 font-mono">
+                  5. 功能交付與 Feature Flag 矩陣 (Feature Delivery Matrix)
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono text-stone-500 bg-stone-100 px-2 py-0.5 rounded border border-stone-300">
+                Selective Release & Flag Management
+              </span>
+            </div>
+
+            <FeatureDeliveryMatrix
+              project={project}
+              onUpdateFeatures={(pId, updated) => onUpdateFeatures?.(pId, updated)}
+              onConfirmSelectiveRelease={(pId, featIds, ver, notes) =>
+                onConfirmSelectiveRelease?.(pId, featIds, ver, notes)
+              }
+              onShowToast={(msg) => onShowToast?.(msg)}
+            />
+          </section>
+
+          {/* SECTION 6: Context Memory Timeline (Returning after days) */}
           <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-stone-200">
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-stone-700" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 font-mono">
-                  5. Context Memory Timeline
+                  6. Context Memory Timeline
                 </h3>
               </div>
               <span className="text-[11px] font-mono text-stone-500">
@@ -624,6 +831,13 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
           isOpen={isChatGPTModalOpen}
           onClose={() => setIsChatGPTModalOpen(false)}
           onApplyResolution={onResolveBlocker}
+        />
+
+        {/* CI/CD Pipeline Mapping Modal */}
+        <CiCdWorkflowModal
+          isOpen={isCiCdModalOpen}
+          onClose={() => setIsCiCdModalOpen(false)}
+          currentProject={project}
         />
       </div>
     </div>
