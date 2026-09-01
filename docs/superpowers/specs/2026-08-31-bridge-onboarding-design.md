@@ -2,15 +2,16 @@
 
 ## Status
 
-Owner-approved architecture for onboarding the Google AI Studio Prototype into
-ChatGPT Codex Bridge V0.3.1. This document authorizes only local adapter
-documentation and local validation. Commit, push, pull request, GitHub
-Issue/label reads or writes, mapping registration, and watcher execution are
-conditional future steps; each requires separately recorded current human
-authorization. AI-provider endpoints remain prohibited. This design does not
-authorize feature implementation, merge, deployment, release, provider-service
-creation, billing changes, secret access, production data access, or
-authentication/security changes.
+Owner-approved safety-first direction for onboarding the Google AI Studio
+Prototype into ChatGPT Codex Bridge V0.3.1. The revised written design remains
+subject to owner review before implementation planning. This document
+authorizes only local design and adapter documentation work. Push, pull
+request, GitHub Issue/label writes, dependency retrieval, mapping registration,
+and watcher execution are conditional future steps; each requires separately
+recorded current human authorization. AI-provider endpoints remain prohibited.
+This design does not authorize feature implementation, merge, deployment,
+release, provider-service creation, billing changes, secret access, production
+data access, or authentication/security changes.
 
 ## Goal
 
@@ -23,25 +24,43 @@ authority.
 
 - Repository: `augusliang23-web/Micro-SaaS-Command-Center`
 - Default branch: `main`
-- Approved Prototype snapshot: `57e6402fb3390225fd500b46e0a8a17a7fc1ef26`
+- Current Prototype snapshot: `6fcd2395c3d5028c14aced1e278b49d29f36f2af`
+- Previous Prototype snapshot: `57e6402fb3390225fd500b46e0a8a17a7fc1ef26`
+- Latest expansion: 18 files changed, 4,719 insertions, and 493 deletions
 - Local checkout: `/Users/augusliang/Developer/workspaces/micro-saas-command-center`
 - Onboarding branch: `bridge/onboarding-v0`
 - Frontend: React 19, TypeScript 5.8, Vite 6, Tailwind 4
 - Server: Express 4 with optional Google Gemini and OpenAI outbound calls
+- Added Prototype surfaces: Feature Delivery Matrix, CI/CD workflow map,
+  Selective Release modal, staging/production views, and Error Boundary
 - Declared commands:
   - Development: `npm run dev`
   - Lint/type-check: `npm run lint`
   - Build: `npm run build`
   - Start: `npm run start`
-- Missing baseline controls: lockfile, test command, tests, CI, deployment
-  configuration, release process, and repository README
+- Package state: `bun.lock` exists, npm-style scripts remain, no
+  `packageManager` is declared, and Bun was not installed on the audited Bridge
+  host
+- Missing baseline controls: test command, tests, CI, deployment
+  configuration, authoritative release process, and repository README
 - Environments: AI Studio Preview only; no Development, UAT, or Production
   deployment is evidenced by this checkout
 
 The UI uses typed fixtures and browser-memory state. GitHub connection,
-workflow transitions, approvals, blockers, environment status, and activity
-history are simulations. They are not evidence of live integrations or
-external system state.
+workflow transitions, approvals, blockers, environment status, feature flags,
+releases, and activity history are simulations. They are not evidence of live
+integrations or external system state. The source currently allows local clicks
+to display `APPROVED`, `Live`, `DONE`, deployed, GitHub-synced, and production
+flag states without authoritative evidence. These are known Prototype safety
+gaps, not implemented capabilities.
+
+The audit also confirmed two source-level interaction defects: opening
+`SelectiveReleaseModal` changes the component's Hook count and triggers a React
+runtime failure, while clicking its nested checkbox toggles selection twice
+because the event also reaches the row handler. The current diff additionally
+fails `git diff --check` for blank lines at end-of-file in
+`src/components/FeatureDeliveryMatrix.tsx` and `src/main.tsx`. No lint, build,
+runtime, test, accessibility, or viewport pass is claimed for this snapshot.
 
 ## Selected Approach
 
@@ -49,8 +68,9 @@ Use adapter-first, gated activation:
 
 1. Add the Project Adapter and repository-wide agent rules on the isolated
    onboarding branch.
-2. Run local baseline validation without starting or invoking AI-provider
-   endpoints.
+2. Record static baseline evidence without starting the application, invoking
+   AI-provider endpoints, or treating the unresolved Bun/npm state as a valid
+   dependency baseline.
 3. After separately recorded human authorization, create an administrative
    onboarding Issue without `bridge:ready`, commit and push only the design,
    onboarding configuration, and evidence, and link the branch and PR to that
@@ -69,9 +89,11 @@ Use adapter-first, gated activation:
    `bridge:ready` Issue. Run one watcher cycle and require its machine-readable
    `NO_OP` result as the mapping recognition check. Discovery failure, a
    blocker, or any other result fails closed.
-9. Create and review the first feature Issue without `bridge:ready`.
+9. Create and review the first feature Issue, **Prototype State Provenance &
+   Safety Guardrails**, without `bridge:ready`.
 10. Add `bridge:ready` only as the final dispatch authorization after every
-    Issue field, label, exclusion, and acceptance criterion is verified.
+    Issue field, label, package-manager prerequisite, exclusion, and acceptance
+    criterion is verified.
 
 Direct writes to `main` and mapping-first activation are rejected because they
 remove the independent review gate or expose an unadapted repository to the
@@ -93,8 +115,9 @@ AGENTS.md
 
 - `PROJECT_CONTEXT.md`: canonical identity, product purpose, Prototype status,
   source roots, and ownership.
-- `ARCHITECTURE.md`: current React, fixture-state, Express, and optional AI
-  data flows; clearly separates simulated UI from authoritative integrations.
+- `ARCHITECTURE.md`: current React, fixture-state, release/CI presentation,
+  Express, and optional AI data flows; clearly separates simulated UI from
+  authoritative integrations.
 - `PROJECT_RULES.md`: scope boundaries, protected surfaces, evidence rules,
   and forbidden actions.
 - `ENVIRONMENTS.md`: records AI Studio Preview as the only observed surface and
@@ -106,39 +129,73 @@ AGENTS.md
 
 ## Runtime and Package Policy
 
-- Use npm for local onboarding validation because the manifest uses npm-style
-  scripts and the host has npm available.
-- Do not claim a reproducible dependency baseline while no lockfile exists.
-- The onboarding validation may run
-  `npm install --package-lock=false --ignore-scripts` locally. It must not
-  commit dependency artifacts or alter `package.json`.
-- `npm install` is package-registry network access, not an AI-provider call.
-  If registry access is not separately authorized, dependency validation must
-  stop as `BLOCKED_ENVIRONMENT`; it must not be described as offline
-  validation.
+- npm is the selected canonical package manager for Bridge execution because
+  the manifest exposes npm-style scripts and the audited host has Node/npm but
+  no Bun executable. This selection becomes effective only when the owner
+  approves this written design.
+- The committed `bun.lock` is not npm authority. The first safety Issue may
+  remove `bun.lock` and generate `package-lock.json` as one atomic package
+  normalization change, and must set `"packageManager": "npm@10.8.2"` in
+  `package.json`. The two lockfiles must never coexist in the resulting branch.
+- Until that separately authorized Issue runs, onboarding records dependency,
+  lint, and build status as `BLOCKED_DECISION`; it must not install from either
+  package manager, invent a pass, or alter package metadata.
+- Registry access requires separately recorded execution authorization. After
+  removing `bun.lock`, generate the lockfile with
+  `npm install --package-lock-only --ignore-scripts`, review its staged diff,
+  and install exactly from it with `npm ci --ignore-scripts`. Neither command
+  may run lifecycle scripts.
+- Run normalization with an explicit approved registry and clean temporary npm
+  user/global configuration files. Before running npm, inspect environment
+  variable names only; reject `npm_config_*` case-insensitively and reject the
+  named variables `NPM_TOKEN`, `NODE_AUTH_TOKEN`, and `NPM_AUTH_TOKEN`. If any
+  match is present, stop as `BLOCKED_ENVIRONMENT` without reading or printing
+  its value. Before normalization, verify by filename only that the repository
+  has no project `.npmrc`; if one exists, stop as `BLOCKED_ENVIRONMENT` without
+  reading it. Invoke npm only after these preflight checks. Pass the clean files
+  explicitly through `--userconfig` and `--globalconfig`, set
+  `--registry=https://registry.npmjs.org/` and `--always-auth=false`, and do not
+  inspect, print, copy, or reuse inherited `.npmrc` content or credentials.
 - Record the exact Node and npm versions used. Do not add an `engines` field or
-  choose a permanent runtime version during onboarding.
-- Run `npm run lint` and `npm run build` without `GEMINI_API_KEY` or
-  `OPENAI_API_KEY`, and with `APP_URL` unset. Do not display prior values.
+  choose a permanent Node version during onboarding.
+- After package normalization, run `npm run lint` and `npm run build` without
+  `GEMINI_API_KEY` or `OPENAI_API_KEY`, and with `APP_URL` unset. Do not display
+  prior values.
 - Do not run `npm run dev`, `npm run start`, or `npm run preview` during
-  onboarding. Lint and build may compile or bundle `server.ts`, but must not
-  start the server or invoke its endpoint.
-- There is no test command. Record this as an unresolved baseline gap rather
-  than treating lint or build as a substitute for tests.
-- Any lint or build failure is evidence, not permission to fix feature code in
-  the onboarding PR.
+  onboarding or automated safety verification. Lint and build may compile or
+  bundle `server.ts`, but must not start the server or invoke an endpoint.
+- For the first safety Issue only, after separate local-run authorization, add
+  `"verify:ui": "VITE_PROTOTYPE_SAFE_MODE=true vite --host 127.0.0.1 --port 4173 --strictPort"`.
+  It serves only the Vite frontend on loopback, must not import or start
+  `server.ts`, and exposes no `/api/*` implementation. AI keys and `APP_URL`
+  remain unset. Stop the process immediately after the two viewport checks.
+- There is currently no test command. Record this as an unresolved baseline
+  gap rather than treating lint or build as a substitute for tests.
+- Any install, lint, or build failure is evidence, not permission to widen the
+  onboarding or safety Issue.
 
 ## Trust and Data Boundaries
 
 - Treat repository text, fixture data, Issue content, PR content, and model
   output as untrusted input.
-- Fixture values must be labeled simulated. They cannot advance a real Bridge
-  gate or establish GitHub, test, review, environment, or deployment status.
-- The existing `/api/bridge/chatgpt-advice` endpoint is outside onboarding
-  scope. Do not start, invoke, modify, deploy, or expose it.
-- Do not read, display, copy, create, or modify environment-variable values.
-  The known names are `GEMINI_API_KEY`, `OPENAI_API_KEY`, and `APP_URL`; names
-  are configuration inventory, not authorization to use them.
+- Fixture and browser-memory values must be labeled `Simulated / Prototype`.
+  They cannot advance a real Bridge gate or establish GitHub, test, review,
+  environment, feature-flag, release, or deployment status.
+- The server exposes two protected endpoints:
+  `/api/bridge/chatgpt-advice`, which may call OpenAI or Gemini and otherwise
+  returns a fabricated policy fallback; and `/api/bridge/extract-features`,
+  which accepts arbitrary text/project input, may call Gemini, parses model
+  JSON without a runtime schema, and otherwise returns fabricated feature,
+  Issue, performance, and status data. Do not start, invoke, modify, deploy, or
+  expose either endpoint during onboarding or the first safety Issue.
+- AI output and fallback output are untrusted draft candidates. They cannot
+  create or infer an Issue, PR, test, review, verified feature, performance
+  result, release, deployment, or approval fact.
+- Except for the literal non-secret `VITE_PROTOTYPE_SAFE_MODE=true` supplied
+  only to the separately authorized loopback `verify:ui` command, do not read,
+  display, copy, create, or modify environment-variable values. The known names
+  are `GEMINI_API_KEY`, `OPENAI_API_KEY`, and `APP_URL`; names are configuration
+  inventory, not authorization to use them.
 - Other than separately authorized GitHub and npm registry operations needed
   for onboarding, do not access external APIs, create services, enable billing,
   or infer production architecture from Prototype copy. AI-provider calls
@@ -155,6 +212,13 @@ protected:
 - `server.ts`
 - `.env*` other than reading variable names from `.env.example`
 - AI provider dependencies and outbound request behavior
+- `src/components/FeatureDeliveryMatrix.tsx`,
+  `src/components/SelectiveReleaseModal.tsx`,
+  `src/components/CiCdWorkflowModal.tsx`, `src/components/ErrorBoundary.tsx`,
+  and status-mutating sections of `src/App.tsx`, except for the exact files and
+  behaviors opened by the separately approved first safety Issue
+- `src/types.ts` and `src/mockData.ts` outside the exact provenance and
+  simulation-label scope opened by that Issue
 - application GitHub integration behavior
 - authentication, authorization, roles, tenants, and identity
 - billing, payments, usage metering, and provider configuration
@@ -188,18 +252,23 @@ The onboarding PR must provide fresh evidence for:
 - exact staged filename set and `git diff --cached --check`
 - `git status --short`, including an explicit list of untracked or unrelated
   dirty files; a clean tree is not inferred from `git diff --check`
-- local Node and npm versions
-- dependency installation result with scripts disabled and no lockfile write
-- complete `npm run lint` exit status and output summary
-- complete `npm run build` exit status and output summary
+- local Node and npm versions and evidence that Bun was unavailable during the
+  baseline audit
+- `bun.lock`, absent `packageManager`, npm-style scripts, and the selected npm
+  normalization policy
+- dependency installation, lint, and build recorded as `BLOCKED_DECISION`
+  until the separately approved first safety Issue normalizes the lockfile
 - confirmation that no tests exist and no test command was fabricated
+- exact source-observed interaction and status-provenance gaps, including the
+  Selective Release Hook crash and checkbox double-toggle
 - confirmation that no AI key, provider call, deployment, service, billing,
   secret value, production data, or auth/security action occurred
 
-Missing tools, inaccessible dependencies, or ambiguous repository identity
-must fail closed as `BLOCKED_ENVIRONMENT` or `BLOCKED_DECISION`. Baseline lint
-or build failures are recorded verbatim and deferred to an explicitly scoped
-Issue; they must not be silently fixed or hidden in onboarding.
+Missing tools, inaccessible dependencies, ambiguous package authority, or
+ambiguous repository identity must fail closed as `BLOCKED_ENVIRONMENT` or
+`BLOCKED_DECISION`. Baseline install, lint, or build failures are recorded
+verbatim and deferred to the explicitly scoped safety Issue; they must not be
+silently fixed or hidden in onboarding.
 
 ## Mapping Activation
 
@@ -243,68 +312,118 @@ authorization.
 
 ## First Feature Issue Boundary
 
-The first feature Issue will formalize the approved Project Overview Dashboard
-Skeleton rather than assume the Prototype is production-ready.
+The first feature Issue is **Prototype State Provenance & Safety Guardrails**.
+It makes the expanded interface honest and operable as a Prototype before any
+dashboard expansion or live integration work.
 
 - Model: Terra
 - Reasoning effort: Medium
 - Risk: Medium
 - Exact routing metadata: exactly one model label, `model:terra`; exact Issue
   body line `- Reasoning Effort: Medium`; risk label `risk:medium`
-- Allowed source boundary: `src/components/PortfolioOverview.tsx`,
-  `src/types.ts`, `src/mockData.ts`, `src/projectOverviewFixtures.json`, and
-  `src/App.tsx` only when required to expose typed UI states; plus focused
-  tests under `src/**/*.test.ts`, `src/**/*.test.tsx`, and
-  `test/**/*.test.mjs`, `src/test/setup.ts`, `package.json`, `tsconfig.json`
-  solely to add `"resolveJsonModule": true`, and the generated npm lockfile.
-  `src/mockData.ts` must derive its typed UI fixtures from
-  `src/projectOverviewFixtures.json`; it must not maintain a disconnected
-  duplicate fixture.
+- Allowed application boundary: `src/types.ts`, `src/mockData.ts`,
+  `src/statusProvenance.mjs`, `src/App.tsx`,
+  `src/components/PortfolioOverview.tsx`,
+  `src/components/BridgeWorkflowRail.tsx`,
+  `src/components/CockpitHeader.tsx`,
+  `src/components/ConnectRepoModal.tsx`,
+  `src/components/NeedsAttentionQueue.tsx`,
+  `src/components/NextBestActionCard.tsx`,
+  `src/components/AIExecutionSnapshot.tsx`,
+  `src/components/ProjectDetailDrawer.tsx`,
+  `src/components/ChatGPTBridgeModal.tsx`,
+  `src/components/FeatureDeliveryMatrix.tsx`,
+  `src/components/SelectiveReleaseModal.tsx`,
+  `src/components/CiCdWorkflowModal.tsx`, and
+  `src/components/ErrorBoundary.tsx`; plus focused test and setup files under
+  `src/**/*.test.ts`, `src/**/*.test.tsx`, `src/test/setup.ts`, and
+  `test/**/*.test.mjs`
+- Allowed package boundary: `package.json`, removal of `bun.lock`, and one
+  generated `package-lock.json`. No dependency other than the exact test stack
+  below may be added. `package.json` must declare
+  `"packageManager": "npm@10.8.2"` and the exact loopback-only `verify:ui`
+  script defined above. No other configuration file is opened by this Issue.
+- Provenance contract: every displayed gate, GitHub reference, test/review
+  outcome, environment/version, feature flag, release, and activity event must
+  carry a typed provenance value with required `authority`, `observedAt`,
+  immutable `evidenceRef`, and `confidence` fields. Allowed authorities are
+  `fixture`, `user-entered`, `AI-candidate`, `GitHub-observed`, `CI-observed`,
+  and `deployment-observed`. Fixture evidence references use stable fixture
+  identifiers; they must not imitate external URLs or run IDs.
+- Promotion contract: `fixture`, `user-entered`, and `AI-candidate` values can
+  never produce authoritative `APPROVED`, `Verified`, `Live`, `DONE`, deployed,
+  GitHub-synced, or production flag-on state. A shared pure
+  `src/statusProvenance.mjs` policy must deny these promotions by default.
+  Future authoritative promotion requires independently observed evidence,
+  independent review where applicable, named-human approval, and a recorded
+  deployment result. This Issue remains read-only with respect to every
+  external system.
+- Presentation contract: render a persistent global `Simulated / Prototype`
+  banner and a visible provenance badge beside every affected status. Buttons
+  may demonstrate a simulation only when their label and resulting message
+  explicitly say simulation; they must not claim that GitHub, Bridge, CI/CD,
+  feature flags, staging, UAT, or Production changed.
+- Safe-mode contract: when `VITE_PROTOTYPE_SAFE_MODE=true`, disable every
+  control that can call `/api/bridge/chatgpt-advice` or
+  `/api/bridge/extract-features` and replace its action copy with an explicit
+  non-network simulation label. No frontend test or viewport check may issue a
+  request to `/api/*` or any external origin. Fixture-derived GitHub,
+  staging/UAT, Production, or evidence URLs render as non-navigating simulated
+  references.
+- Generated-feature contract: AI and fallback results are rendered only as
+  untrusted draft candidates. Import requires explicit user confirmation and
+  normalizes them to non-authoritative `Backlog` / `Planned` state while
+  retaining source provenance. The UI must not infer Issue numbers, PR state,
+  verification, performance, deployment, or approval from generated content.
+- Defect contract: move every `SelectiveReleaseModal` Hook before conditional
+  return, and make a checkbox interaction toggle exactly once for pointer and
+  keyboard input. The Error Boundary must not claim browser-memory workflow
+  data was persisted or safely saved.
+- Accessibility contract: affected modal surfaces require dialog semantics,
+  accessible names, initial focus, focus containment, Escape close, focus
+  restoration, and labelled close controls. Dashboard tabs require tablist/tab
+  semantics, keyboard navigation, and `aria-selected`. At 1280 by 800 CSS
+  pixels the document has no body-level horizontal overflow; at 768 CSS pixels
+  wide content scrolls only inside a labelled region.
 - Test stack: `vitest`, `jsdom`, `@testing-library/react`,
   `@testing-library/jest-dom`, and `@testing-library/user-event` as development
   dependencies; test root `src/**/*.test.ts` and `src/**/*.test.tsx`; add the
   allowed setup path `src/test/setup.ts` importing
   `@testing-library/jest-dom/vitest`; set the `test` command to
   `vitest run --environment jsdom --setupFiles src/test/setup.ts`; full-suite
-  command `npm test`. In addition to the Vitest suite, add a meaningful focused
-  Node built-in test under `test/**/*.test.mjs` and require `node --test`. The
-  Node test must validate the canonical JSON fixture's deterministic,
-  scope-relevant contract: at least three distinct projects, every required
-  dashboard field, and an explicit simulated-data marker. It must not be an
-  empty sentinel or duplicate only the existence of a file.
-- Package policy: the Issue may use the npm registry only for the exact
-  declared dependencies, generate and commit `package-lock.json`, and must not
-  run application or provider endpoints during installation or testing
-- Observable UI criteria: render at least three typed fixture projects and
-  display Project name, Current phase, Current task, Next action, Risk, GitHub
-  Issue/PR, Bridge status, Codex model, Review status, and Last activity;
-  visibly label fixture-derived status as `Simulated`; provide deterministic
-  loading, error, and empty states without network access; support keyboard
-  opening and closing of the project detail UI with accessible names and dialog
-  semantics; at 1280 by 800 CSS pixels the page has no body-level horizontal
-  overflow, and at 768 CSS pixels any wide portfolio content scrolls within its
-  labeled region rather than the document body
-- Required verification: focused tests for normal, empty, loading, error,
-  keyboard, and simulated-label behavior, with Vitest UI assertions consuming
-  the same canonical JSON fixture used by the typed UI; the focused Node
-  contract test; `npm test`; `node --test`; `npm run lint`; `npm run build`;
-  staged diff review; and user-visible local checks at both specified
-  viewports
+  command `npm test`. Registry retrieval must use npm with lifecycle scripts
+  disabled and requires separately recorded execution authorization.
+- V0.3.1 compatibility: add a meaningful focused Node built-in test under
+  `test/**/*.test.mjs` and require `node --test`. It must import the same
+  `src/statusProvenance.mjs` policy used by the application and prove that
+  fixture, user-entered, and AI-candidate data cannot authorize protected
+  status promotion. It must not be an empty sentinel or static text search.
+- Required verification: focused tests for provenance rendering, denied status
+  promotion, generated-candidate normalization, modal open/close, checkbox
+  pointer and keyboard behavior, tabs, Error Boundary wording, normal/empty/
+  loading/error states, persistent Prototype labels, non-navigating fixture
+  references, and zero `/api/*` or external requests in safe mode; `npm test`;
+  `node --test`; `npm run lint`; `npm run build`; `git diff --check`; staged
+  allowlist review; then a separately authorized `npm run verify:ui` process
+  for user-visible local checks at both specified viewports, followed by proof
+  that the loopback process stopped
 - Excluded: `server.ts`, AI calls, GitHub integration, authentication,
-  persistence, billing, runtime external network calls other than the narrowly
-  authorized npm registry dependency retrieval, deployment, secrets, and
-  production automation
+  persistence, feature-flag providers, CI/CD runners, billing, runtime external
+  network calls other than the narrowly authorized npm registry dependency
+  retrieval, deployment, secrets, and production automation
 
 Any requested change to `server.ts`, `.env*`, provider dependencies,
 application GitHub integration, authentication, persistence, billing,
 deployment, or runtime network behavior is `BLOCKED_DECISION`; it is not an
 automatic model escalation.
 
-The Issue is created without `bridge:ready`. After its contract, exact routing
-metadata, labels, test harness, package policy, and exclusions are independently
-verified, the Control Plane may add `bridge:ready` as the exact authorization
-for the V0.3.1 watcher to dispatch Codex. Codex must stop at
-`READY_FOR_REVIEW` and must not approve, merge, deploy, or release.
+The Issue is created without `bridge:ready`. It is not dispatchable until the
+owner has approved npm normalization and separately authorized the required npm
+registry read. After its contract, exact routing metadata, labels, test harness,
+package policy, and exclusions are independently verified, the Control Plane
+may add `bridge:ready` as the exact authorization for the V0.3.1 watcher to
+dispatch Codex. Codex must stop at `READY_FOR_REVIEW` and must not approve,
+merge, deploy, or release.
 
 ## Completion Criteria
 
@@ -313,13 +432,16 @@ Onboarding is complete only when:
 1. The adapter and repository rules are merged to `main` with human approval.
 2. The exact local mapping is registered and independently verified.
 3. A no-eligible-Issue watcher cycle returns `NO_OP`.
-4. The first feature Issue contains the approved routing, risk, scope,
-   exclusions, acceptance criteria, and review boundary.
+4. The first safety Issue contains the approved provenance contract, npm
+   normalization, routing, risk, scope, exclusions, acceptance criteria, and
+   review boundary.
 5. Adding `bridge:ready` produces one selected repository/Issue in `new` mode,
    one run record containing requested `gpt-5.6-terra` and medium reasoning,
    and no second candidate or live duplicate lock. Effective model/reasoning
    remains unverified unless independently emitted by the runtime.
 6. The resulting implementation reaches `READY_FOR_REVIEW` only after required
-   evidence, with no merge,
-   deployment, release, billing, secret, production-data, or auth/security
-   action.
+   evidence, with no external status mutation, merge, deployment, release,
+   billing, secret, production-data, or auth/security action.
+7. Project Overview expansion, live GitHub/Bridge reads, AI endpoint hardening,
+   and real CI/CD or deployment integration remain separate future Issues and
+   receive no implied authorization from onboarding completion.
