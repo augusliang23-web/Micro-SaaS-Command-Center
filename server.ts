@@ -3,14 +3,51 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
+import { CodexAppServerClient } from './server/codexAppServerClient.mjs';
+import { CodexHandoffService } from './server/codexHandoffService.mjs';
+import {
+  createCodexHandoffRouter,
+  isLoopbackOrigin,
+  loadCodexProjectAllowlist,
+} from './server/codexHandoffRoutes.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
+const HOST = '127.0.0.1';
+const EXPECTED_COMMAND_CENTER_ORIGIN = process.env.COMMAND_CENTER_ORIGIN || `http://${HOST}:${PORT}`;
 
 app.use(express.json());
+
+if (process.env.NODE_ENV === 'development') {
+  let codexHandoffService: CodexHandoffService | null = null;
+  if (isLoopbackOrigin(EXPECTED_COMMAND_CENTER_ORIGIN)) {
+    try {
+      const allowlistPath =
+        process.env.COMMAND_CENTER_CODEX_PROJECTS_CONFIG ||
+        path.join(process.cwd(), '.bridge', 'codex-projects.local.json');
+      codexHandoffService = new CodexHandoffService({
+        projects: loadCodexProjectAllowlist(allowlistPath),
+        provider: new CodexAppServerClient(),
+      });
+    } catch (error) {
+      console.warn(
+        'Local Codex handoff is blocked until a valid server-side project allowlist is configured:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+  app.use(
+    '/api/bridge/codex-handoffs',
+    createCodexHandoffRouter({
+      service: codexHandoffService,
+      expectedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN,
+      nodeEnv: process.env.NODE_ENV,
+    }),
+  );
+}
 
 // Lazy-initialized Gemini client
 let geminiClient: GoogleGenAI | null = null;
@@ -301,8 +338,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Command Center full-stack server running at http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`Command Center full-stack server running at http://${HOST}:${PORT}`);
   });
 }
 
