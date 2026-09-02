@@ -20,3 +20,13 @@
 ## Prohibited actions confirmed absent
 
 No dependency install, test, lint, build, server start, preview, endpoint call, browser run, GitHub write, mapping write, watcher execution, deployment, billing action, secret access, production-data change, or authentication/security change occurred.
+
+## Local onboarding review gate
+
+- `git status --short` was clean before final evidence staging.
+- `git diff --name-status origin/main...HEAD` lists only `.bridge/ARCHITECTURE.md`, `.bridge/BRIDGE_CONFIG.yaml`, `.bridge/ENVIRONMENTS.md`, `.bridge/PROJECT_CONTEXT.md`, `.bridge/PROJECT_RULES.md`, `AGENTS.md`, the approved design/plans, this baseline evidence, and `docs/superpowers/issue-drafts/2026-09-02-prototype-state-provenance-safety-guardrails.md`.
+- `git diff origin/main...HEAD --check` completed without output; `git log --oneline --decorate origin/main..HEAD` records the local onboarding evidence, adapter, rules, plans, and Issue-draft commits through `f2db05d`.
+- Changed paths are limited to approved documentation, adapter, rules, evidence, and Issue-draft files.
+- Dependency install, lint, build, tests, runtime, accessibility, and viewport validation remain unperformed and unclaimed.
+- No provider, GitHub write, mapping, watcher, deployment, billing, secret, production-data, or authentication/security action occurred.
+- Required next state: independent findings review, then canonical ChatGPT review, then named-human merge decision.
