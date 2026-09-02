@@ -1,0 +1,32 @@
+version: 1
+project:
+  id: micro-saas-command-center
+  repository: augusliang23-web/Micro-SaaS-Command-Center
+  default_branch: main
+runtime:
+  node: "20.20.2"
+  npm: "10.8.2"
+  canonical_package_manager: npm
+  package_state: BLOCKED_DECISION
+commands:
+  lint: npm run lint
+  build: npm run build
+  test: BLOCKED_DECISION
+  verify_ui: BLOCKED_DECISION
+environments:
+  preview: PROTOTYPE_ONLY
+  development: NOT_ESTABLISHED
+  staging: NOT_ESTABLISHED
+  uat: NOT_ESTABLISHED
+  production: NOT_ESTABLISHED
+deployment:
+  policy: HUMAN_AUTHORIZATION_REQUIRED
+routing:
+  adapter_docs:
+    model: luna
+    reasoning_effort: low
+    risk: low
+  first_safety_issue:
+    model: terra
+    reasoning_effort: medium
+    risk: medium
