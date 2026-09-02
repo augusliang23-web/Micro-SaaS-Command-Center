@@ -1,0 +1,8 @@
+- Require an exact GitHub Issue, allowed file list, model label, `- Reasoning Effort:` line, risk label, and `bridge:ready` before feature execution.
+- Treat fixture, browser-memory, user-entered, and AI-generated state as non-authoritative.
+- Never call `/api/bridge/chatgpt-advice` or `/api/bridge/extract-features` unless a separately reviewed task explicitly opens that provider boundary.
+- Never auto-approve, merge, deploy, release, change billing, access secrets, delete production data, or change authentication/security boundaries.
+- Stop at `READY_FOR_REVIEW`; Codex and its findings reviewer cannot add `bridge:approved`.
+- Changes to `server.ts`, `.env*`, provider behavior, GitHub integration, auth, persistence, billing, deployment, or runtime networking are `BLOCKED_DECISION` unless an exact approved task opens them.
+- Prefer the lowest-cost capable route: Luna for mechanical work, Terra for normal implementation, Sol only for architecture, ambiguous/high-risk integration, or critical final review.
+- Reject a project `.npmrc` by filename; reject `npm_config_*` case-insensitively plus `NPM_TOKEN`, `NODE_AUTH_TOKEN`, and `NPM_AUTH_TOKEN` by name without reading values; require explicit clean npm configs and separately authorized registry access.
