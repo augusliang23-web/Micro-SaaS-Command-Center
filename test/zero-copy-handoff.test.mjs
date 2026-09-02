@@ -156,6 +156,36 @@ test('handoff service deduplicates an active dispatch and reports the full statu
   assert.equal(calls[0].handoff.cwd, undefined);
 });
 
+test('concurrent non-idempotent handoffs use isolated provider clients and callbacks', async () => {
+  const starts = [];
+  let providerNumber = 0;
+  const ids = ['handoff-a', 'handoff-b'];
+  const service = new CodexHandoffService({
+    projects: [project],
+    providerFactory() {
+      const current = ++providerNumber;
+      return {
+        async start(input) {
+          starts.push({ current, input });
+          return { threadId: `thread-${current}`, turnId: `turn-${current}` };
+        },
+      };
+    },
+    idFactory: () => ids.shift(),
+  });
+
+  const first = await service.dispatch({ ...dispatch, task_id: 'task-a', canonical_task_ref: 'local://task-a' });
+  const second = await service.dispatch({ ...dispatch, task_id: 'task-b', canonical_task_ref: 'local://task-b' });
+  starts[0].input.onUpdate({ state: 'COMPLETED', result: 'first result' });
+  starts[1].input.onUpdate({ state: 'WORKING', output: 'second result' });
+
+  assert.equal(providerNumber, 2);
+  assert.equal(service.getStatus(first.handoff_id).execution_state, 'COMPLETED');
+  assert.equal(service.getStatus(first.handoff_id).terminal_result, 'first result');
+  assert.equal(service.getStatus(second.handoff_id).execution_state, 'WORKING');
+  assert.equal(service.getStatus(second.handoff_id).terminal_result, 'second result');
+});
+
 test('approval updates pause for input and are never auto-approved', async () => {
   const provider = {
     async start(input) {
@@ -238,6 +268,11 @@ class FakeChild extends EventEmitter {
     this.stdin.end = () => {
       this.stdin.ended = true;
     };
+    this.killSignals = [];
+    this.kill = (signal) => {
+      this.killSignals.push(signal);
+      return true;
+    };
   }
 
   respond(id, result) {
@@ -299,6 +334,21 @@ test('App Server notifications map completion and approvals without resolving th
   assert.equal(child.stdin.messages.some((message) => message.id === 91), false);
 });
 
+test('an interrupted App Server turn is never reported as completed', async () => {
+  const child = new FakeChild();
+  const updates = [];
+  const client = new CodexAppServerClient({ spawnImpl: () => child });
+  await client.start({ cwd: project.cwd, prompt: 'read-only task', onUpdate: (update) => updates.push(update) });
+
+  child.stdout.write(
+    `${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'interrupted' } } })}\n`,
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(updates.some((update) => update.state === 'FAILED' && /interrupted/i.test(update.error)));
+  assert.equal(updates.some((update) => update.state === 'COMPLETED'), false);
+});
+
 test('an App Server exit before turn completion fails the active handoff', async () => {
   const child = new FakeChild();
   const updates = [];
@@ -308,6 +358,26 @@ test('an App Server exit before turn completion fails the active handoff', async
   child.emit('exit', 0, null);
 
   assert.ok(updates.some((update) => update.state === 'FAILED' && /exited/i.test(update.error)));
+});
+
+test('a completed App Server turn closes stdin then escalates bounded cleanup if it remains alive', async () => {
+  const child = new FakeChild();
+  const updates = [];
+  const client = new CodexAppServerClient({
+    spawnImpl: () => child,
+    cleanupGraceMs: 1,
+    cleanupKillGraceMs: 1,
+  });
+  await client.start({ cwd: project.cwd, prompt: 'read-only task', onUpdate: (update) => updates.push(update) });
+
+  child.stdout.write(
+    `${JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed' } } })}\n`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(child.stdin.ended, true);
+  assert.deepEqual(child.killSignals, ['SIGTERM', 'SIGKILL']);
+  assert.ok(updates.some((update) => update.processCleanup === 'SIGTERM_SENT'));
 });
 
 test('local endpoint guard is development-only, origin-bound, and JSON-only', () => {

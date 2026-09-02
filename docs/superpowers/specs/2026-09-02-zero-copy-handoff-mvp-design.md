@@ -1,7 +1,9 @@
 # Bridge V0.4 Zero-Copy Codex Handoff MVP Design
 
-**Date:** 2026-09-02  
-**Status:** Approved for implementation  
+**Date:** 2026-09-02
+
+**Status:** Approved for implementation
+
 **Scope:** Local-development Command Center to Codex handoff only
 
 ## Objective

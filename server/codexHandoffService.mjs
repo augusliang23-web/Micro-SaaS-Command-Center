@@ -59,9 +59,19 @@ function classifyProviderFailure(error) {
 }
 
 export class CodexHandoffService {
-  constructor({ projects, provider, idFactory = randomUUID, now = () => new Date().toISOString() }) {
+  /**
+   * @param {{
+   *   projects: any[],
+   *   provider?: { start(input: any): Promise<any> },
+   *   providerFactory?: () => { start(input: any): Promise<any> },
+   *   idFactory?: () => string,
+   *   now?: () => string,
+   * }} options
+   */
+  constructor({ projects, provider, providerFactory, idFactory = randomUUID, now = () => new Date().toISOString() }) {
     this.projects = new Map(projects.map((project) => [project.project_id, clone(project)]));
-    this.provider = provider;
+    if (!providerFactory && !provider) throw new Error('A Codex provider or providerFactory is required');
+    this.providerFactory = providerFactory || (() => provider);
     this.idFactory = idFactory;
     this.now = now;
     this.handoffs = new Map();
@@ -88,7 +98,7 @@ export class CodexHandoffService {
 
     const onUpdate = (update) => this.#applyUpdate(handoff.handoff_id, update);
     try {
-      const started = await this.provider.start({
+      const started = await this.providerFactory().start({
         cwd: project.cwd,
         prompt: formatHandoffPrompt(handoff),
         handoff: clone(handoff),
@@ -127,6 +137,7 @@ export class CodexHandoffService {
     if (update.result) status.terminal_result = update.result;
     if (update.error) status.error = update.error;
     if (update.blocker) status.normalized_blocker = update.blocker;
+    if (update.processCleanup) status.process_cleanup = update.processCleanup;
     if (status.execution_state === 'AWAITING_INPUT') {
       status.approval_state = 'REQUIRED';
       status.stalled = true;

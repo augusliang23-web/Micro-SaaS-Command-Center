@@ -30,7 +30,11 @@ if (process.env.NODE_ENV === 'development') {
         path.join(process.cwd(), '.bridge', 'codex-projects.local.json');
       codexHandoffService = new CodexHandoffService({
         projects: loadCodexProjectAllowlist(allowlistPath),
-        provider: new CodexAppServerClient(),
+        provider: {
+          start(input: { cwd: string; prompt: string; onUpdate: (update: unknown) => void }) {
+            return new CodexAppServerClient().start(input);
+          },
+        },
       });
     } catch (error) {
       console.warn(
