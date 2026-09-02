@@ -4,7 +4,6 @@
 - Remote baseline: `6fcd2395c3d5028c14aced1e278b49d29f36f2af`
 - Onboarding branch: `bridge/onboarding-v0`
 - Onboarding branch HEAD: 20a265f509dd43671696b01e8d808b7d4f6fe42b
-- Task 1 evidence commit: d24f97db8aa4ba7d2b5ed6fac5af2df0ae7d1ae2
 - Runtime: Node `v20.20.2`; npm `10.8.2`; Bun unavailable
 - Package state: `bun.lock` present; `package-lock.json` absent; `packageManager` absent
 - Commands declared but not run: `npm run lint`, `npm run build`
@@ -13,6 +12,7 @@
 
 ## Known source findings
 
+- The **Onboarding branch HEAD** value is the pre-Task 1 baseline-check SHA; later evidence commits are tracked by Git history.
 - `src/components/SelectiveReleaseModal.tsx` changes Hook count when opened.
 - Its checkbox click reaches both checkbox and row toggle handlers.
 - Historical diff check reports blank lines at EOF in `src/components/FeatureDeliveryMatrix.tsx` and `src/main.tsx`.
