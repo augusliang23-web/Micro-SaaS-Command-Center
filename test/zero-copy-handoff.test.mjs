@@ -201,6 +201,8 @@ test('approval updates pause for input and are never auto-approved', async () =>
   assert.equal(status.execution_state, 'AWAITING_INPUT');
   assert.equal(status.approval_state, 'REQUIRED');
   assert.match(status.normalized_blocker, /approval/i);
+  assert.equal(status.stalled, false);
+  assert.equal(status.stalled_reason, null);
 });
 
 test('provider launch and native account failures map honestly', async () => {
@@ -215,9 +217,46 @@ test('provider launch and native account failures map honestly', async () => {
     provider: { start: async () => Promise.reject(new Error('native ChatGPT account required')) },
     idFactory: () => 'handoff-provider',
   });
+  const failedService = new CodexHandoffService({
+    projects: [project],
+    provider: { start: async () => Promise.reject(new Error('native process failed')) },
+    idFactory: () => 'handoff-failed',
+  });
 
-  assert.equal((await environmentService.dispatch({ ...dispatch, task_id: 'env-failure' })).execution_state, 'BLOCKED_ENVIRONMENT');
-  assert.equal((await providerService.dispatch({ ...dispatch, task_id: 'provider-failure' })).execution_state, 'BLOCKED_PROVIDER');
+  const environmentStatus = await environmentService.dispatch({ ...dispatch, task_id: 'env-failure' });
+  const providerStatus = await providerService.dispatch({ ...dispatch, task_id: 'provider-failure' });
+  const failedStatus = await failedService.dispatch({ ...dispatch, task_id: 'failed-dispatch' });
+
+  assert.equal(environmentStatus.execution_state, 'BLOCKED_ENVIRONMENT');
+  assert.equal(environmentStatus.governance_state, 'BLOCKED');
+  assert.equal(providerStatus.execution_state, 'BLOCKED_PROVIDER');
+  assert.equal(providerStatus.governance_state, 'BLOCKED');
+  assert.equal(failedStatus.execution_state, 'FAILED');
+  assert.equal(failedStatus.governance_state, 'BLOCKED');
+});
+
+test('process cleanup alone does not advance last meaningful activity', async () => {
+  const timestamps = ['initial', 'dispatch', 'cleanup'];
+  let capturedInput;
+  const service = new CodexHandoffService({
+    projects: [project],
+    provider: {
+      async start(input) {
+        capturedInput = input;
+        return { threadId: 'thread-cleanup' };
+      },
+    },
+    idFactory: () => 'handoff-cleanup',
+    now: () => timestamps.shift() || 'unexpected',
+  });
+
+  await service.dispatch({ ...dispatch, task_id: 'cleanup-activity' });
+  const before = service.getStatus('handoff-cleanup').last_meaningful_activity;
+  capturedInput.onUpdate({ processCleanup: 'SIGTERM_SENT' });
+
+  const status = service.getStatus('handoff-cleanup');
+  assert.equal(status.last_meaningful_activity, before);
+  assert.equal(status.process_cleanup, 'SIGTERM_SENT');
 });
 
 test('App Server invocation uses the documented stdio command without a shell', () => {

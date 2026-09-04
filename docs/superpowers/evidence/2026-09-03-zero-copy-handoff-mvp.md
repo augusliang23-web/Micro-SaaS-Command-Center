@@ -43,6 +43,16 @@ Independent review required two fixes before delivery:
 
 The adapter also closes stdin after terminal completion, waits one second, then sends `SIGTERM` and finally `SIGKILL` only if the child remains alive. This bounded cleanup is visible as `process_cleanup` in the in-memory status record.
 
+## Status Contract corrections
+
+The latest independent review required three narrow status corrections:
+
+- `BLOCKED_PROVIDER`, `BLOCKED_ENVIRONMENT`, and `FAILED` now normalize to governance state `BLOCKED`; they are not presented as actively executing.
+- `AWAITING_INPUT` keeps `approval_state: REQUIRED` without immediately deriving `stalled: true`. This MVP has no SLA/stall evaluator, so it reports `stalled: false` and `stalled_reason: null` until such a mechanism exists.
+- A `processCleanup` update records cleanup state but does not advance `last_meaningful_activity`.
+
+Focused regressions cover all three corrections.
+
 ## Known limitations and capability gaps
 
 - This is intentionally a local-development, read-only MVP. Normal write-capable engineering handoffs are not enabled.

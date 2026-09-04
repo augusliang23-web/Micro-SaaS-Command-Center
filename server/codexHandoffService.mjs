@@ -140,16 +140,27 @@ export class CodexHandoffService {
     if (update.processCleanup) status.process_cleanup = update.processCleanup;
     if (status.execution_state === 'AWAITING_INPUT') {
       status.approval_state = 'REQUIRED';
-      status.stalled = true;
-      status.stalled_reason = status.normalized_blocker || 'Native input or approval is required.';
+      status.stalled = false;
+      status.stalled_reason = null;
       status.next_action = 'Open Codex and review the native approval or input request.';
     } else if (TERMINAL_EXECUTION_STATES.includes(status.execution_state)) {
-      status.governance_state = status.execution_state === 'COMPLETED' ? 'READY_FOR_REVIEW' : 'EXECUTING';
+      status.governance_state = status.execution_state === 'COMPLETED' ? 'READY_FOR_REVIEW' : 'BLOCKED';
       status.next_action = status.execution_state === 'COMPLETED' ? 'Review the returned evidence.' : 'Review the blocker or error.';
     } else if (status.execution_state === 'WORKING') {
       status.next_action = 'Wait for Codex to complete the task.';
     }
-    status.last_meaningful_activity = this.now();
+    if (
+      update.state ||
+      update.threadId ||
+      update.turnId ||
+      update.model ||
+      update.output ||
+      update.result ||
+      update.error ||
+      update.blocker
+    ) {
+      status.last_meaningful_activity = this.now();
+    }
   }
 
   #response(record) {
