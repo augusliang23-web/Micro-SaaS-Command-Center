@@ -24,6 +24,7 @@ import {
   Bot,
   MessageSquare,
 } from 'lucide-react';
+import { CodexHandoffPanel } from './CodexHandoffPanel';
 import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome, FeatureItem } from '../types';
 import { BridgeWorkflowRail } from './BridgeWorkflowRail';
 import { ChatGPTBridgeModal } from './ChatGPTBridgeModal';
@@ -549,6 +550,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                   </p>
                 </div>
               </div>
+              <CodexHandoffPanel project={project} />
             </section>
 
             {/* Environment Status & Version Tracking */}

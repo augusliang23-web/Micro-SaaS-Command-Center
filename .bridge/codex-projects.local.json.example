@@ -1,0 +1,20 @@
+{
+  "projects": [
+    {
+      "project_id": "proj-command-center",
+      "repository": "augusliang23-web/Micro-SaaS-Command-Center",
+      "cwd": "/absolute/path/to/Micro-SaaS-Command-Center",
+      "control_mode": "COLLABORATIVE",
+      "automation_level": "DISPATCHED",
+      "allowed_risk_levels": ["LOW"],
+      "eligible": true,
+      "capability_tier": "STANDARD_EXECUTION",
+      "provider_capability_evidence": {
+        "code_execution": "NATIVE",
+        "repository_read": "NATIVE",
+        "approval_pause": "NATIVE",
+        "status_query": "NATIVE"
+      }
+    }
+  ]
+}
