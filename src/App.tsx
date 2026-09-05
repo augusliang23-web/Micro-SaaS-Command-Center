@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   initialProjects,
   initialAttentionItems,
@@ -37,6 +37,37 @@ export default function App() {
   const [isConnectRepoOpen, setIsConnectRepoOpen] = useState<boolean>(false);
   const [isCiCdModalOpen, setIsCiCdModalOpen] = useState<boolean>(false);
   const [notificationToast, setNotificationToast] = useState<string | null>(null);
+
+  const [hasLoaded, setHasLoaded] = useState(false);
+
+  // Load persisted state on first mount, falling back to mock data
+  useEffect(() => {
+    fetch('/api/state')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((saved) => {
+        if (saved) {
+          setProjects(saved.projects ?? initialProjects);
+          setAttentionItems(saved.attentionItems ?? initialAttentionItems);
+          setNba(saved.nba ?? initialNextBestAction);
+          setSnapshot(saved.snapshot ?? initialExecutionSnapshot);
+        }
+      })
+      .catch((err) => console.warn('Failed to load saved state, using defaults:', err))
+      .finally(() => setHasLoaded(true));
+  }, []);
+
+  // Persist state to the local server whenever it changes (debounced)
+  useEffect(() => {
+    if (!hasLoaded) return;
+    const timeout = setTimeout(() => {
+      fetch('/api/state', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projects, attentionItems, nba, snapshot }),
+      }).catch((err) => console.warn('Failed to save state:', err));
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [hasLoaded, projects, attentionItems, nba, snapshot]);
 
   const showToast = (message: string) => {
     setNotificationToast(message);
