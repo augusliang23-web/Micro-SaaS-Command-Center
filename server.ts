@@ -10,7 +10,7 @@ import {
   isLoopbackOrigin,
   loadCodexProjectAllowlist,
 } from './server/codexHandoffRoutes.mjs';
-import { readState, writeState } from './server/localStateStore.mjs';
+import { createStateRouter } from './server/stateRoutes.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,24 +73,7 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 // Local single-file persistence for the dashboard's own state
-app.get('/api/state', (req, res) => {
-  const state = readState();
-  if (!state) {
-    res.status(404).json({ error: 'No saved state yet.' });
-    return;
-  }
-  res.json(state);
-});
-
-app.put('/api/state', (req, res) => {
-  try {
-    writeState(req.body);
-    res.json({ ok: true });
-  } catch (error) {
-    console.error('Error writing local state:', error);
-    res.status(500).json({ error: 'Failed to save state.' });
-  }
-});
+app.use('/api/state', createStateRouter());
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
