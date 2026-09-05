@@ -74,8 +74,11 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
 
 ## Current known gaps (as of 2026-09-05)
 
-1. **`ConnectRepoModal.tsx` is fully mocked** — `mockAvailableRepos` is a
-   hardcoded array; there is no real GitHub API call yet.
+1. ~~`ConnectRepoModal.tsx` is fully mocked~~ **done (2026-09-05)** —
+   `GET /api/github/repos` (`server/githubRoutes.mjs`) now shells out to the
+   machine's already-authenticated `gh` CLI and returns real repositories;
+   the token never reaches the browser. See
+   `docs/superpowers/evidence/2026-09-05-github-repo-connect-live-data-non-bridge.md`.
 2. Only two endpoints actually call an AI model:
    `/api/bridge/chatgpt-advice` and `/api/bridge/extract-features`.
    Everything else is static UI (`/api/state` persists UI state, it does not
@@ -90,7 +93,8 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
 
 - **Phase 1 (current)** — Personal use + shareable offline/local version for
   friends. Priority order: (1) ~~real persistence~~ **done** — local JSON
-  file, see above; (2) real GitHub API in `ConnectRepoModal`; (3) package for
+  file, see above; (2) ~~real GitHub API in `ConnectRepoModal`~~ **done**, see above;
+  (3) package for
   easy local deploy — Dockerfile + docker-compose.yml + README quickstart,
   ideally a GitHub template repo; (4) genericize `mockData.ts` before making
   the repo public/template.
