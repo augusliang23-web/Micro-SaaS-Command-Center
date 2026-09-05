@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Github,
   X,
@@ -40,64 +40,6 @@ export interface UnconnectedGitHubRepo {
   lastPushed: string;
 }
 
-const mockAvailableRepos: UnconnectedGitHubRepo[] = [
-  {
-    id: 'gh-1',
-    name: 'invoice-radar',
-    fullName: 'augusliang23/invoice-radar',
-    description: 'Autonomous SaaS unpaid invoice reminder agent with Stripe webhook integration.',
-    isPrivate: true,
-    language: 'TypeScript',
-    defaultBranch: 'main',
-    stars: 12,
-    lastPushed: '2 hours ago',
-  },
-  {
-    id: 'gh-2',
-    name: 'slack-standup-bot',
-    fullName: 'augusliang23/slack-standup-bot',
-    description: 'Lightweight asynchronous daily standup summarizer using OpenAI function calling.',
-    isPrivate: true,
-    language: 'Python',
-    defaultBranch: 'main',
-    stars: 34,
-    lastPushed: 'Yesterday',
-  },
-  {
-    id: 'gh-3',
-    name: 'stripe-tax-calc',
-    fullName: 'augusliang23/stripe-tax-calc',
-    description: 'EU VAT & cross-border sales tax calculation engine for indie hackers.',
-    isPrivate: true,
-    language: 'TypeScript',
-    defaultBranch: 'main',
-    stars: 8,
-    lastPushed: '3 days ago',
-  },
-  {
-    id: 'gh-4',
-    name: 'seo-rank-tracker',
-    fullName: 'augusliang23/seo-rank-tracker',
-    description: 'Daily automated Google search ranking scraper with Discord alert webhook.',
-    isPrivate: false,
-    language: 'Go',
-    defaultBranch: 'master',
-    stars: 45,
-    lastPushed: '5 days ago',
-  },
-  {
-    id: 'gh-5',
-    name: 'changelog-feed-ui',
-    fullName: 'augusliang23/changelog-feed-ui',
-    description: 'Embeddable in-app product release widget and changelog popup banner.',
-    isPrivate: false,
-    language: 'React / Vite',
-    defaultBranch: 'main',
-    stars: 19,
-    lastPushed: '1 week ago',
-  },
-];
-
 interface ConnectRepoModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -119,11 +61,41 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
   const [isManualInput, setIsManualInput] = useState(false);
   const [manualRepoName, setManualRepoName] = useState('');
   const [manualDescription, setManualDescription] = useState('');
+  const [repos, setRepos] = useState<UnconnectedGitHubRepo[]>([]);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [repoLoadError, setRepoLoadError] = useState<string | null>(null);
+
+  const loadRepos = useCallback(() => {
+    setIsLoadingRepos(true);
+    setRepoLoadError(null);
+    fetch('/api/github/repos')
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `無法載入 GitHub 倉庫（HTTP ${res.status}）。`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        setRepos(Array.isArray(data.repos) ? data.repos : []);
+      })
+      .catch((error: unknown) => {
+        setRepoLoadError(error instanceof Error ? error.message : '無法載入 GitHub 倉庫。');
+      })
+      .finally(() => {
+        setIsLoadingRepos(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    loadRepos();
+  }, [isOpen, loadRepos]);
 
   if (!isOpen) return null;
 
   // Filter out repos that are already added
-  const availableRepos = mockAvailableRepos.filter(
+  const availableRepos = repos.filter(
     (repo) =>
       !existingRepoNames.some(
         (existing) =>
@@ -355,7 +327,7 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
               <label className="font-bold text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
                 <span>1. 選擇 GitHub 倉庫</span>
                 <span className="text-stone-500 text-[11px] font-normal">
-                  ({availableRepos.length} 個倉庫尚未接入)
+                  ({isLoadingRepos ? '載入中...' : `${availableRepos.length} 個倉庫尚未接入`})
                 </span>
               </label>
               <button
@@ -409,6 +381,35 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
                 </div>
 
                 {/* Repo List */}
+                {isLoadingRepos && (
+                  <div className="text-center py-6 border border-dashed border-stone-300 rounded-lg bg-white text-stone-500">
+                    正在從 GitHub 讀取您的倉庫...
+                  </div>
+                )}
+
+                {!isLoadingRepos && repoLoadError && (
+                  <div className="text-center py-6 border border-dashed border-red-300 rounded-lg bg-red-50 text-red-700 space-y-2 px-4">
+                    <p>{repoLoadError}</p>
+                    <div className="flex items-center justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={loadRepos}
+                        className="underline hover:text-red-900 cursor-pointer font-semibold"
+                      >
+                        重試
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSwitchToManual}
+                        className="underline hover:text-red-900 cursor-pointer font-semibold"
+                      >
+                        改為手動輸入
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {!isLoadingRepos && !repoLoadError && (
                 <div className="grid grid-cols-1 gap-2 max-h-[220px] overflow-y-auto pr-1">
                   {filteredRepos.map((repo) => {
                     const isSelected = selectedRepo?.id === repo.id;
@@ -502,6 +503,7 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
                     </div>
                   )}
                 </div>
+                )}
               </div>
             )}
           </div>

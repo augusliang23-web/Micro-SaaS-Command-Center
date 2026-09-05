@@ -11,6 +11,7 @@ import {
   loadCodexProjectAllowlist,
 } from './server/codexHandoffRoutes.mjs';
 import { createStateRouter } from './server/stateRoutes.mjs';
+import { createGithubRouter } from './server/githubRoutes.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,6 +75,9 @@ function getGeminiClient(): GoogleGenAI | null {
 
 // Local single-file persistence for the dashboard's own state
 app.use('/api/state', createStateRouter());
+
+// Server-side proxy over the local `gh` CLI session; the GitHub token never reaches the browser
+app.use('/api/github', createGithubRouter());
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
