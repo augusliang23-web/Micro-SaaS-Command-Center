@@ -27,6 +27,7 @@ import {
   ReasoningEffort,
   BridgeGateId,
 } from '../types';
+import { projectProvenance } from '../mockData';
 
 export interface UnconnectedGitHubRepo {
   id: string;
@@ -246,32 +247,28 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
           lastDeployed: 'Pending initial release',
         },
         staging: {
-          status: 'Ready',
-          lastRefreshed: 'Just connected',
-          version: 'v0.1.0-alpha.1',
+          status: 'Not Deployed',
+          lastRefreshed: 'Not yet connected',
           branch: branch,
-          url: `https://staging-${repoName.toLowerCase().replace(/[^a-z0-9]/g, '')}.dev`,
         },
         uat: {
-          status: 'Ready',
-          lastRefreshed: 'Just connected',
+          status: 'Not Deployed',
+          lastRefreshed: 'Not yet connected',
           branch: branch,
         },
         targetReleaseVersion: 'v0.1.0',
         releaseType: 'major',
       },
       executionContext: {
-        githubIssue: '#1 Initial Onboarding',
-        githubPR: 'Pending',
+        githubPR: 'None yet',
         branch: branch,
-        lastCommit: 'HEAD',
         model: 'Terra',
         reasoningEffort: 'Medium',
         risk: 'Medium',
-        routingReason: `Automated dynamic routing initialized. Ready for task-level dispatch.`,
-        bridgeRunId: `run-init-${Math.floor(1000 + Math.random() * 9000)}`,
-        contextTokens: '1,240 tokens',
+        routingReason: `Local Prototype shell created; no task has been dispatched yet.`,
+        bridgeRunId: `local-sim-${Math.floor(1000 + Math.random() * 9000)}`,
       },
+      provenance: projectProvenance(`proj-${repoName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`),
       activityHistory: [
         {
           id: `act-init-${Date.now()}`,
@@ -302,12 +299,12 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
                 <h3 className="text-sm font-bold text-stone-900 font-mono uppercase tracking-wider">
                   接入 GitHub 倉庫（Connect Repository）
                 </h3>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-stone-100 text-stone-700 border border-stone-300">
-                  GitHub App Live
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-300">
+                  倉庫清單：即時 GitHub 資料
                 </span>
               </div>
               <p className="text-xs text-stone-500 mt-0.5">
-                從您的 GitHub 帳號中選擇尚未納入監控的 Micro-SaaS 倉庫，一鍵接入 8-Gate Bridge 工作流。
+                從您的 GitHub 帳號中選擇尚未納入監控的 Micro-SaaS 倉庫。接入後產生的 8-Gate Bridge 工作流卡片是本地模擬狀態，尚未與該倉庫的真實 Issue / PR / CI 連動。
               </p>
             </div>
           </div>

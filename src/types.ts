@@ -34,6 +34,33 @@ export type AttentionCategory =
 
 export type WaitingState = 'WAITING_FOR_HUMAN' | 'AI_RUNNING' | 'BLOCKED' | 'AUTOMATION_IDLE';
 
+export type ProvenanceAuthority =
+  | 'fixture'
+  | 'user-entered'
+  | 'AI-candidate'
+  | 'GitHub-observed'
+  | 'CI-observed'
+  | 'deployment-observed';
+
+export interface StatusProvenance {
+  authority: ProvenanceAuthority;
+  observedAt: string;
+  evidenceRef: string;
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export type ProjectProvenanceField =
+  | 'gate'
+  | 'github'
+  | 'test'
+  | 'review'
+  | 'environment'
+  | 'featureFlag'
+  | 'release'
+  | 'activity';
+
+export type ProjectProvenance = Record<ProjectProvenanceField, StatusProvenance>;
+
 export interface GateStepInfo {
   id: BridgeGateId;
   label: string;
@@ -147,6 +174,7 @@ export interface MicroSaaSProject {
   repository: string;
   tags: string[];
   features?: FeatureItem[];
+  provenance: ProjectProvenance;
 }
 
 export interface AttentionItem {

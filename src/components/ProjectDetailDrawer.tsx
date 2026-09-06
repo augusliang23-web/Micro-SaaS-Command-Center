@@ -36,6 +36,15 @@ import {
   getModelBadgeStyle,
   getWaitingStateBadge,
 } from '../utils';
+import { provenanceLabel } from '../statusProvenance.mjs';
+
+function ProvenanceBadge({ provenance }: { provenance?: { authority: string; confidence: string } }) {
+  return (
+    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
+      {provenanceLabel(provenance)}
+    </span>
+  );
+}
 
 interface ProjectDetailDrawerProps {
   project: MicroSaaSProject | null;
@@ -65,9 +74,14 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   onConfirmSelectiveRelease,
   onShowToast,
 }) => {
-  if (!project) return null;
-
   const [selectedGateId, setSelectedGateId] = useState<string | null>(null);
+  const [decisionOption, setDecisionOption] = useState<string>('option1');
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [isChatGPTModalOpen, setIsChatGPTModalOpen] = useState(false);
+  const [isCiCdModalOpen, setIsCiCdModalOpen] = useState(false);
+  const [iterationPromptOpen, setIterationPromptOpen] = useState(false);
+
+  if (!project) return null;
 
   // Derive active gate: user-selected gate or current active gate
   const activeGateId = selectedGateId || project.currentGate;
@@ -80,12 +94,6 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
       shortLabel: 'DISCUSS',
       status: 'CURRENT',
     };
-
-  const [decisionOption, setDecisionOption] = useState<string>('option1');
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
-  const [isChatGPTModalOpen, setIsChatGPTModalOpen] = useState(false);
-  const [isCiCdModalOpen, setIsCiCdModalOpen] = useState(false);
-  const [iterationPromptOpen, setIterationPromptOpen] = useState(false);
 
   const healthStyle = getHealthBadgeStyle(project.health);
   const stageStyle = getStageBadgeStyle(project.stage);
@@ -355,6 +363,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                 <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 font-mono">
                   2. Bridge ↔ CI/CD 8-Gate 流水線軌道
                 </h3>
+                <ProvenanceBadge provenance={project.provenance?.gate} />
               </div>
 
               <div className="flex items-center gap-2">
@@ -490,6 +499,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                   <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 font-mono">
                     3. Execution Context
                   </h3>
+                  <ProvenanceBadge provenance={project.provenance?.github} />
                 </div>
                 <span className="text-[11px] font-mono text-stone-500">
                   Run ID: {project.executionContext.bridgeRunId}
@@ -561,6 +571,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                   <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 font-mono">
                     4. 環境架構與版本改版監控 (Environments & Versioning)
                   </h3>
+                  <ProvenanceBadge provenance={project.provenance?.environment} />
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-mono text-stone-500 bg-stone-100 px-2 py-0.5 rounded border border-stone-300">

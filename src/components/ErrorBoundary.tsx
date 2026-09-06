@@ -47,7 +47,7 @@ export class ErrorBoundary extends Component<Props, State> {
               系統渲染遭遇預期外狀態
             </h2>
             <p className="text-xs text-stone-600 font-sans leading-relaxed">
-              工作流狀態已安全保存。已為您重置狀態管線，請點擊下方按鈕恢復控制台。
+              Prototype 渲染發生錯誤。瀏覽器記憶體中的狀態未被保存，「恢復控制台」會回到 fixture 初始資料，而非您先前的操作結果。
             </p>
             {this.state.error && (
               <div className="bg-stone-50 p-3 rounded text-[11px] text-stone-500 text-left overflow-x-auto border border-stone-200">

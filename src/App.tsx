@@ -4,6 +4,7 @@ import {
   initialAttentionItems,
   initialNextBestAction,
   initialExecutionSnapshot,
+  projectProvenance,
 } from './mockData';
 import { MicroSaaSProject, AttentionItem, NextBestAction, AIExecutionSnapshotData } from './types';
 import { CockpitHeader } from './components/CockpitHeader';
@@ -46,7 +47,12 @@ export default function App() {
       .then((res) => (res.ok ? res.json() : null))
       .then((saved) => {
         if (saved) {
-          setProjects(saved.projects ?? initialProjects);
+          // Backfill provenance on state saved before this field existed, so older
+          // persisted projects don't crash the drawer on a missing `provenance` object.
+          const migratedProjects = (saved.projects ?? initialProjects).map((p: MicroSaaSProject) =>
+            p.provenance ? p : { ...p, provenance: projectProvenance(p.id) }
+          );
+          setProjects(migratedProjects);
           setAttentionItems(saved.attentionItems ?? initialAttentionItems);
           setNba(saved.nba ?? initialNextBestAction);
           setSnapshot(saved.snapshot ?? initialExecutionSnapshot);
@@ -315,7 +321,7 @@ export default function App() {
       setProjects((prev) => prev.map((p) => (p.id === projectId ? updatedProj : p)));
       setSelectedProject(updatedProj);
       if (nextGate.id === 'DONE') {
-        showToast(`🎉 [${proj.name}] 已完成 1-Click Promote！正式生產環境已更新至版號 ${updatedEnv.production.version}`);
+        showToast(`[模擬] [${proj.name}] 已推進至 DONE 關卡（本地 Prototype 狀態，並未實際部署至版號 ${updatedEnv.production.version}）`);
       } else {
         showToast(`已將 [${proj.name}] 推進至關卡：${nextGate.label}`);
       }
@@ -506,12 +512,12 @@ export default function App() {
     setProjects((prev) => prev.map((p) => (p.id === projectId ? updatedProj : p)));
     setSelectedProject(updatedProj);
     showToast(
-      `🚀 [${proj.name}] 選擇性發布成功！已將 ${selectedFeatureIds.length} 項功能上線至 Production (${releaseVersion})，其餘功能安全隔離並記入交付矩陣。`
+      `[模擬] [${proj.name}] 已在本地標記 ${selectedFeatureIds.length} 項功能為「已選擇發布」(${releaseVersion})；未實際部署至 Production。`
     );
   };
 
   const handleRefreshSim = () => {
-    showToast('Bridge 遙測已同步，共 6 個 Micro-SaaS 倉庫狀態最新。');
+    showToast('[模擬] 已重新整理本地 Prototype 快照；未查詢任何真實 Bridge 或倉庫狀態。');
   };
 
   const handleConnectRepo = (newProject: MicroSaaSProject) => {
@@ -521,11 +527,19 @@ export default function App() {
       ...prev,
       waitingForHuman: prev.waitingForHuman + 1,
     }));
-    showToast(`已成功接入 GitHub 倉庫 [${newProject.repository}]，8-Gate 工作流已啟動！`);
+    showToast(`已接入 GitHub 倉庫 [${newProject.repository}]；新建的 8-Gate 工作流卡片是本地模擬狀態，尚未連動真實 Issue/PR/CI。`);
   };
 
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-stone-800 font-sans antialiased selection:bg-stone-300 selection:text-stone-900 flex flex-col">
+      {/* Persistent Prototype Boundary */}
+      <div
+        role="status"
+        className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-950 text-center"
+      >
+        Simulated / Prototype — 除了「接入倉庫」的 GitHub 清單外，本介面不會變更任何真實的 GitHub、Bridge、CI/CD、feature flag、staging、UAT 或 Production 狀態。
+      </div>
+
       {/* Toast Notification */}
       {notificationToast && (
         <div className="fixed bottom-5 right-5 z-50 bg-stone-900 border border-stone-700 text-stone-100 text-xs font-mono px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 animate-bounce">

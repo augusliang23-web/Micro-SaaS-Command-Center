@@ -36,8 +36,6 @@ export const SelectiveReleaseModal: React.FC<SelectiveReleaseModalProps> = ({
   onClose,
   onConfirmSelectiveRelease,
 }) => {
-  if (!isOpen) return null;
-
   const currentProdVer = project.environment.production.version || 'v1.0.0';
   const defaultTargetVer =
     project.environment.targetReleaseVersion ||
@@ -62,6 +60,8 @@ export const SelectiveReleaseModal: React.FC<SelectiveReleaseModalProps> = ({
   });
 
   const [copiedChangelog, setCopiedChangelog] = useState(false);
+
+  if (!isOpen) return null;
 
   const toggleFeature = (id: string) => {
     setSelectedIds((prev) =>
@@ -249,6 +249,7 @@ export const SelectiveReleaseModal: React.FC<SelectiveReleaseModalProps> = ({
                     <input
                       type="checkbox"
                       checked={isSelected}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={() => toggleFeature(feat.id)}
                       className="mt-1 h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-900 cursor-pointer"
                     />

@@ -4,7 +4,29 @@ import {
   NextBestAction,
   AIExecutionSnapshotData,
   GateStepInfo,
+  ProjectProvenance,
+  StatusProvenance,
 } from './types';
+
+const FIXTURE_OBSERVED_AT = '2026-09-01T00:00:00.000Z';
+
+const fixtureProvenance = (evidenceRef: string): StatusProvenance => ({
+  authority: 'fixture',
+  observedAt: FIXTURE_OBSERVED_AT,
+  evidenceRef: `fixture:${evidenceRef}`,
+  confidence: 'low',
+});
+
+export const projectProvenance = (projectId: string): ProjectProvenance => ({
+  gate: fixtureProvenance(`${projectId}:gate`),
+  github: fixtureProvenance(`${projectId}:github`),
+  test: fixtureProvenance(`${projectId}:test`),
+  review: fixtureProvenance(`${projectId}:review`),
+  environment: fixtureProvenance(`${projectId}:environment`),
+  featureFlag: fixtureProvenance(`${projectId}:feature-flag`),
+  release: fixtureProvenance(`${projectId}:release`),
+  activity: fixtureProvenance(`${projectId}:activity`),
+});
 
 const standardGatesTemplate = (): GateStepInfo[] => [
   { id: 'DISCUSS', label: 'Discuss & Ideate', shortLabel: 'DISCUSS', status: 'COMPLETED', timestamp: 'Yesterday 14:20' },
@@ -175,6 +197,7 @@ export const initialProjects: MicroSaaSProject[] = [
     ],
     repository: 'github.com/my-org/prosync-core',
     tags: ['Inventory', 'SaaS', 'TypeScript', 'Prisma'],
+    provenance: projectProvenance('proj-prosync'),
     features: [
       {
         id: 'feat-prosync-1',
@@ -396,6 +419,7 @@ export const initialProjects: MicroSaaSProject[] = [
     ],
     repository: 'github.com/my-org/pm-dashboard',
     tags: ['Internal Tool', 'React', 'Tailwind', 'Express'],
+    provenance: projectProvenance('proj-pm-dash'),
     features: [
       {
         id: 'feat-pm-1',
@@ -519,6 +543,7 @@ export const initialProjects: MicroSaaSProject[] = [
     ],
     repository: 'github.com/my-org/microsaas-command-center',
     tags: ['AI-Native', 'DevTool', 'Cockpit', 'React'],
+    provenance: projectProvenance('proj-command-center'),
   },
   {
     id: 'proj-formflow',
@@ -600,6 +625,7 @@ export const initialProjects: MicroSaaSProject[] = [
     ],
     repository: 'github.com/my-org/formflow-engine',
     tags: ['Billing', 'Stripe', 'NodeJS', 'PostgreSQL'],
+    provenance: projectProvenance('proj-formflow'),
     features: [
       {
         id: 'feat-ff-1',
@@ -725,6 +751,7 @@ export const initialProjects: MicroSaaSProject[] = [
     ],
     repository: 'github.com/my-org/docupulse-api',
     tags: ['AI Document', 'FastAPI', 'Vite', 'Production'],
+    provenance: projectProvenance('proj-docupulse'),
     features: [
       {
         id: 'feat-dp-1',
@@ -825,6 +852,7 @@ export const initialProjects: MicroSaaSProject[] = [
     ],
     repository: 'github.com/my-org/authkit-micro',
     tags: ['Auth', 'Security', 'PostgreSQL', 'Multi-tenant'],
+    provenance: projectProvenance('proj-authkit'),
     features: [
       {
         id: 'feat-ak-1',
