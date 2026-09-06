@@ -17,6 +17,10 @@ kept separate from this file.
 - AI: `@google/genai` (Gemini), originally scaffolded via Google AI Studio
 - Package manager: **npm** (`package-lock.json`, `packageManager: npm@10.8.2`
   in `package.json`). Migrated off Bun; `bun.lock` has been removed.
+- Testing: `node --test test/` (`npm test`) for server/logic-level tests;
+  `vitest` + `jsdom` + `@testing-library/react` (`npm run test:ui`,
+  configured in `vitest.config.ts`) for React component tests — added
+  2026-09-05 alongside `src/statusProvenance.mjs`.
 - Originally developed via Codex (ChatGPT Codex Bridge); Claude Code now also
   executes tasks directly in this repo, under the boundaries in `CLAUDE.md`.
 
@@ -88,6 +92,16 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
 4. `mockData.ts` currently contains Augus's real project names/status
    (ProSync, pm-dashboard, etc.) — must be genericized before this repo is
    shared publicly as a template (see Phase 1).
+5. **Partially done (2026-09-05):** every project now carries project-level
+   `provenance` (`src/statusProvenance.mjs`, `src/types.ts`) and a persistent
+   "Simulated / Prototype" banner + badges make clear that gate/environment/
+   execution-context state is local Prototype simulation, not a real GitHub/
+   CI/deployment sync. Still open: per-gate-step/per-feature-item provenance,
+   full modal accessibility (focus trap, Escape, ARIA dialog roles), and a
+   `VITE_PROTOTYPE_SAFE_MODE` flag to disable the two AI-calling endpoints
+   during frontend-only verification. See
+   `docs/superpowers/evidence/2026-09-05-prototype-provenance-guardrails-partial-non-bridge.md`
+   and `docs/superpowers/issue-drafts/2026-09-02-prototype-state-provenance-safety-guardrails.md`.
 
 ## Roadmap
 
