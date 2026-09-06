@@ -9,6 +9,7 @@ test('BLOCKED projects get the danger verdict using the blocker text', () => {
   assert.equal(verdict.explanation, 'Missing STRIPE_WEBHOOK_SECRET');
   assert.equal(verdict.hasAction, true);
   assert.equal(verdict.isWaiting, false);
+  assert.equal(verdict.source, 'manual');
 });
 
 test('BLOCKED without blocker text falls back to a generic explanation', () => {
@@ -44,4 +45,91 @@ test('getVerdictStyle returns a color set per level and falls back for unknown l
   assert.equal(getVerdictStyle('danger').headlineColor, '#e11d48');
   assert.equal(getVerdictStyle('ready').headlineColor, '#059669');
   assert.deepEqual(getVerdictStyle('nonsense'), getVerdictStyle('waiting'));
+});
+
+// --- Real GitHub-state-driven path (a githubState argument overrides manual fields) ---
+
+const manualProject = { waitingState: 'WAITING_FOR_HUMAN', blocker: 'stale manual blocker text' };
+
+test('a githubState argument takes priority over the project manual fields', () => {
+  const verdict = getVerdict(manualProject, { state: 'none' });
+  assert.equal(verdict.source, 'github');
+  assert.notEqual(verdict.explanation, manualProject.blocker);
+});
+
+test('github state "none" is a waiting verdict (no code observed yet)', () => {
+  const verdict = getVerdict(manualProject, { state: 'none' });
+  assert.equal(verdict.level, 'waiting');
+});
+
+test('github state "merged" is a ready verdict that is honest about not implying deployment', () => {
+  const verdict = getVerdict(manualProject, { state: 'merged', prNumber: 9 });
+  assert.equal(verdict.level, 'ready');
+  assert.match(verdict.explanation, /PR #9/);
+  assert.match(verdict.explanation, /上線流程/);
+});
+
+test('an open draft PR is waiting regardless of CI/review state', () => {
+  const verdict = getVerdict(manualProject, {
+    state: 'open',
+    isDraft: true,
+    ciStatus: 'passing',
+    reviewDecision: 'approved',
+  });
+  assert.equal(verdict.level, 'waiting');
+});
+
+test('open PR with failing CI is danger', () => {
+  const verdict = getVerdict(manualProject, {
+    state: 'open',
+    isDraft: false,
+    ciStatus: 'failing',
+    reviewDecision: 'review_required',
+  });
+  assert.equal(verdict.level, 'danger');
+});
+
+test('open PR with changes requested is danger even if CI passed', () => {
+  const verdict = getVerdict(manualProject, {
+    state: 'open',
+    isDraft: false,
+    ciStatus: 'passing',
+    reviewDecision: 'changes_requested',
+  });
+  assert.equal(verdict.level, 'danger');
+});
+
+test('open PR with CI running (and no changes requested) is waiting', () => {
+  const verdict = getVerdict(manualProject, {
+    state: 'open',
+    isDraft: false,
+    ciStatus: 'running',
+    reviewDecision: 'review_required',
+  });
+  assert.equal(verdict.level, 'waiting');
+});
+
+test('open PR with passing CI and no blocking review is ready', () => {
+  const verdict = getVerdict(manualProject, {
+    state: 'open',
+    isDraft: false,
+    ciStatus: 'passing',
+    reviewDecision: 'approved',
+  });
+  assert.equal(verdict.level, 'ready');
+});
+
+test('the github path never returns the decision level (no product-decision signal exists in GitHub)', () => {
+  const scenarios = [
+    { state: 'none' },
+    { state: 'merged', prNumber: 1 },
+    { state: 'open', isDraft: true },
+    { state: 'open', isDraft: false, ciStatus: 'failing' },
+    { state: 'open', isDraft: false, ciStatus: 'passing', reviewDecision: 'changes_requested' },
+    { state: 'open', isDraft: false, ciStatus: 'running' },
+    { state: 'open', isDraft: false, ciStatus: 'passing', reviewDecision: 'approved' },
+  ];
+  for (const githubState of scenarios) {
+    assert.notEqual(getVerdict(manualProject, githubState).level, 'decision');
+  }
 });

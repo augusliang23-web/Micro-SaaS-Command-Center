@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Layers,
   ArrowUpDown,
@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock,
   GitPullRequest,
+  RefreshCw,
 } from 'lucide-react';
 import { MicroSaaSProject, ProjectHealth } from '../types';
 import { getModelBadgeStyle, getGateStatusBadgeStyle } from '../utils';
@@ -28,6 +29,22 @@ const VERDICT_ICON: Record<string, React.ElementType> = {
   ready: CheckCircle2,
   waiting: Clock,
 };
+
+// Only real ConnectRepoModal-picked repos look like "owner/name"; the
+// built-in fixture projects use a "github.com/my-org/..." placeholder and
+// have no real repo behind them to fetch PR/CI status for.
+function isRealGithubRepo(repository: string): boolean {
+  return /^[\w.-]+\/[\w.-]+$/.test(repository);
+}
+
+interface GithubPullStatus {
+  state: 'open' | 'merged' | 'none';
+  prNumber?: number;
+  prUrl?: string;
+  isDraft?: boolean;
+  ciStatus?: 'passing' | 'failing' | 'running' | 'none';
+  reviewDecision?: 'approved' | 'changes_requested' | 'review_required';
+}
 
 function outcomeBadgeStyle(outcome: string): { bg: string; text: string; border: string } {
   switch (outcome) {
@@ -53,7 +70,25 @@ interface ProjectVerdictCardProps {
 
 const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project, isSelected, onSelect }) => {
   const [expanded, setExpanded] = useState(false);
-  const verdict = getVerdict(project);
+  const [githubState, setGithubState] = useState<GithubPullStatus | null>(null);
+  const [isLoadingGithub, setIsLoadingGithub] = useState(false);
+  const isLinkedToRealRepo = isRealGithubRepo(project.repository);
+
+  const loadGithubState = useCallback(() => {
+    if (!isLinkedToRealRepo) return;
+    setIsLoadingGithub(true);
+    fetch(`/api/github/pull-status?repo=${encodeURIComponent(project.repository)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setGithubState(data))
+      .catch(() => setGithubState(null))
+      .finally(() => setIsLoadingGithub(false));
+  }, [isLinkedToRealRepo, project.repository]);
+
+  useEffect(() => {
+    loadGithubState();
+  }, [loadGithubState]);
+
+  const verdict = getVerdict(project, githubState ?? undefined);
   const style = getVerdictStyle(verdict.level);
   const Icon = VERDICT_ICON[verdict.level];
   const modelStyle = getModelBadgeStyle(project.model);
@@ -63,6 +98,16 @@ const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project, isSele
   const testStyle = outcomeBadgeStyle(project.testOutcome);
   const reviewStyle = outcomeBadgeStyle(project.reviewOutcome);
   const prRef = project.executionContext.githubPR || project.executionContext.githubIssue;
+  const githubCiStyle = outcomeBadgeStyle(
+    githubState?.ciStatus === 'passing' ? 'PASS' : githubState?.ciStatus === 'failing' ? 'FAIL' : githubState?.ciStatus === 'running' ? 'RUNNING' : ''
+  );
+  const githubReviewStyle = outcomeBadgeStyle(
+    githubState?.reviewDecision === 'approved'
+      ? 'APPROVED'
+      : githubState?.reviewDecision === 'changes_requested'
+      ? 'CHANGES_REQUIRED'
+      : ''
+  );
 
   return (
     <div
@@ -112,6 +157,17 @@ const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project, isSele
           </div>
         )}
 
+        {isLinkedToRealRepo && (
+          <button
+            onClick={loadGithubState}
+            disabled={isLoadingGithub}
+            title="重新查詢 GitHub 最新狀態"
+            className="text-stone-300 hover:text-stone-600 transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isLoadingGithub ? 'animate-spin' : ''}`} />
+          </button>
+        )}
+
         <button
           onClick={() => setExpanded((v) => !v)}
           className="ml-auto flex items-center gap-1 text-xs text-stone-400 hover:text-stone-700 transition-colors cursor-pointer"
@@ -126,37 +182,75 @@ const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project, isSele
         <div className="mt-4 pt-4 border-t border-dashed border-stone-200 font-mono">
           <div className="flex items-center gap-1.5 mb-2">
             <span className="text-[10px] text-stone-400 uppercase tracking-wider">技術細節</span>
-            <span className="text-[9px] text-stone-300">— 底層工程狀態，一般不用看</span>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span
-              className={`text-[11px] px-2 py-0.5 rounded border ${gateStyle.bg} ${gateStyle.text} ${gateStyle.border}`}
-            >
-              Gate: {project.currentGate}
+            <span className="text-[9px] text-stone-300">
+              {verdict.source === 'github' ? '— 即時查詢 GitHub 得到的真實狀態' : '— 底層工程狀態，一般不用看'}
             </span>
-            {prRef && (
-              <span className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200 flex items-center gap-1">
-                <GitPullRequest className="h-3 w-3" />
-                {prRef}
+          </div>
+
+          {verdict.source === 'github' && githubState && githubState.state !== 'none' ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              {githubState.prUrl && (
+                <a
+                  href={githubState.prUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200 flex items-center gap-1 hover:bg-sky-100"
+                >
+                  <GitPullRequest className="h-3 w-3" />
+                  PR #{githubState.prNumber}
+                </a>
+              )}
+              <span className="text-[11px] px-2 py-0.5 rounded border bg-stone-100 text-stone-700 border-stone-300">
+                {githubState.state === 'merged' ? '已合併' : githubState.isDraft ? '草稿中' : '開發中'}
               </span>
-            )}
-            <span
-              className={`text-[11px] px-2 py-0.5 rounded border ${testStyle.bg} ${testStyle.text} ${testStyle.border}`}
-            >
-              Test: {project.testOutcome}
-            </span>
-            <span
-              className={`text-[11px] px-2 py-0.5 rounded border ${reviewStyle.bg} ${reviewStyle.text} ${reviewStyle.border}`}
-            >
-              Review: {project.reviewOutcome}
-            </span>
-            <span
-              className="text-[11px] px-2 py-0.5 rounded border"
-              style={{ backgroundColor: modelStyle.bg, color: modelStyle.accent, borderColor: modelStyle.border }}
-            >
-              Model: {project.model}
-            </span>
-          </div>
+              {githubState.state === 'open' && (
+                <>
+                  <span className={`text-[11px] px-2 py-0.5 rounded border ${githubCiStyle.bg} ${githubCiStyle.text} ${githubCiStyle.border}`}>
+                    CI: {githubState.ciStatus === 'none' ? '尚無自動檢查' : githubState.ciStatus}
+                  </span>
+                  <span className={`text-[11px] px-2 py-0.5 rounded border ${githubReviewStyle.bg} ${githubReviewStyle.text} ${githubReviewStyle.border}`}>
+                    Review: {githubState.reviewDecision || 'review_required'}
+                  </span>
+                </>
+              )}
+              <span
+                className="text-[11px] px-2 py-0.5 rounded border"
+                style={{ backgroundColor: modelStyle.bg, color: modelStyle.accent, borderColor: modelStyle.border }}
+              >
+                Model: {project.model}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span
+                className={`text-[11px] px-2 py-0.5 rounded border ${gateStyle.bg} ${gateStyle.text} ${gateStyle.border}`}
+              >
+                Gate: {project.currentGate}
+              </span>
+              {prRef && (
+                <span className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200 flex items-center gap-1">
+                  <GitPullRequest className="h-3 w-3" />
+                  {prRef}
+                </span>
+              )}
+              <span
+                className={`text-[11px] px-2 py-0.5 rounded border ${testStyle.bg} ${testStyle.text} ${testStyle.border}`}
+              >
+                Test: {project.testOutcome}
+              </span>
+              <span
+                className={`text-[11px] px-2 py-0.5 rounded border ${reviewStyle.bg} ${reviewStyle.text} ${reviewStyle.border}`}
+              >
+                Review: {project.reviewOutcome}
+              </span>
+              <span
+                className="text-[11px] px-2 py-0.5 rounded border"
+                style={{ backgroundColor: modelStyle.bg, color: modelStyle.accent, borderColor: modelStyle.border }}
+              >
+                Model: {project.model}
+              </span>
+            </div>
+          )}
           <button
             onClick={onSelect}
             className="mt-3 text-[11px] text-stone-500 hover:text-stone-800 underline flex items-center gap-0.5 cursor-pointer"

@@ -46,38 +46,40 @@ export function mapGithubRepo(item, now = new Date()) {
   };
 }
 
-export function fetchGithubRepos({ execFileFn = execFile } = {}) {
+/**
+ * Low-level `gh api <path>` caller shared by every read-only GitHub fetch in
+ * this server. Resolves with the parsed JSON body; rejects with a
+ * GithubCliError classified as 'not_found' (gh missing), 'not_authenticated',
+ * or 'failed'.
+ */
+export function ghApiJson(path, { execFileFn = execFile } = {}) {
   return new Promise((resolve, reject) => {
-    execFileFn(
-      'gh',
-      ['api', '/user/repos?per_page=100&sort=pushed&direction=desc'],
-      { maxBuffer: 10 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          if (error.code === 'ENOENT') {
-            reject(new GithubCliError('GitHub CLI (gh) was not found on the server PATH.', 'not_found'));
-            return;
-          }
-          if (/not logged|auth login|authentication/i.test(stderr || '')) {
-            reject(
-              new GithubCliError('GitHub CLI is not authenticated. Run `gh auth login`.', 'not_authenticated'),
-            );
-            return;
-          }
-          reject(new GithubCliError((stderr || error.message || '').trim(), 'failed'));
+    execFileFn('gh', ['api', path], { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        if (error.code === 'ENOENT') {
+          reject(new GithubCliError('GitHub CLI (gh) was not found on the server PATH.', 'not_found'));
           return;
         }
-        try {
-          const parsed = JSON.parse(stdout);
-          if (!Array.isArray(parsed)) {
-            reject(new GithubCliError('Unexpected response shape from GitHub CLI.', 'failed'));
-            return;
-          }
-          resolve(parsed.map((item) => mapGithubRepo(item)));
-        } catch {
-          reject(new GithubCliError('Failed to parse GitHub CLI response.', 'failed'));
+        if (/not logged|auth login|authentication/i.test(stderr || '')) {
+          reject(new GithubCliError('GitHub CLI is not authenticated. Run `gh auth login`.', 'not_authenticated'));
+          return;
         }
-      },
-    );
+        reject(new GithubCliError((stderr || error.message || '').trim(), 'failed'));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch {
+        reject(new GithubCliError('Failed to parse GitHub CLI response.', 'failed'));
+      }
+    });
   });
+}
+
+export async function fetchGithubRepos({ execFileFn = execFile } = {}) {
+  const parsed = await ghApiJson('/user/repos?per_page=100&sort=pushed&direction=desc', { execFileFn });
+  if (!Array.isArray(parsed)) {
+    throw new GithubCliError('Unexpected response shape from GitHub CLI.', 'failed');
+  }
+  return parsed.map((item) => mapGithubRepo(item));
 }

@@ -91,3 +91,8 @@ test('createGithubRouter is constructible with an injected fetchRepos dependency
   const router = createGithubRouter({ fetchRepos: async () => [] });
   assert.equal(typeof router, 'function');
 });
+
+test('createGithubRouter also accepts an injected fetchPullStatus dependency', () => {
+  const router = createGithubRouter({ fetchPullStatus: async () => ({ state: 'none' }) });
+  assert.equal(typeof router, 'function');
+});

@@ -47,4 +47,6 @@ Same boundaries as the rest of this checkout's governance: no writes back to Git
 
 ## Status
 
-This is a local planning document only. It has not been posted as a GitHub Issue and carries no dispatch authorization. `bridge:ready` must not be added until the owner approves the gate-mapping decision above and records the formal preflight (exact Issue, allowlisted files, model/reasoning/risk labels, `bridge:ready`) per `CLAUDE.md`.
+**Superseded by implementation (2026-09-06).** The owner chose option (b) from the Scope section above (infer state from GitHub signals, no manual clicking) and had it implemented via direct chat instruction outside the Bridge/Issue flow — see `docs/superpowers/evidence/2026-09-06-real-github-signal-verdicts-non-bridge.md` for what shipped (`server/githubPullStatus.mjs`, `GET /api/github/pull-status`, `src/verdict.mjs`'s GitHub-driven path). This document remains as the historical record of the architecture question and options considered; it never went through the formal Bridge/Issue/`bridge:ready` process described below, and none of that changes retroactively.
+
+This was a local planning document only. It was never posted as a GitHub Issue and carried no dispatch authorization. `bridge:ready` must not be added retroactively; the formal preflight (exact Issue, allowlisted files, model/reasoning/risk labels, `bridge:ready`) per `CLAUDE.md` was never recorded for this work.

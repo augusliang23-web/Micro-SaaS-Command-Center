@@ -102,6 +102,21 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
    during frontend-only verification. See
    `docs/superpowers/evidence/2026-09-05-prototype-provenance-guardrails-partial-non-bridge.md`
    and `docs/superpowers/issue-drafts/2026-09-02-prototype-state-provenance-safety-guardrails.md`.
+6. **Done (2026-09-06):** Portfolio Overview's default view is now a
+   plain-language "verdict" card per project (`src/verdict.mjs`,
+   `src/components/PortfolioOverview.tsx`) instead of the 8-Gate
+   Bridge/PR/CI jargon table — driven by the owner (who has no software
+   engineering background himself) not being able to reliably judge
+   engineering states either. For projects connected to a real GitHub repo,
+   the verdict is now driven by real, live-queried PR/CI/review signals
+   (`server/githubPullStatus.mjs`, `GET /api/github/pull-status`), not
+   manual clicking; fixture/demo projects fall back to the old manually-set
+   `waitingState`/`blocker` fields. See
+   `docs/superpowers/evidence/2026-09-06-plain-language-verdict-ui-non-bridge.md`
+   and `docs/superpowers/evidence/2026-09-06-real-github-signal-verdicts-non-bridge.md`.
+   Known gaps: "merged" doesn't mean "deployed" (no deployment signal source
+   yet), no way to detect a needed product decision from GitHub alone, and
+   only the single most-recently-updated PR per repo is considered.
 
 ## Roadmap
 
