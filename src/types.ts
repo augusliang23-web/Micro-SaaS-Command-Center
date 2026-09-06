@@ -177,6 +177,19 @@ export interface MicroSaaSProject {
   provenance: ProjectProvenance;
 }
 
+// Shape returned by GET /api/github/pull-status (server/githubPullStatus.mjs)
+export interface GithubPullStatus {
+  state: 'open' | 'merged' | 'active' | 'none';
+  prNumber?: number;
+  prUrl?: string;
+  isDraft?: boolean;
+  ciStatus?: 'passing' | 'failing' | 'running' | 'none';
+  reviewDecision?: 'approved' | 'changes_requested' | 'review_required';
+  lastCommitMessage?: string;
+  lastCommitAt?: string;
+  lastCommitUrl?: string;
+}
+
 export interface AttentionItem {
   id: string;
   projectId: string;

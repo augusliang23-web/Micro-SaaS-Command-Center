@@ -12,8 +12,8 @@ import {
   GitPullRequest,
   RefreshCw,
 } from 'lucide-react';
-import { MicroSaaSProject, ProjectHealth } from '../types';
-import { getModelBadgeStyle, getGateStatusBadgeStyle } from '../utils';
+import { MicroSaaSProject, ProjectHealth, GithubPullStatus } from '../types';
+import { getModelBadgeStyle, getGateStatusBadgeStyle, isRealGithubRepo, outcomeBadgeStyle } from '../utils';
 import { getVerdict, getVerdictStyle } from '../verdict.mjs';
 
 interface PortfolioOverviewProps {
@@ -29,41 +29,6 @@ const VERDICT_ICON: Record<string, React.ElementType> = {
   ready: CheckCircle2,
   waiting: Clock,
 };
-
-// Only real ConnectRepoModal-picked repos look like "owner/name"; the
-// built-in fixture projects use a "github.com/my-org/..." placeholder and
-// have no real repo behind them to fetch PR/CI status for.
-function isRealGithubRepo(repository: string): boolean {
-  return /^[\w.-]+\/[\w.-]+$/.test(repository);
-}
-
-interface GithubPullStatus {
-  state: 'open' | 'merged' | 'active' | 'none';
-  prNumber?: number;
-  prUrl?: string;
-  isDraft?: boolean;
-  ciStatus?: 'passing' | 'failing' | 'running' | 'none';
-  reviewDecision?: 'approved' | 'changes_requested' | 'review_required';
-  lastCommitMessage?: string;
-  lastCommitAt?: string;
-  lastCommitUrl?: string;
-}
-
-function outcomeBadgeStyle(outcome: string): { bg: string; text: string; border: string } {
-  switch (outcome) {
-    case 'PASS':
-    case 'APPROVED':
-      return { bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' };
-    case 'RUNNING':
-    case 'IN_REVIEW':
-      return { bg: 'bg-sky-50', text: 'text-sky-900', border: 'border-sky-200' };
-    case 'FAIL':
-    case 'CHANGES_REQUIRED':
-      return { bg: 'bg-amber-50', text: 'text-amber-900', border: 'border-amber-200' };
-    default:
-      return { bg: 'bg-stone-100', text: 'text-stone-500', border: 'border-stone-200' };
-  }
-}
 
 interface ProjectVerdictCardProps {
   project: MicroSaaSProject;

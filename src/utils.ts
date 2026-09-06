@@ -88,3 +88,28 @@ export function getWaitingStateBadge(waitingState: WaitingState): { label: strin
       return { label: 'Idle', bg: 'bg-stone-100', text: 'text-stone-600', border: 'border-stone-200', pulse: false };
   }
 }
+
+// Only real ConnectRepoModal-picked repos look like "owner/name"; the
+// built-in fixture projects use a "github.com/my-org/..." placeholder and
+// have no real repo behind them to fetch PR/CI status for.
+export function isRealGithubRepo(repository: string): boolean {
+  return /^[\w.-]+\/[\w.-]+$/.test(repository);
+}
+
+function outcomeBadgeStyle(outcome: string): { bg: string; text: string; border: string } {
+  switch (outcome) {
+    case 'PASS':
+    case 'APPROVED':
+      return { bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' };
+    case 'RUNNING':
+    case 'IN_REVIEW':
+      return { bg: 'bg-sky-50', text: 'text-sky-900', border: 'border-sky-200' };
+    case 'FAIL':
+    case 'CHANGES_REQUIRED':
+      return { bg: 'bg-amber-50', text: 'text-amber-900', border: 'border-amber-200' };
+    default:
+      return { bg: 'bg-stone-100', text: 'text-stone-500', border: 'border-stone-200' };
+  }
+}
+
+export { outcomeBadgeStyle };

@@ -117,6 +117,20 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
    Known gaps: "merged" doesn't mean "deployed" (no deployment signal source
    yet), no way to detect a needed product decision from GitHub alone, and
    only the single most-recently-updated PR per repo is considered.
+7. **Done (2026-09-06):** `ProjectDetailDrawer.tsx` got the same plain-language
+   treatment as Portfolio — a verdict block (with a real-GitHub-vs-direct-push
+   trust badge) now leads the drawer, the old Option A/B decision UI only
+   shows for the manual/fixture path, and the entire original Gate/Execution
+   Context/Environment/Feature Matrix/Activity Timeline UI is preserved but
+   collapsed behind a "顯示技術細節" toggle. See
+   `docs/superpowers/evidence/2026-09-06-drawer-plain-language-redesign-non-bridge.md`.
+   **Known gap surfaced, not yet fixed**: the app's three AI-tool interaction
+   mechanisms are disconnected — `CodexHandoffPanel` (real Codex dispatch,
+   but hardcoded to a demo read-only task), `ChatGPTBridgeModal` (real AI
+   advice call, but "apply decision" only edits local state), and "Copy
+   Context" (fully manual). None of them lets a user's real decision reach
+   the actual coding agent working on the branch — reads are real, writes
+   aren't. Deferred to a separate future phase.
 
 ## Roadmap
 

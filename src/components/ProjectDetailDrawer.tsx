@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   X,
   ExternalLink,
   GitBranch,
   GitPullRequest,
   AlertTriangle,
+  AlertCircle,
+  HelpCircle,
   CheckCircle2,
   Clock,
+  ChevronDown,
+  RefreshCw,
   Cpu,
   Shield,
   Layers,
@@ -25,7 +29,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { CodexHandoffPanel } from './CodexHandoffPanel';
-import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome, FeatureItem } from '../types';
+import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome, FeatureItem, GithubPullStatus } from '../types';
 import { BridgeWorkflowRail } from './BridgeWorkflowRail';
 import { ChatGPTBridgeModal } from './ChatGPTBridgeModal';
 import { CiCdWorkflowModal } from './CiCdWorkflowModal';
@@ -35,8 +39,17 @@ import {
   getStageBadgeStyle,
   getModelBadgeStyle,
   getWaitingStateBadge,
+  isRealGithubRepo,
 } from '../utils';
 import { provenanceLabel } from '../statusProvenance.mjs';
+import { getVerdict, getVerdictStyle } from '../verdict.mjs';
+
+const VERDICT_ICON: Record<string, React.ElementType> = {
+  danger: AlertCircle,
+  decision: HelpCircle,
+  ready: CheckCircle2,
+  waiting: Clock,
+};
 
 function ProvenanceBadge({ provenance }: { provenance?: { authority: string; confidence: string } }) {
   return (
@@ -80,8 +93,42 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   const [isChatGPTModalOpen, setIsChatGPTModalOpen] = useState(false);
   const [isCiCdModalOpen, setIsCiCdModalOpen] = useState(false);
   const [iterationPromptOpen, setIterationPromptOpen] = useState(false);
+  const [githubState, setGithubState] = useState<GithubPullStatus | null>(null);
+  const [isLoadingGithub, setIsLoadingGithub] = useState(false);
+  const [showTechDetail, setShowTechDetail] = useState(false);
+
+  const loadGithubState = useCallback(() => {
+    if (!project || !isRealGithubRepo(project.repository)) {
+      setGithubState(null);
+      return;
+    }
+    setIsLoadingGithub(true);
+    fetch(`/api/github/pull-status?repo=${encodeURIComponent(project.repository)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setGithubState(data))
+      .catch(() => setGithubState(null))
+      .finally(() => setIsLoadingGithub(false));
+  }, [project]);
+
+  useEffect(() => {
+    setGithubState(null);
+    setShowTechDetail(false);
+    loadGithubState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
 
   if (!project) return null;
+
+  const verdict = getVerdict(project, githubState ?? undefined);
+  const verdictStyle = getVerdictStyle(verdict.level);
+  const VerdictIcon = VERDICT_ICON[verdict.level];
+  const showTrustBadge = verdict.source === 'github' && githubState;
+  const isTrustworthy =
+    showTrustBadge &&
+    (githubState!.state === 'merged' ||
+      (githubState!.state === 'open' && !githubState!.isDraft && githubState!.ciStatus === 'passing' && githubState!.reviewDecision !== 'changes_requested'));
+  const isDirectPush = showTrustBadge && githubState!.state === 'active';
+  const githubLinkUrl = githubState?.prUrl || githubState?.lastCommitUrl;
 
   // Derive active gate: user-selected gate or current active gate
   const activeGateId = selectedGateId || project.currentGate;
@@ -143,14 +190,6 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setIsCiCdModalOpen(true)}
-              className="px-2.5 py-1.5 text-xs font-mono bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-300 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-              title="查看 CI/CD 流程映射圖"
-            >
-              <Layers className="h-3.5 w-3.5 text-sky-700" />
-              <span>CI/CD 映射圖</span>
-            </button>
-            <button
               onClick={() => setIsChatGPTModalOpen(true)}
               className="px-2.5 py-1.5 text-xs font-mono bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
               title="Open ChatGPT Bridge Handover Session"
@@ -177,6 +216,151 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
 
         {/* Drawer Body Container */}
         <div className="p-6 space-y-6 flex-1">
+          {/* Primary verdict block — plain-language, same engine as the Portfolio card */}
+          <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs">
+            <div className="flex items-start gap-3.5">
+              <div
+                className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center"
+                style={{ backgroundColor: verdictStyle.iconBg, color: verdictStyle.iconColor }}
+              >
+                <VerdictIcon className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-xl font-bold leading-snug" style={{ color: verdictStyle.headlineColor }}>
+                    {verdict.headline}
+                  </h2>
+                  {isTrustworthy && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      <Check className="h-3 w-3" /> 已通過標準檢查
+                    </span>
+                  )}
+                  {isDirectPush && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-200">
+                      <AlertTriangle className="h-3 w-3" /> 直接更新，未經審查
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-stone-700 leading-relaxed mt-2">{verdict.explanation}</p>
+                {githubLinkUrl && (
+                  <a
+                    href={githubLinkUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 mt-2 text-sm font-bold"
+                  >
+                    在 GitHub 上查看 <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3 flex-wrap">
+              {verdict.hasAction && !verdict.isWaiting && verdict.level !== 'decision' && (
+                <a
+                  href={githubLinkUrl || undefined}
+                  target={githubLinkUrl ? '_blank' : undefined}
+                  rel="noreferrer"
+                  className="px-4 py-2 text-sm font-bold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-lg transition-colors cursor-pointer inline-block"
+                >
+                  {verdict.actionLabel}
+                </a>
+              )}
+              {verdict.isWaiting && (
+                <div className="flex items-center gap-2 bg-sky-50 border border-sky-200 rounded-lg px-3.5 py-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-600 animate-pulse" />
+                  <span className="text-xs font-bold text-sky-900">{verdict.actionLabel}</span>
+                </div>
+              )}
+              {isRealGithubRepo(project.repository) && (
+                <button
+                  onClick={loadGithubState}
+                  disabled={isLoadingGithub}
+                  title="重新查詢 GitHub 最新狀態"
+                  className="text-stone-300 hover:text-stone-600 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-4 w-4 ${isLoadingGithub ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+            </div>
+          </section>
+
+          {/* Decision UI: only meaningful on the manual path — GitHub-driven danger/waiting
+              verdicts have no "pick one of two options" shape to offer */}
+          {verdict.source === 'manual' && verdict.level === 'decision' && project.blocker && (
+            <section className="bg-amber-50/60 border border-amber-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-900 font-mono flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-700" />
+                  請選一個做法：
+                </span>
+              </div>
+
+              <div className="space-y-2 text-xs text-stone-800">
+                <label className="flex items-center gap-2 p-2.5 rounded bg-white border border-stone-200 cursor-pointer hover:border-amber-400 transition-colors shadow-xs">
+                  <input
+                    type="radio"
+                    name="decision"
+                    checked={decisionOption === 'option1'}
+                    onChange={() => setDecisionOption('option1')}
+                    className="accent-stone-800 cursor-pointer"
+                  />
+                  <span>
+                    <strong>方案 A（建議）：</strong>跳過重複的資料，並列出一份清單讓你之後檢查。
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 p-2.5 rounded bg-white border border-stone-200 cursor-pointer hover:border-amber-400 transition-colors shadow-xs">
+                  <input
+                    type="radio"
+                    name="decision"
+                    checked={decisionOption === 'option2'}
+                    onChange={() => setDecisionOption('option2')}
+                    className="accent-stone-800 cursor-pointer"
+                  />
+                  <span>
+                    <strong>方案 B：</strong>用新資料直接覆蓋舊的，以 Email 判斷是不是同一位客戶。
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+                <button
+                  onClick={() => setIsChatGPTModalOpen(true)}
+                  className="px-3 py-2 text-xs font-mono bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                >
+                  <Bot className="h-3.5 w-3.5 text-emerald-700" />
+                  <span>請 AI 幫忙討論</span>
+                </button>
+
+                <button
+                  onClick={() =>
+                    onResolveBlocker(
+                      project.id,
+                      decisionOption === 'option1'
+                        ? 'Policy selected: Skip duplicate email rows with warning report.'
+                        : 'Policy selected: Overwrite existing users with duplicate email.'
+                    )
+                  }
+                  className="px-4 py-2 text-xs font-mono font-semibold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  <span>送出決定，讓 AI 繼續</span>
+                </button>
+              </div>
+            </section>
+          )}
+
+          {/* Technical detail toggle */}
+          <button
+            onClick={() => setShowTechDetail((v) => !v)}
+            className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-700 transition-colors cursor-pointer"
+          >
+            <span>{showTechDetail ? '收合技術細節' : '顯示技術細節'}</span>
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showTechDetail ? 'rotate-180' : ''}`} />
+          </button>
+
+          {showTechDetail && (
+          <>
           {/* SECTION 1: Current Focus (Most Important Area) */}
           <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-stone-200">
@@ -240,73 +424,6 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                 )}
               </div>
             </div>
-
-            {/* Interactive Decision Box (If Blocker / Attention exists) */}
-            {project.blocker && (
-              <div className="bg-amber-50/60 border border-amber-200 rounded-lg p-4 mt-2 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-amber-900 font-mono flex items-center gap-1.5">
-                    <AlertTriangle className="h-3.5 w-3.5 text-amber-700" />
-                    Human Decision Prompt:
-                  </span>
-                  <span className="text-[11px] font-mono text-stone-500">
-                    Will update bridge task metadata & unblock Codex
-                  </span>
-                </div>
-
-                <div className="space-y-2 text-xs text-stone-800">
-                  <label className="flex items-center gap-2 p-2.5 rounded bg-white border border-stone-200 cursor-pointer hover:border-amber-400 transition-colors shadow-xs">
-                    <input
-                      type="radio"
-                      name="decision"
-                      checked={decisionOption === 'option1'}
-                      onChange={() => setDecisionOption('option1')}
-                      className="accent-stone-800 cursor-pointer"
-                    />
-                    <span>
-                      <strong>Option A (Recommended):</strong> Skip duplicate records and generate an import error report for the user.
-                    </span>
-                  </label>
-                  <label className="flex items-center gap-2 p-2.5 rounded bg-white border border-stone-200 cursor-pointer hover:border-amber-400 transition-colors shadow-xs">
-                    <input
-                      type="radio"
-                      name="decision"
-                      checked={decisionOption === 'option2'}
-                      onChange={() => setDecisionOption('option2')}
-                      className="accent-stone-800 cursor-pointer"
-                    />
-                    <span>
-                      <strong>Option B:</strong> Overwrite / update existing user records based on matching email address.
-                    </span>
-                  </label>
-                </div>
-
-                <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
-                  <button
-                    onClick={() => setIsChatGPTModalOpen(true)}
-                    className="px-3 py-2 text-xs font-mono bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-                  >
-                    <Bot className="h-3.5 w-3.5 text-emerald-700" />
-                    <span>Ask ChatGPT for Architecture Advice</span>
-                  </button>
-
-                  <button
-                    onClick={() =>
-                      onResolveBlocker(
-                        project.id,
-                        decisionOption === 'option1'
-                          ? 'Policy selected: Skip duplicate email rows with warning report.'
-                          : 'Policy selected: Overwrite existing users with duplicate email.'
-                      )
-                    }
-                    className="px-4 py-2 text-xs font-mono font-semibold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                    <span>Apply Decision & Unblock</span>
-                  </button>
-                </div>
-              </div>
-            )}
 
             {/* Production Live & Next Iteration Trigger Banner */}
             {project.currentGate === 'DONE' && (
@@ -836,6 +953,8 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
               ))}
             </div>
           </section>
+          </>
+          )}
         </div>
 
         {/* ChatGPT Bridge Modal */}
