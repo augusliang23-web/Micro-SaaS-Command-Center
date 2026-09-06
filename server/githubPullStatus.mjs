@@ -64,11 +64,24 @@ export async function fetchPullRequestStatus(repo, { execFileFn = execFile } = {
     };
   }
 
-  const closedPrs = await ghApiJson(`repos/${repo}/pulls?state=closed&per_page=5&sort=updated&direction=desc`, {
-    execFileFn,
-  });
+  const [closedPrs, latestCommits] = await Promise.all([
+    ghApiJson(`repos/${repo}/pulls?state=closed&per_page=5&sort=updated&direction=desc`, { execFileFn }),
+    ghApiJson(`repos/${repo}/commits?per_page=1`, { execFileFn }),
+  ]);
   const merged = Array.isArray(closedPrs) ? closedPrs.find((pr) => pr.merged_at) : null;
-  if (merged) {
+  const latestCommit = Array.isArray(latestCommits) ? latestCommits[0] : null;
+
+  if (!latestCommit) {
+    return { state: 'none' };
+  }
+
+  // If the tip of the default branch IS that merged PR's merge commit,
+  // nothing has happened since — safe to report it as the current state.
+  // Otherwise there has been activity (direct pushes, or another merge)
+  // that never went through a PR we can inspect — many real repos mix
+  // direct commits with occasional PRs, and treating "the last PR" as the
+  // whole truth would silently hide that activity.
+  if (merged && merged.merge_commit_sha === latestCommit.sha) {
     return {
       state: 'merged',
       prNumber: merged.number,
@@ -77,5 +90,14 @@ export async function fetchPullRequestStatus(repo, { execFileFn = execFile } = {
     };
   }
 
-  return { state: 'none' };
+  const checkRuns = await ghApiJson(`repos/${repo}/commits/${latestCommit.sha}/check-runs`, { execFileFn }).then(
+    (r) => r.check_runs || [],
+  );
+  return {
+    state: 'active',
+    lastCommitMessage: (latestCommit.commit?.message || '').split('\n')[0],
+    lastCommitAt: latestCommit.commit?.author?.date || latestCommit.commit?.committer?.date,
+    lastCommitUrl: latestCommit.html_url,
+    ciStatus: aggregateCiStatus(checkRuns),
+  };
 }

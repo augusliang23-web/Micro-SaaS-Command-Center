@@ -28,6 +28,22 @@ const VERDICT_STYLE = {
   waiting: { headlineColor: '#0369a1', borderColor: '#bae6fd', iconBg: '#f0f9ff', iconColor: '#0369a1' },
 };
 
+// Small, dependency-free relative-time formatter (deliberately not imported
+// from server/githubRepos.mjs, which pulls in node:child_process and can't
+// be bundled into the browser build).
+function formatRelativeTime(dateInput, now = new Date()) {
+  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  const diffSec = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+  if (diffSec < 60) return '剛剛';
+  if (diffMin < 60) return `${diffMin} 分鐘前`;
+  if (diffHour < 24) return `${diffHour} 小時前`;
+  if (diffDay === 1) return '昨天';
+  return `${diffDay} 天前`;
+}
+
 function buildVerdict(level, explanation, source) {
   const copy = VERDICT_COPY[level];
   return {
@@ -82,9 +98,29 @@ function getVerdictFromGithub(githubState) {
   }
 
   if (githubState.state === 'merged') {
+    const when = githubState.mergedAt ? `（${formatRelativeTime(githubState.mergedAt)}）` : '';
     return buildVerdict(
       'ready',
-      `最新的修改（PR #${githubState.prNumber}）已經合併進主分支了。如果你有另外的上線流程，記得手動更新正式環境。`,
+      `最新的修改（PR #${githubState.prNumber}）${when}已經合併進主分支了。如果你有另外的上線流程，記得手動更新正式環境。`,
+      'github',
+    );
+  }
+
+  if (githubState.state === 'active') {
+    // The repo has commits past the last known merged PR — likely direct
+    // pushes to the default branch rather than a PR-reviewed change. There
+    // is no PR/review signal to inspect here, only the commit itself.
+    const when = githubState.lastCommitAt ? `（${formatRelativeTime(githubState.lastCommitAt)}）` : '';
+    if (githubState.ciStatus === 'failing') {
+      return buildVerdict(
+        'danger',
+        `主分支${when}直接更新的內容沒有通過自動檢查（「${githubState.lastCommitMessage}」），需要請 AI 修好。`,
+        'github',
+      );
+    }
+    return buildVerdict(
+      'waiting',
+      `主分支${when}有新的更新（不是透過 PR）：「${githubState.lastCommitMessage}」，看起來還在調整中，暫時不需要你做什麼。`,
       'github',
     );
   }

@@ -84,7 +84,7 @@ test('fetchPullRequestStatus returns open-PR state with CI and review aggregates
   assert.equal(status.isDraft, false);
 });
 
-test('fetchPullRequestStatus falls back to the newest merged PR when nothing is open', async () => {
+test('fetchPullRequestStatus reports "merged" only when the branch tip IS that PR\'s merge commit', async () => {
   const execFileFn = (command, args, options, callback) => {
     const path = args[1];
     if (path.includes('pulls?state=open')) {
@@ -93,13 +93,15 @@ test('fetchPullRequestStatus falls back to the newest merged PR when nothing is 
       callback(
         null,
         JSON.stringify([
-          { number: 10, html_url: 'https://x/10', merged_at: null },
-          { number: 9, html_url: 'https://x/9', merged_at: '2026-09-01T00:00:00Z' },
+          { number: 10, html_url: 'https://x/10', merged_at: null, merge_commit_sha: null },
+          { number: 9, html_url: 'https://x/9', merged_at: '2026-09-01T00:00:00Z', merge_commit_sha: 'tip123' },
         ]),
         '',
       );
+    } else if (path.includes('/commits?per_page=1')) {
+      callback(null, JSON.stringify([{ sha: 'tip123', commit: { author: { date: '2026-09-01T00:00:00Z' } } }]), '');
     } else {
-      callback(new Error('unexpected path'), '', '');
+      callback(new Error(`unexpected path: ${path}`), '', '');
     }
   };
 
@@ -108,12 +110,51 @@ test('fetchPullRequestStatus falls back to the newest merged PR when nothing is 
   assert.equal(status.prNumber, 9);
 });
 
-test('fetchPullRequestStatus returns none when there is no open or merged PR', async () => {
+test('fetchPullRequestStatus reports "active" when the branch has moved past the last known merged PR (direct pushes)', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    const path = args[1];
+    if (path.includes('pulls?state=open')) {
+      return callback(null, JSON.stringify([]), '');
+    }
+    if (path.includes('pulls?state=closed')) {
+      return callback(
+        null,
+        JSON.stringify([{ number: 1, html_url: 'https://x/1', merged_at: '2026-09-05T00:00:00Z', merge_commit_sha: 'old-merge-sha' }]),
+        '',
+      );
+    }
+    if (path.includes('/commits?per_page=1')) {
+      return callback(
+        null,
+        JSON.stringify([
+          {
+            sha: 'newer-direct-push-sha',
+            html_url: 'https://x/commit/newer',
+            commit: { message: 'chore: isolate local UAT emulator tooling', author: { date: '2026-09-06T08:02:18Z' } },
+          },
+        ]),
+        '',
+      );
+    }
+    if (path.includes('check-runs')) {
+      return callback(null, JSON.stringify({ check_runs: [] }), '');
+    }
+    callback(new Error(`unexpected path: ${path}`), '', '');
+  };
+
+  const status = await fetchPullRequestStatus('me/repo', { execFileFn });
+  assert.equal(status.state, 'active');
+  assert.equal(status.lastCommitMessage, 'chore: isolate local UAT emulator tooling');
+  assert.equal(status.ciStatus, 'none');
+});
+
+test('fetchPullRequestStatus returns none when the repo has no commits at all', async () => {
   const execFileFn = (command, args, options, callback) => {
     const path = args[1];
     if (path.includes('state=open')) return callback(null, JSON.stringify([]), '');
     if (path.includes('state=closed')) return callback(null, JSON.stringify([]), '');
-    callback(new Error('unexpected path'), '', '');
+    if (path.includes('/commits?per_page=1')) return callback(null, JSON.stringify([]), '');
+    callback(new Error(`unexpected path: ${path}`), '', '');
   };
 
   const status = await fetchPullRequestStatus('me/repo', { execFileFn });

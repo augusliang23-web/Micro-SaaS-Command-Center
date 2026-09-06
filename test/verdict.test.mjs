@@ -69,6 +69,23 @@ test('github state "merged" is a ready verdict that is honest about not implying
   assert.match(verdict.explanation, /上線流程/);
 });
 
+test('a mergedAt / lastCommitAt timestamp surfaces as real relative time, proving the data is live', () => {
+  const recentlyMerged = getVerdict(manualProject, {
+    state: 'merged',
+    prNumber: 1,
+    mergedAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+  });
+  assert.match(recentlyMerged.explanation, /45 分鐘前/);
+
+  const recentPush = getVerdict(manualProject, {
+    state: 'active',
+    ciStatus: 'none',
+    lastCommitMessage: 'chore: x',
+    lastCommitAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+  });
+  assert.match(recentPush.explanation, /3 小時前/);
+});
+
 test('an open draft PR is waiting regardless of CI/review state', () => {
   const verdict = getVerdict(manualProject, {
     state: 'open',
@@ -128,8 +145,32 @@ test('the github path never returns the decision level (no product-decision sign
     { state: 'open', isDraft: false, ciStatus: 'passing', reviewDecision: 'changes_requested' },
     { state: 'open', isDraft: false, ciStatus: 'running' },
     { state: 'open', isDraft: false, ciStatus: 'passing', reviewDecision: 'approved' },
+    { state: 'active', ciStatus: 'none', lastCommitMessage: 'x' },
   ];
   for (const githubState of scenarios) {
     assert.notEqual(getVerdict(manualProject, githubState).level, 'decision');
   }
+});
+
+// --- "active" state: direct pushes to the default branch past any known PR ---
+
+test('active state with passing/no CI is waiting, and names the real commit message', () => {
+  const verdict = getVerdict(manualProject, {
+    state: 'active',
+    ciStatus: 'none',
+    lastCommitMessage: 'chore: isolate local UAT emulator tooling',
+  });
+  assert.equal(verdict.level, 'waiting');
+  assert.match(verdict.explanation, /chore: isolate local UAT emulator tooling/);
+  assert.equal(verdict.source, 'github');
+});
+
+test('active state with failing CI is danger', () => {
+  const verdict = getVerdict(manualProject, {
+    state: 'active',
+    ciStatus: 'failing',
+    lastCommitMessage: 'fix: something broke',
+  });
+  assert.equal(verdict.level, 'danger');
+  assert.match(verdict.explanation, /fix: something broke/);
 });

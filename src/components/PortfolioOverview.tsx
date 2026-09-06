@@ -38,12 +38,15 @@ function isRealGithubRepo(repository: string): boolean {
 }
 
 interface GithubPullStatus {
-  state: 'open' | 'merged' | 'none';
+  state: 'open' | 'merged' | 'active' | 'none';
   prNumber?: number;
   prUrl?: string;
   isDraft?: boolean;
   ciStatus?: 'passing' | 'failing' | 'running' | 'none';
   reviewDecision?: 'approved' | 'changes_requested' | 'review_required';
+  lastCommitMessage?: string;
+  lastCommitAt?: string;
+  lastCommitUrl?: string;
 }
 
 function outcomeBadgeStyle(outcome: string): { bg: string; text: string; border: string } {
@@ -189,28 +192,52 @@ const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project, isSele
 
           {verdict.source === 'github' && githubState && githubState.state !== 'none' ? (
             <div className="flex items-center gap-2 flex-wrap">
-              {githubState.prUrl && (
-                <a
-                  href={githubState.prUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200 flex items-center gap-1 hover:bg-sky-100"
-                >
-                  <GitPullRequest className="h-3 w-3" />
-                  PR #{githubState.prNumber}
-                </a>
-              )}
-              <span className="text-[11px] px-2 py-0.5 rounded border bg-stone-100 text-stone-700 border-stone-300">
-                {githubState.state === 'merged' ? '已合併' : githubState.isDraft ? '草稿中' : '開發中'}
-              </span>
-              {githubState.state === 'open' && (
+              {githubState.state === 'active' ? (
                 <>
+                  <span className="text-[11px] px-2 py-0.5 rounded border bg-stone-100 text-stone-700 border-stone-300">
+                    直接推送到主分支（非 PR）
+                  </span>
+                  {githubState.lastCommitUrl && (
+                    <a
+                      href={githubState.lastCommitUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200 hover:bg-sky-100 max-w-[220px] truncate"
+                      title={githubState.lastCommitMessage}
+                    >
+                      {githubState.lastCommitMessage}
+                    </a>
+                  )}
                   <span className={`text-[11px] px-2 py-0.5 rounded border ${githubCiStyle.bg} ${githubCiStyle.text} ${githubCiStyle.border}`}>
                     CI: {githubState.ciStatus === 'none' ? '尚無自動檢查' : githubState.ciStatus}
                   </span>
-                  <span className={`text-[11px] px-2 py-0.5 rounded border ${githubReviewStyle.bg} ${githubReviewStyle.text} ${githubReviewStyle.border}`}>
-                    Review: {githubState.reviewDecision || 'review_required'}
+                </>
+              ) : (
+                <>
+                  {githubState.prUrl && (
+                    <a
+                      href={githubState.prUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200 flex items-center gap-1 hover:bg-sky-100"
+                    >
+                      <GitPullRequest className="h-3 w-3" />
+                      PR #{githubState.prNumber}
+                    </a>
+                  )}
+                  <span className="text-[11px] px-2 py-0.5 rounded border bg-stone-100 text-stone-700 border-stone-300">
+                    {githubState.state === 'merged' ? '已合併' : githubState.isDraft ? '草稿中' : '開發中'}
                   </span>
+                  {githubState.state === 'open' && (
+                    <>
+                      <span className={`text-[11px] px-2 py-0.5 rounded border ${githubCiStyle.bg} ${githubCiStyle.text} ${githubCiStyle.border}`}>
+                        CI: {githubState.ciStatus === 'none' ? '尚無自動檢查' : githubState.ciStatus}
+                      </span>
+                      <span className={`text-[11px] px-2 py-0.5 rounded border ${githubReviewStyle.bg} ${githubReviewStyle.text} ${githubReviewStyle.border}`}>
+                        Review: {githubState.reviewDecision || 'review_required'}
+                      </span>
+                    </>
+                  )}
                 </>
               )}
               <span
