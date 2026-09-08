@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getVerdict, getVerdictStyle } from '../src/verdict.mjs';
+import { getVerdict, getVerdictStyle, pickMostUrgent } from '../src/verdict.mjs';
 
 test('BLOCKED projects get the danger verdict using the blocker text', () => {
   const verdict = getVerdict({ waitingState: 'BLOCKED', blocker: 'Missing STRIPE_WEBHOOK_SECRET' });
@@ -173,4 +173,25 @@ test('active state with failing CI is danger', () => {
   });
   assert.equal(verdict.level, 'danger');
   assert.match(verdict.explanation, /fix: something broke/);
+});
+
+// --- pickMostUrgent ---
+
+test('pickMostUrgent ranks decision above danger above ready above waiting', () => {
+  const verdicts = [{ level: 'waiting' }, { level: 'ready' }, { level: 'danger' }, { level: 'decision' }];
+  assert.equal(pickMostUrgent(verdicts), 3);
+});
+
+test('pickMostUrgent picks danger over ready and waiting when there is no decision', () => {
+  const verdicts = [{ level: 'waiting' }, { level: 'danger' }, { level: 'ready' }];
+  assert.equal(pickMostUrgent(verdicts), 1);
+});
+
+test('pickMostUrgent keeps the first occurrence on a tie', () => {
+  const verdicts = [{ level: 'danger' }, { level: 'danger' }, { level: 'waiting' }];
+  assert.equal(pickMostUrgent(verdicts), 0);
+});
+
+test('pickMostUrgent returns -1 for an empty list', () => {
+  assert.equal(pickMostUrgent([]), -1);
 });

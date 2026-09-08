@@ -131,6 +131,18 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
    Context" (fully manual). None of them lets a user's real decision reach
    the actual coding agent working on the branch — reads are real, writes
    aren't. Deferred to a separate future phase.
+8. **Done (2026-09-08):** the home-page "Next Best Action" hero card
+   (`src/components/NextBestActionCard.tsx`) no longer renders a hand-authored
+   fixture that never changed — it now scans every project's real verdict
+   (`getVerdict()` + new `pickMostUrgent()` in `src/verdict.mjs`) and surfaces
+   the single most urgent one, reusing the same `ProjectVerdictCard` component
+   (extracted to its own file, `src/components/ProjectVerdictCard.tsx`) as
+   Portfolio. The old fake "快速放行" (quick-approve) button, which only
+   edited local state, was removed. See
+   `docs/superpowers/evidence/2026-09-08-next-best-action-real-verdict-non-bridge.md`.
+   Next candidate screen in the one-at-a-time revamp: `CockpitHeader.tsx`
+   (top nav — still has "ChatGPT ↔ Codex Bridge Operations," a
+   "Luna / Terra / Sol" button, and a "CI/CD 流程圖" button).
 
 ## Roadmap
 

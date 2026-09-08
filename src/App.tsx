@@ -27,6 +27,8 @@ import {
 export default function App() {
   const [projects, setProjects] = useState<MicroSaaSProject[]>(initialProjects);
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>(initialAttentionItems);
+  // Kept only so /api/state's persisted shape stays backward-compatible; NextBestActionCard
+  // now derives its own recommendation from real project verdicts instead of this fixture.
   const [nba, setNba] = useState<NextBestAction>(initialNextBestAction);
   const [snapshot, setSnapshot] = useState<AIExecutionSnapshotData>(initialExecutionSnapshot);
 
@@ -204,29 +206,6 @@ export default function App() {
         reviewOutcome: 'APPROVED',
         nextAction: '1-click Merge PR & release to UAT',
       };
-    });
-  };
-
-  // Quick simulate approve review in NBA
-  const handleSimulateApproveNBA = (projectId: string) => {
-    handleResolveBlocker(
-      projectId,
-      'Policy selected: Skip duplicate email rows with warning report.'
-    );
-
-    // Update NBA to point to the next best item
-    setNba({
-      id: 'nba-2',
-      projectId: 'proj-docupulse',
-      projectName: 'DocuPulse AI',
-      actionTitle: 'Approve & Merge PR #89 (Tailwind v4 Config Migration)',
-      summary:
-        'All automated regression tests (100%) and lint passes are green. Model Luna completed deterministic migration without conflict.',
-      contextPill: 'Tests: PASS • Review: APPROVED',
-      impactReason: 'Maintains zero technical debt on production API cluster.',
-      gate: 'APPROVE',
-      model: 'Luna',
-      quickActionLabel: 'Approve PR #89 Merge',
     });
   };
 
@@ -565,15 +544,8 @@ export default function App() {
 
       {/* Main Cockpit Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-4">
-        {/* Compact Next Best Action Banner */}
-        {nba && attentionItems.length > 0 && (
-          <NextBestActionCard
-            nba={nba}
-            attentionCount={attentionItems.length}
-            onExecute={handleFocusProjectGate}
-            onSimulateApprove={handleSimulateApproveNBA}
-          />
-        )}
+        {/* Next Best Action: scans every project's real verdict, not a fixed fixture */}
+        <NextBestActionCard projects={projects} onSelectProject={handleSelectProject} />
 
         {/* View Mode Navigation Tabs */}
         <div className="flex items-center justify-between border-b border-stone-300/80 pb-2 pt-1 font-mono text-xs">

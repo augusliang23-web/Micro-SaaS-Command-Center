@@ -159,3 +159,26 @@ export function getVerdict(project, githubState) {
 export function getVerdictStyle(level) {
   return VERDICT_STYLE[level] || VERDICT_STYLE.waiting;
 }
+
+// decision (only you can decide) > danger (needs attention, may self-resolve
+// on retry) > ready (low-urgency positive action) > waiting (nothing to do)
+const URGENCY_RANK = { decision: 0, danger: 1, ready: 2, waiting: 3 };
+
+/**
+ * Given a list of verdicts (one per project, from getVerdict()), returns the
+ * index of the single most urgent one — for a "next best action" summary
+ * that should point at real project state, not a separately hand-authored
+ * recommendation. Ties keep the first occurrence. Returns -1 for an empty list.
+ */
+export function pickMostUrgent(verdicts) {
+  let bestIndex = -1;
+  let bestRank = Infinity;
+  verdicts.forEach((verdict, index) => {
+    const rank = URGENCY_RANK[verdict.level] ?? URGENCY_RANK.waiting;
+    if (rank < bestRank) {
+      bestRank = rank;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
