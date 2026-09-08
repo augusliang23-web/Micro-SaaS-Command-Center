@@ -1,5 +1,5 @@
-import React from 'react';
-import { Terminal, ShieldAlert, Cpu, Search, Sparkles, SlidersHorizontal, RefreshCw, Plus, Github, Layers, Workflow } from 'lucide-react';
+import React, { useState } from 'react';
+import { Terminal, ShieldAlert, Cpu, Search, Sparkles, RefreshCw, Github, Workflow, ChevronDown } from 'lucide-react';
 import { AIExecutionSnapshotData } from '../types';
 
 interface CockpitHeaderProps {
@@ -29,6 +29,8 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
   onOpenCiCdMap,
   onRefreshSim,
 }) => {
+  const [showMore, setShowMore] = useState(false);
+
   return (
     <header className="sticky top-0 z-30 bg-[#FAF9F6]/90 backdrop-blur-md border-b border-stone-200/90 px-4 lg:px-6 py-3">
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -42,12 +44,9 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
               <h1 className="text-base font-semibold tracking-tight text-stone-900 font-mono">
                 Micro-SaaS Command Center
               </h1>
-              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-stone-200/80 text-stone-700 border border-stone-300">
-                v1.0 Cockpit
-              </span>
             </div>
             <p className="text-xs text-stone-500 flex items-center gap-2">
-              <span>ChatGPT ↔ Codex Bridge Operations</span>
+              <span>AI 協作作業中</span>
               <span className="inline-block h-1 w-1 rounded-full bg-stone-400" />
               <span className="text-emerald-700 font-mono flex items-center gap-1 font-medium">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
@@ -66,7 +65,7 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search projects, tasks, models..."
+              placeholder="搜尋專案、任務…"
               className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-stone-300 rounded-md text-stone-800 placeholder-stone-400 focus:outline-none focus:border-stone-500 focus:ring-1 focus:ring-stone-400/30 transition-all font-mono shadow-xs"
             />
             {searchQuery && (
@@ -89,7 +88,7 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              All ({totalProjects})
+              全部 ({totalProjects})
             </button>
             <button
               onClick={() => onSelectFilter('attention')}
@@ -100,7 +99,7 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
               }`}
             >
               <ShieldAlert className="h-3 w-3 text-amber-700" />
-              <span>Attention ({attentionCount})</span>
+              <span>待你關注 ({attentionCount})</span>
             </button>
             <button
               onClick={() => onSelectFilter('running')}
@@ -111,7 +110,7 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
               }`}
             >
               <Cpu className="h-3 w-3 text-sky-700" />
-              <span>AI Running ({snapshot.aiRunning})</span>
+              <span>AI 進行中 ({snapshot.aiRunning})</span>
             </button>
             <button
               onClick={() => onSelectFilter('production')}
@@ -121,31 +120,9 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              Production
+              已上線
             </button>
           </div>
-
-          {/* CI/CD Pipeline Map Trigger */}
-          {onOpenCiCdMap && (
-            <button
-              onClick={onOpenCiCdMap}
-              className="px-2.5 py-1.5 text-xs rounded-md bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 hover:text-stone-900 hover:border-stone-400 flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-              title="查看 Bridge 8-Gate ↔ CI/CD 流程映射圖"
-            >
-              <Workflow className="h-3.5 w-3.5 text-sky-700" />
-              <span className="font-mono text-[11px]">CI/CD 流程圖</span>
-            </button>
-          )}
-
-          {/* Model Routing Guide Trigger */}
-          <button
-            onClick={onOpenModelGuide}
-            className="px-2.5 py-1.5 text-xs rounded-md bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 hover:text-stone-900 hover:border-stone-400 flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-            title="Codex Model Routing Reference"
-          >
-            <Sparkles className="h-3 w-3 text-amber-700" />
-            <span className="font-mono text-[11px]">Luna / Terra / Sol</span>
-          </button>
 
           {/* Connect GitHub Repo Button */}
           <button
@@ -161,12 +138,45 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
           <button
             onClick={onRefreshSim}
             className="p-1.5 text-xs rounded-md bg-white border border-stone-300 text-stone-600 hover:bg-stone-50 hover:text-stone-900 hover:border-stone-400 transition-colors shadow-xs cursor-pointer"
-            title="Refresh Bridge Telemetry"
+            title="重新整理本地快照"
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
+
+          {/* Technical detail toggle — model routing / pipeline diagram are engineering tools, hidden by default */}
+          <button
+            onClick={() => setShowMore((v) => !v)}
+            className="p-1.5 text-xs rounded-md bg-white border border-stone-300 text-stone-400 hover:bg-stone-50 hover:text-stone-700 hover:border-stone-400 transition-colors shadow-xs cursor-pointer"
+            title="技術細節"
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showMore ? 'rotate-180' : ''}`} />
+          </button>
         </div>
       </div>
+
+      {showMore && (
+        <div className="max-w-7xl mx-auto flex items-center justify-end gap-2 pt-2 mt-2 border-t border-stone-200/80">
+          <span className="text-[10px] text-stone-400 mr-auto">技術細節 — 一般不用看</span>
+          {onOpenCiCdMap && (
+            <button
+              onClick={onOpenCiCdMap}
+              className="px-2.5 py-1.5 text-xs rounded-md bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 hover:text-stone-900 hover:border-stone-400 flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+              title="查看 AI 協作流程圖"
+            >
+              <Workflow className="h-3.5 w-3.5 text-sky-700" />
+              <span className="font-mono text-[11px]">CI/CD 流程圖</span>
+            </button>
+          )}
+          <button
+            onClick={onOpenModelGuide}
+            className="px-2.5 py-1.5 text-xs rounded-md bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 hover:text-stone-900 hover:border-stone-400 flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+            title="AI 模型路由參考"
+          >
+            <Sparkles className="h-3 w-3 text-amber-700" />
+            <span className="font-mono text-[11px]">Luna / Terra / Sol</span>
+          </button>
+        </div>
+      )}
     </header>
   );
 };

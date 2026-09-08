@@ -192,15 +192,15 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
             <button
               onClick={() => setIsChatGPTModalOpen(true)}
               className="px-2.5 py-1.5 text-xs font-mono bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-              title="Open ChatGPT Bridge Handover Session"
+              title="Open AI Advisor Handover Session"
             >
               <Bot className="h-3.5 w-3.5 text-emerald-700" />
-              <span>Discuss in ChatGPT</span>
+              <span>請 AI 顧問討論</span>
             </button>
             <button
               onClick={handleCopyPrompt}
               className="px-2.5 py-1.5 text-xs font-mono bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-              title="Copy Project Context for ChatGPT / Codex"
+              title="Copy Project Context for AI Advisor / AI Agent"
             >
               {copiedPrompt ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 text-stone-500" />}
               <span>{copiedPrompt ? 'Copied' : 'Copy Context'}</span>

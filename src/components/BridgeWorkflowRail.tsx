@@ -84,13 +84,13 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
   const getCiCdPhaseMeta = (gateId: string) => {
     switch (gateId) {
       case 'DISCUSS':
-        return { tool: 'ChatGPT Bridge', role: 'Architecture Spec' };
+        return { tool: 'AI 顧問', role: 'Architecture Spec' };
       case 'SPECIFY':
         return { tool: 'PRD Contracts', role: 'API & Schema' };
       case 'ROUTE':
         return { tool: 'Model Router', role: 'Luna/Terra/Sol' };
       case 'IMPLEMENT':
-        return { tool: 'Codex Worker', role: 'Branch Commit' };
+        return { tool: 'AI 代理', role: 'Branch Commit' };
       case 'TEST':
         return { tool: 'CI Runners', role: 'Unit / Security' };
       case 'REVIEW':
@@ -125,7 +125,7 @@ export const BridgeWorkflowRail: React.FC<BridgeWorkflowRailProps> = ({
             <Bot className="h-3 w-3 text-amber-700" />
             <strong className="tracking-wider">PHASE 1: PRE-COMMIT</strong> (AI 決策區)
           </span>
-          <span className="text-[9px] text-stone-500 hidden sm:inline">ChatGPT ↔ Spec</span>
+          <span className="text-[9px] text-stone-500 hidden sm:inline">AI 顧問 ↔ Spec</span>
         </div>
 
         {/* Phase 2: Continuous Integration (CI) (Gates 4-6) */}

@@ -167,7 +167,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="space-y-2 pt-1 border-t border-stone-100">
                     <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
                       <div className="font-bold text-stone-800">1. DISCUSS (對齊目標)</div>
-                      <div className="text-[10px] text-stone-500">ChatGPT Bridge 上下文對話、產品方向溝通</div>
+                      <div className="text-[10px] text-stone-500">AI 顧問上下文對話、產品方向溝通</div>
                     </div>
                     <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
                       <div className="font-bold text-stone-800">2. SPECIFY (規格契約)</div>
@@ -201,7 +201,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="space-y-2 pt-1 border-t border-stone-100">
                     <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
                       <div className="font-bold text-stone-800">4. IMPLEMENT (自主開發)</div>
-                      <div className="text-[10px] text-stone-500">Codex 背景分支執行、多檔案自動修改</div>
+                      <div className="text-[10px] text-stone-500">AI 代理背景分支執行、多檔案自動修改</div>
                     </div>
                     <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
                       <div className="font-bold text-stone-800">5. TEST (自動化測試)</div>
@@ -268,7 +268,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                         <td className="py-2.5 px-3 font-semibold">需求與 PRD</td>
                         <td className="py-2.5 px-3 text-stone-500">人類在 Jira 撰寫，無程式碼合約綁定</td>
                         <td className="py-2.5 px-3 font-medium text-stone-900">
-                          <strong>ChatGPT Bridge (Gate 1-2)</strong> 自動產出標準化 <code>.bridge/context.md</code>
+                          <strong>AI 顧問 (Gate 1-2)</strong> 自動產出標準化 <code>.bridge/context.md</code>
                         </td>
                       </tr>
                       <tr>
@@ -635,7 +635,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                       <span className="text-[10px] px-2 py-0.5 bg-stone-900 text-stone-50 rounded">建議模型：Sol / Terra</span>
                     </div>
                     <p className="text-[11px] text-stone-600">
-                      牽涉核心商業邏輯或 DB Schema 變更。<strong>從 Gate 1 (DISCUSS) 切入</strong>，先由 ChatGPT Bridge 與您重新對齊目標並產出最新 <code>.bridge/context.md</code> 規格，再交由 Codex 實作與全套 CI/CD。
+                      牽涉核心商業邏輯或 DB Schema 變更。<strong>從 Gate 1 (DISCUSS) 切入</strong>，先由 AI 顧問與您重新對齊目標並產出最新 <code>.bridge/context.md</code> 規格，再交由 AI 代理實作與全套 CI/CD。
                     </p>
                     {/* Visual Loop diagram */}
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[10px] font-mono space-y-2">
@@ -643,7 +643,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                       <div className="flex items-center gap-1.5 flex-wrap text-stone-800 font-bold">
                         <span className="px-2 py-1 bg-stone-200 rounded text-stone-600">Prod v1.0 (Live)</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">1. DISCUSS (ChatGPT)</span>
+                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">1. DISCUSS (AI 顧問)</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
                         <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">2. SPECIFY (PRD)</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />

@@ -20,7 +20,7 @@ export const ModelRoutingGuide: React.FC<ModelRoutingGuideProps> = ({ isOpen, on
             </div>
             <div>
               <h3 className="text-sm font-bold text-stone-900 font-mono uppercase tracking-wider">
-                Codex Model Routing Matrix
+                AI Model Routing Matrix
               </h3>
               <p className="text-xs text-stone-500 mt-0.5">
                 Automated model allocation based on task risk, blast radius, and reasoning depth.

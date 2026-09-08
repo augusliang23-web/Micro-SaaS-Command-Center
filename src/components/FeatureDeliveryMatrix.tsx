@@ -125,7 +125,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
     onUpdateFeatures(project.id, updated);
   };
 
-  // AI Extraction Handler from ChatGPT PRD or Pasted Text
+  // AI Extraction Handler from AI Advisor PRD or Pasted Text
   const handleExtractFromAI = async (sourceText?: string) => {
     setIsExtracting(true);
     setExtractedCandidates([]);
@@ -146,7 +146,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
       const items: FeatureItem[] = data.features || [];
       setExtractedCandidates(items);
       setSelectedCandidateIds(items.map((i) => i.id));
-      onShowToast(`✨ 成功從 ${data.provider || 'ChatGPT Bridge'} 萃取出 ${items.length} 項結構化功能！`);
+      onShowToast(`✨ 成功從 ${data.provider || 'AI Advisor'} 萃取出 ${items.length} 項結構化功能！`);
     } catch (err) {
       console.error('Extraction failed:', err);
       onShowToast('從 AI 萃取功能時發生問題，已自動切換為本機規則引擎。');
@@ -215,7 +215,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
       title: '非同步批次解析佇列 (BullMQ Stream)',
       category: 'Infra' as FeatureCategory,
       desc: '使用 Redis Stream 進行非阻塞批次讀取，提昇大型檔案解析速率。',
-      author: 'Codex (Terra)',
+      author: 'AI (Terra)',
       status: 'PR Merged to stage',
     },
     {
@@ -223,7 +223,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
       title: '大型檔案 (500MB+) 分塊上傳 (Chunked Upload)',
       category: 'Core' as FeatureCategory,
       desc: '前端支援斷點續傳與直傳 S3 / Cloud Storage，避免記憶體溢位。',
-      author: 'Codex (Terra)',
+      author: 'AI (Terra)',
       status: 'PR Merged to stage',
     },
     {
@@ -231,7 +231,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
       title: '錯誤資料即時修正預覽表 (Inline Error Fixer)',
       category: 'UI/UX' as FeatureCategory,
       desc: '在匯入前於網頁直接編輯標紅欄位，行內修正避免重新上傳。',
-      author: 'Codex (Terra)',
+      author: 'AI (Terra)',
       status: 'PR Merged to stage',
     },
     {
@@ -239,7 +239,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
       title: 'Gemini 2.5 智慧補全遺漏資料欄位',
       category: 'AI' as FeatureCategory,
       desc: '利用 LLM 依據歷史庫存與語意自動補齊缺漏的品名分類與 SKU 編號。',
-      author: 'Codex (Sol)',
+      author: 'AI (Sol)',
       status: 'In Review',
     },
     {
@@ -247,7 +247,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
       title: 'Google Sheets 雙向同步整合',
       category: 'Integration' as FeatureCategory,
       desc: '自動將匯入成功的訂單同步至指定 Google 試算表工作表。',
-      author: 'Codex (Terra)',
+      author: 'AI (Terra)',
       status: 'In Testing',
     },
   ];
@@ -310,7 +310,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-stone-500 mt-1 font-sans leading-relaxed">
-              解決「Stage 做了多個新功能，但只想先推部分到 Prod」的發布難題。支援 <strong>ChatGPT PRD 一鍵同步</strong> 與 <strong>GitHub Repo 連動</strong>，杜絕人工作業出入！
+              解決「Stage 做了多個新功能，但只想先推部分到 Prod」的發布難題。支援 <strong>AI 顧問 PRD 一鍵同步</strong> 與 <strong>GitHub Repo 連動</strong>，杜絕人工作業出入！
             </p>
           </div>
 
@@ -326,7 +326,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
             >
               <Sparkles className="h-3.5 w-3.5 text-emerald-700" />
-              <span>從 ChatGPT / GitHub 同步功能</span>
+              <span>從 AI 顧問 / GitHub 同步功能</span>
             </button>
             <button
               onClick={() => setIsSelectiveModalOpen(true)}
@@ -413,7 +413,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                 新增 / 同步功能至長期交付矩陣 (Feature Ingestion Hub)
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                ChatGPT ↔ Codex ↔ Matrix 連動
+                AI 顧問 ↔ AI 代理 ↔ Matrix 連動
               </span>
             </div>
             <button
@@ -440,7 +440,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               }`}
             >
               <Bot className="h-3.5 w-3.5 text-emerald-600" />
-              <span>1. 從 ChatGPT PRD 一鍵同步 (推薦)</span>
+              <span>1. 從 AI 顧問 PRD 一鍵同步 (推薦)</span>
             </button>
 
             <button
@@ -453,7 +453,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               }`}
             >
               <ClipboardPaste className="h-3.5 w-3.5 text-sky-600" />
-              <span>2. 貼上 ChatGPT / Codex 討論 (AI 智慧解析)</span>
+              <span>2. 貼上 AI 顧問 / AI 代理討論 (AI 智慧解析)</span>
             </button>
 
             <button
@@ -483,14 +483,14 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
             </button>
           </div>
 
-          {/* TAB 1: Direct Sync from Current ChatGPT PRD */}
+          {/* TAB 1: Direct Sync from Current AI Advisor PRD */}
           {addMode === 'chatgpt_prd' && (
             <div className="space-y-3">
               <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg space-y-2 text-[11px] leading-relaxed font-sans">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-emerald-950 flex items-center gap-1.5">
                     <Bot className="h-4 w-4 text-emerald-700" />
-                    從當前專案 ChatGPT PRD 提取規範（0 手填，資訊 100% 對齊）
+                    從當前專案 AI 顧問 PRD 提取規範（0 手填，資訊 100% 對齊）
                   </span>
                   <button
                     onClick={() => handleExtractFromAI()}
@@ -502,7 +502,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                   </button>
                 </div>
                 <p className="text-emerald-900">
-                  系統直接抓取專案在 <strong>Phase 1 (DISCUSS / SPECIFY)</strong> 與 ChatGPT 討論的架構規範與任務（
+                  系統直接抓取專案在 <strong>Phase 1 (DISCUSS / SPECIFY)</strong> 與 AI 顧問討論的架構規範與任務（
                   <code>{project.currentTask}</code>），由 AI 自動提取出結構化功能名稱、驗收條件、自動產生標準 Feature Flag Key 與關聯 Issue。
                 </p>
               </div>
@@ -512,7 +512,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                 <div className="py-8 text-center space-y-2 bg-stone-50 rounded-lg border border-dashed border-stone-300">
                   <RefreshCw className="h-6 w-6 text-emerald-600 animate-spin mx-auto" />
                   <div className="text-xs font-semibold text-stone-800">
-                    正在由 ChatGPT Bridge 智慧解析 PRD 規格中...
+                    正在由 AI 顧問智慧解析 PRD 規格中...
                   </div>
                   <p className="text-[11px] text-stone-500 font-sans">
                     自動對齊驗收條件與產生 <code>domain.feature_name</code> 旗標鍵值
@@ -616,7 +616,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
           {addMode === 'paste_ai' && (
             <div className="space-y-3">
               <div className="p-3 bg-sky-50 border border-sky-200 rounded-lg text-[11px] text-sky-900 font-sans leading-relaxed">
-                將您在 ChatGPT 或 Codex 討論中的 User Stories、PRD 規格或需求文字直接貼在下方，AI 會即時自動拆解為結構化功能卡片。
+                將您在 AI 顧問或 AI 代理討論中的 User Stories、PRD 規格或需求文字直接貼在下方，AI 會即時自動拆解為結構化功能卡片。
               </div>
 
               <textarea
@@ -631,14 +631,14 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                 <button
                   type="button"
                   onClick={() =>
-                    setPastedText(`### ChatGPT Feature Breakdown Spec:
+                    setPastedText(`### AI Feature Breakdown Spec:
 1. Google Sheets 雙向資料即時同步 (Integration) - 支援自動讀取與定時寫入試算表，驗收標準：Webhook 延遲 < 500ms，Issue #53
 2. 暗黑模式主題切換 (UI/UX) - 支援 Tailwind 4 自動偵測系統主題，Issue #58
 3. 自訂正規化驗證規則腳本 (Core) - 允許進階用戶編寫自訂驗證條件，Issue #64`)
                   }
                   className="text-[11px] text-stone-500 hover:text-stone-800 underline cursor-pointer font-sans"
                 >
-                  填入 ChatGPT 對話範例測試
+                  填入 AI 對話範例測試
                 </button>
 
                 <button
@@ -691,7 +691,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                     連線倉庫：<code>{project.repository}</code>
                   </div>
                   <p className="text-stone-500 text-[10px] mt-0.5">
-                    以下為 GitHub 上由 Codex 與開發團隊建立的 Open Issues 與 Merged PRs，點擊即可秒級登記至交付矩陣：
+                    以下為 GitHub 上由 AI 代理與開發團隊建立的 Open Issues 與 Merged PRs，點擊即可秒級登記至交付矩陣：
                   </p>
                 </div>
               </div>
@@ -938,7 +938,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               {filteredFeatures.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-stone-400 font-sans">
-                    無符合條件的功能項目。您可以點擊上方「從 ChatGPT / GitHub 同步功能」一鍵萃取！
+                    無符合條件的功能項目。您可以點擊上方「從 AI 顧問 / GitHub 同步功能」一鍵萃取！
                   </td>
                 </tr>
               ) : (

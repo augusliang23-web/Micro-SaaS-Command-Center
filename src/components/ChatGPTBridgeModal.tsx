@@ -43,8 +43,8 @@ export const ChatGPTBridgeModal: React.FC<ChatGPTBridgeModalProps> = ({
 
   if (!isOpen || !project) return null;
 
-  // Generate the high-density structured prompt payload for ChatGPT
-  const fullBridgePrompt = `[BRIDGE HANDOVER: CHATGPT ARCHITECT SESSION]
+  // Generate the high-density structured prompt payload for the AI advisor
+  const fullBridgePrompt = `[BRIDGE HANDOVER: AI ADVISOR SESSION]
 Timestamp: ${new Date().toISOString()}
 Repository: ${project.repository} (${project.executionContext.branch})
 Project Stage: ${project.stage} | Current Health: ${project.health}
@@ -52,7 +52,7 @@ Project Stage: ${project.stage} | Current Health: ${project.health}
 === CURRENT TASK & WORKFLOW STATE ===
 Task: ${project.currentTask}
 Gate: ${project.currentGate} (${project.currentGateLabel})
-Codex Model Routing: ${project.model} (Risk Tier)
+AI Model Routing: ${project.model} (Risk Tier)
 Waiting State: ${project.waitingState}
 
 === DIAGNOSTIC & BLOCKER STATUS ===
@@ -65,9 +65,9 @@ Issue Context:
 During CSV Batch Import processing, duplicate email entries can collide with existing accounts.
 The automated Review Bot raised a CHANGES REQUIRED objection because the current implementation silently drops duplicates without an audit trail.
 
-Questions for ChatGPT Tech Lead:
+Questions for AI Advisor:
 1. What is the recommended architectural pattern for handling duplicate emails in B2B multi-tenant imports (Skip with report vs. Upsert vs. Fail entire batch)?
-2. How should we instruct Codex to implement this with idempotency and clear error reporting?
+2. How should we instruct the AI agent to implement this with idempotency and clear error reporting?
 3. Generate the updated .bridge task specification and decision resolution string.`;
 
   const handleCopy = () => {
@@ -102,24 +102,24 @@ Questions for ChatGPT Tech Lead:
         setDecisionString(data.decisionString);
       }
     } catch (err) {
-      console.error('Failed to query ChatGPT advice API:', err);
+      console.error('Failed to query AI advisor API:', err);
       setErrorMsg('Could not reach backend API. Using local architectural policy engine.');
       // Fallback
       setSimulatedResponse(
-        `### ChatGPT Architecture Evaluation (ProSync - CSV Batch Import)
+        `### AI Architecture Evaluation (ProSync - CSV Batch Import)
 
 1. **Recommended Strategy**: **Option A (Skip with Audit Error Report)**
    - *Security & Data Integrity*: In multi-tenant B2B architectures, silent account overwriting without explicit user confirmation risks unauthorized data contamination.
    - *Audit Trail*: Returning a downloadable \`import_errors.csv\` with row numbers and \`ERR_DUPLICATE_EMAIL\` provides complete transparency to end users.
 
-2. **Actionable Directive for Codex (Terra Tier)**:
+2. **Actionable Directive for AI Agent (Terra Tier)**:
    - Modify \`src/services/importer.ts\` to collect duplicate collision rows into an in-memory \`skippedRecords\` buffer.
    - Emit a summary banner on UI: \`Imported X records, Y skipped due to duplication\`.
 
 3. **Bridge Decision String**:
    \`Policy selected: Skip duplicate email rows with warning report and audit log.\``
       );
-      setProviderInfo('ChatGPT Bridge Engine (Local High-Availability Mode)');
+      setProviderInfo('AI Advisor Engine (Local High-Availability Mode)');
     } finally {
       setIsLoading(false);
     }
@@ -144,7 +144,7 @@ Questions for ChatGPT Tech Lead:
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm font-bold text-stone-900 font-mono uppercase tracking-wider">
-                  ChatGPT ↔ Bridge Live AI Integration
+                  AI 顧問即時協作
                 </h3>
                 <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
                   {project.name}
@@ -217,7 +217,7 @@ Questions for ChatGPT Tech Lead:
                     ) : (
                       <Bot className="h-4 w-4" />
                     )}
-                    <span>{isLoading ? 'Querying AI API...' : 'Ask ChatGPT API for Advice'}</span>
+                    <span>{isLoading ? 'Querying AI API...' : 'Ask AI Advisor for Advice'}</span>
                   </button>
                 </div>
 
@@ -291,7 +291,7 @@ Questions for ChatGPT Tech Lead:
                 <div className="text-center py-10 border border-dashed border-stone-300 rounded-lg space-y-2 bg-white">
                   <Bot className="h-8 w-8 text-stone-400 mx-auto" />
                   <p className="text-stone-500 text-xs">
-                    Click <strong>"Ask ChatGPT API for Advice"</strong> to query live AI reasoning.
+                    Click <strong>"Ask AI Advisor for Advice"</strong> to query live AI reasoning.
                   </p>
                 </div>
               )}
@@ -322,7 +322,7 @@ Questions for ChatGPT Tech Lead:
               <div className="bg-stone-100 border border-stone-300 rounded-lg p-3 flex items-start gap-2.5 text-stone-600">
                 <HelpCircle className="h-4 w-4 text-stone-700 shrink-0 mt-0.5" />
                 <div className="text-[11px] leading-relaxed">
-                  <strong className="text-stone-900">Bridge Protocol:</strong> In production, ChatGPT can automatically read and write directly to <code className="text-stone-800 bg-white px-1 py-0.5 rounded border border-stone-200">.bridge/chatgpt-context.md</code> via the Bridge CLI / Custom Actions.
+                  <strong className="text-stone-900">Bridge Protocol:</strong> In production, the AI advisor can automatically read and write directly to <code className="text-stone-800 bg-white px-1 py-0.5 rounded border border-stone-200">.bridge/ai-context.md</code> via the Bridge CLI / Custom Actions.
                 </div>
               </div>
             </div>

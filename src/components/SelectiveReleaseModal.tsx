@@ -103,7 +103,7 @@ export const SelectiveReleaseModal: React.FC<SelectiveReleaseModalProps> = ({
       heldList || '- None'
     }\n\n---\n*Deployment Strategy: ${
       releaseStrategy === 'flags' ? 'Feature Flags Gating (Zero Branch Drift)' : 'Cherry-Pick Release Branch'
-    } | Verified via ChatGPT Bridge CI/CD*`;
+    } | Verified via AI Bridge CI/CD*`;
   };
 
   const handleCopyChangelog = () => {

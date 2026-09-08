@@ -92,7 +92,7 @@ export function CodexHandoffPanel({ project }: { project: MicroSaaSProject }) {
         headers: { Accept: 'application/json' },
       });
       const next = await response.json();
-      if (!response.ok) throw new Error(next.error || 'Unable to read Codex handoff status.');
+      if (!response.ok) throw new Error(next.error || 'Unable to read AI Agent handoff status.');
       setStatus(next);
       if (!TERMINAL_STATES.has(next.execution_state)) {
         pollTimer.current = window.setTimeout(() => void poll(handoffId), 750);
@@ -112,7 +112,7 @@ export function CodexHandoffPanel({ project }: { project: MicroSaaSProject }) {
         body: JSON.stringify(readOnlyDispatch(project)),
       });
       const next = await response.json();
-      if (!response.ok) throw new Error(next.error || 'Codex handoff could not start.');
+      if (!response.ok) throw new Error(next.error || 'AI Agent handoff could not start.');
       setStatus(next);
       if (!TERMINAL_STATES.has(next.execution_state)) void poll(next.handoff_id);
     } catch (error) {
@@ -128,7 +128,7 @@ export function CodexHandoffPanel({ project }: { project: MicroSaaSProject }) {
     <div className="mt-3 border-t border-stone-200 pt-3 space-y-3" data-testid="codex-handoff-panel">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-[11px] font-semibold text-stone-800">Native Codex handoff</div>
+          <div className="text-[11px] font-semibold text-stone-800">Native AI Agent handoff</div>
           <div className="text-[10px] text-stone-500">Local read-only inspection · explicit action required</div>
         </div>
         <button
@@ -138,7 +138,7 @@ export function CodexHandoffPanel({ project }: { project: MicroSaaSProject }) {
           className="px-3 py-1.5 text-[11px] font-mono bg-stone-900 hover:bg-stone-800 disabled:bg-stone-400 text-white rounded flex items-center gap-1.5 transition-colors cursor-pointer disabled:cursor-not-allowed"
         >
           {active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-          Run with Codex
+          Run with AI Agent
         </button>
       </div>
 
@@ -155,7 +155,7 @@ export function CodexHandoffPanel({ project }: { project: MicroSaaSProject }) {
           <dd className="text-stone-900 font-semibold" data-testid="codex-handoff-state">{status.execution_state}</dd>
           <dt className="text-stone-500">Handoff</dt>
           <dd className="text-stone-700 break-all">{status.handoff_id}</dd>
-          <dt className="text-stone-500">Codex task</dt>
+          <dt className="text-stone-500">AI Agent task</dt>
           <dd className="text-stone-700 break-all">{status.thread_id || status.turn_id || 'Pending'}</dd>
           <dt className="text-stone-500">Provider</dt>
           <dd className="text-stone-700">{status.provider}</dd>

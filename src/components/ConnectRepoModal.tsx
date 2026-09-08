@@ -186,7 +186,7 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
           label: 'Discussion & Alignment',
           shortLabel: 'DISCUSS',
           status: initialGate === 'DISCUSS' ? 'CURRENT' : 'COMPLETED',
-          detail: 'Initial product goal alignment and ChatGPT bridge context established.',
+          detail: 'Initial product goal alignment and AI advisor context established.',
           timestamp: 'Just now',
         },
         {
@@ -208,7 +208,7 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
           label: 'Autonomous Implementation',
           shortLabel: 'IMPLEMENT',
           status: initialGate === 'IMPLEMENT' ? 'CURRENT' : 'PENDING',
-          detail: 'Codex autonomous code generation and branch execution.',
+          detail: 'AI agent autonomous code generation and branch execution.',
         },
         {
           id: 'TEST',
@@ -536,10 +536,10 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
                     onChange={(e) => setInitialGate(e.target.value as BridgeGateId)}
                     className="w-full bg-stone-50 border border-stone-300 rounded px-2 py-1.5 text-stone-800 text-xs focus:outline-none cursor-pointer"
                   >
-                    <option value="DISCUSS">DISCUSS (架構探討 / ChatGPT)</option>
+                    <option value="DISCUSS">DISCUSS (架構探討 / AI 顧問)</option>
                     <option value="SPECIFY">SPECIFY (PRD / 規格文件)</option>
                     <option value="ROUTE">ROUTE (模型動態路由指派)</option>
-                    <option value="IMPLEMENT">IMPLEMENT (Codex 自主寫代碼)</option>
+                    <option value="IMPLEMENT">IMPLEMENT (AI 代理自主寫代碼)</option>
                   </select>
                 </div>
               </div>

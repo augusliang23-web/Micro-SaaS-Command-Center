@@ -142,7 +142,7 @@ export interface ExecutionContext {
 export interface ActivityItem {
   id: string;
   timestamp: string;
-  author: 'Human (You)' | 'Codex (Terra)' | 'Codex (Sol)' | 'Codex (Luna)' | 'Bridge Automation' | 'Google AI Studio';
+  author: 'Human (You)' | 'AI (Terra)' | 'AI (Sol)' | 'AI (Luna)' | 'Bridge Automation' | 'AI Prototyping Tool';
   action: string;
   detail: string;
   gate?: BridgeGateId;

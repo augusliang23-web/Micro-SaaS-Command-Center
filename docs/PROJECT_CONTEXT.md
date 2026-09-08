@@ -140,9 +140,32 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
    Portfolio. The old fake "快速放行" (quick-approve) button, which only
    edited local state, was removed. See
    `docs/superpowers/evidence/2026-09-08-next-best-action-real-verdict-non-bridge.md`.
-   Next candidate screen in the one-at-a-time revamp: `CockpitHeader.tsx`
-   (top nav — still has "ChatGPT ↔ Codex Bridge Operations," a
-   "Luna / Terra / Sol" button, and a "CI/CD 流程圖" button).
+9. **Done (2026-09-08):** `CockpitHeader.tsx` redesigned to the same
+   zero-jargon-by-default pattern as every prior screen — the vendor tagline
+   is gone (replaced with a plain "AI 協作作業中 · Live Sync" status line),
+   and the "Luna / Terra / Sol" / "CI/CD 流程圖" buttons moved behind a new
+   collapsible "技術細節" toggle instead of always showing. In the same pass,
+   every user-facing mention of "ChatGPT" or "Codex" was replaced app-wide
+   (110 mentions, 13 files) with vendor-neutral role language — "AI 顧問"
+   (AI Advisor) for the advisory/PRD role, "AI 代理" (AI Agent) for the
+   coding/execution role — so the app doesn't read as permanently tied to
+   OpenAI's specific products; the owner may use different AI models going
+   forward. "GitHub"/"GitHub Actions" (a real third-party tool) and the
+   product's own branding ("Bridge," "Command Center," "Luna/Terra/Sol")
+   were left unchanged, as were internal code identifiers
+   (`ChatGPTBridgeModal`, `CodexHandoffPanel`, `CodexModelName`, the
+   `/api/bridge/chatgpt-advice` route) — invisible during use, so renaming
+   them was out of scope. See
+   `docs/superpowers/evidence/2026-09-08-header-redesign-ai-vendor-neutral-wording-non-bridge.md`.
+   Known cosmetic gap: locally-persisted `data/app-state.json` (gitignored,
+   predates this change) still has a few stale "Codex"-named strings for one
+   fixture project until that project's state is next rewritten — not a
+   source-code issue.
+   Next candidate screens in the one-at-a-time revamp: `NeedsAttentionQueue`
+   and `AIExecutionSnapshot` (still Gate-era jargon), and — as a separate,
+   lower-priority step — a plain-language content redesign of
+   `CiCdWorkflowModal.tsx`/`FeatureDeliveryMatrix.tsx` beyond just their
+   vendor-naming, which this step did not attempt.
 
 ## Roadmap
 

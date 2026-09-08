@@ -314,7 +314,7 @@ export default function App() {
 
     let targetGate: any = 'DISCUSS';
     let targetGateLabel = 'Discuss & Alignment';
-    let nextAct = 'ChatGPT Bridge 對齊新版本 PRD 規格';
+    let nextAct = 'AI 顧問對齊新版本 PRD 規格';
     let assignedModel: any = 'Terra';
     let branchName = `feat/v2-iteration-${Date.now().toString().slice(-4)}`;
 
@@ -588,7 +588,7 @@ export default function App() {
           </div>
 
           <div className="text-[11px] text-stone-500 hidden sm:block">
-            <span>ChatGPT ↔ Codex Bridge Protocol</span>
+            <span>AI 協作流程</span>
           </div>
         </div>
 
