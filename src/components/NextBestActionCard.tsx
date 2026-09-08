@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { MicroSaaSProject, GithubPullStatus } from '../types';
-import { isRealGithubRepo } from '../utils';
-import { getVerdict, pickMostUrgent } from '../verdict.mjs';
+import React from 'react';
+import { MicroSaaSProject } from '../types';
+import { pickMostUrgent } from '../verdict.mjs';
+import { useProjectVerdicts } from '../hooks/useProjectVerdicts';
 import { ProjectVerdictCard } from './ProjectVerdictCard';
 
 interface NextBestActionCardProps {
@@ -16,29 +16,7 @@ interface NextBestActionCardProps {
  * happening in any project.
  */
 export const NextBestActionCard: React.FC<NextBestActionCardProps> = ({ projects, onSelectProject }) => {
-  const [githubStates, setGithubStates] = useState<Record<string, GithubPullStatus | null>>({});
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    const realProjects = projects.filter((p) => isRealGithubRepo(p.repository));
-    Promise.all(
-      realProjects.map((p) =>
-        fetch(`/api/github/pull-status?repo=${encodeURIComponent(p.repository)}`)
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => [p.id, data] as const)
-          .catch(() => [p.id, null] as const)
-      )
-    ).then((entries) => {
-      if (cancelled) return;
-      setGithubStates(Object.fromEntries(entries));
-      setIsLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [projects]);
+  const { verdicts, isLoading } = useProjectVerdicts(projects);
 
   if (projects.length === 0) return null;
   if (isLoading) {
@@ -47,7 +25,6 @@ export const NextBestActionCard: React.FC<NextBestActionCardProps> = ({ projects
     );
   }
 
-  const verdicts = projects.map((p) => getVerdict(p, githubStates[p.id] ?? undefined));
   const topIndex = pickMostUrgent(verdicts);
   if (topIndex === -1) return null;
   const topProject = projects[topIndex];

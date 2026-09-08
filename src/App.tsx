@@ -6,7 +6,7 @@ import {
   initialExecutionSnapshot,
   projectProvenance,
 } from './mockData';
-import { MicroSaaSProject, AttentionItem, NextBestAction, AIExecutionSnapshotData } from './types';
+import { MicroSaaSProject, AttentionItem, NextBestAction, AIExecutionSnapshotData, CodexModelName } from './types';
 import { CockpitHeader } from './components/CockpitHeader';
 import { NextBestActionCard } from './components/NextBestActionCard';
 import { NeedsAttentionQueue } from './components/NeedsAttentionQueue';
@@ -16,6 +16,7 @@ import { ProjectDetailDrawer } from './components/ProjectDetailDrawer';
 import { ModelRoutingGuide } from './components/ModelRoutingGuide';
 import { ConnectRepoModal } from './components/ConnectRepoModal';
 import { CiCdWorkflowModal } from './components/CiCdWorkflowModal';
+import { useProjectVerdicts } from './hooks/useProjectVerdicts';
 import {
   Layers,
   ShieldAlert,
@@ -26,11 +27,35 @@ import {
 
 export default function App() {
   const [projects, setProjects] = useState<MicroSaaSProject[]>(initialProjects);
+  // Kept only so /api/state's persisted shape stays backward-compatible; the
+  // "待人決策" tab and Header pill counts now derive from real project
+  // verdicts (useProjectVerdicts below) instead of this fixture.
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>(initialAttentionItems);
   // Kept only so /api/state's persisted shape stays backward-compatible; NextBestActionCard
   // now derives its own recommendation from real project verdicts instead of this fixture.
   const [nba, setNba] = useState<NextBestAction>(initialNextBestAction);
+  // Kept only so /api/state's persisted shape stays backward-compatible; the
+  // "AI 執行與模型遙測" tab and Header pill counts now derive from real
+  // project verdicts (useProjectVerdicts below) instead of this fixture.
   const [snapshot, setSnapshot] = useState<AIExecutionSnapshotData>(initialExecutionSnapshot);
+
+  const { verdicts } = useProjectVerdicts(projects);
+  const attentionProjects = projects.filter((_, i) => {
+    const level = verdicts[i]?.level;
+    return level === 'decision' || level === 'danger';
+  });
+  const attentionCount = attentionProjects.length;
+  const aiRunningCount = verdicts.filter((v) => v.level === 'waiting').length;
+  const countByModel = (model: CodexModelName) => projects.filter((p) => p.model === model).length;
+  const liveSnapshot: AIExecutionSnapshotData = {
+    lunaTasks: countByModel('Luna'),
+    terraTasks: countByModel('Terra'),
+    solTasks: countByModel('Sol'),
+    waitingForReview: verdicts.filter((v) => v.level === 'ready').length,
+    waitingForHuman: verdicts.filter((v) => v.level === 'decision').length,
+    blocked: verdicts.filter((v) => v.level === 'danger').length,
+    aiRunning: aiRunningCount,
+  };
 
   const [selectedProject, setSelectedProject] = useState<MicroSaaSProject | null>(null);
   const [activeTab, setActiveTab] = useState<'projects' | 'attention' | 'telemetry'>('projects');
@@ -123,13 +148,6 @@ export default function App() {
     setSelectedProject(project);
   };
 
-  // Focus from Needs Attention or Next Best Action
-  const handleFocusProjectGate = (projectId: string, gateId: string) => {
-    const target = projects.find((p) => p.id === projectId);
-    if (target) {
-      setSelectedProject(target);
-    }
-  };
 
   // Simulate resolving a blocker / recording decision
   const handleResolveBlocker = (projectId: string, resolution: string) => {
@@ -181,16 +199,6 @@ export default function App() {
       })
     );
 
-    // Remove from attention items
-    setAttentionItems((prev) => prev.filter((item) => item.projectId !== projectId));
-
-    // Update snapshot
-    setSnapshot((prev) => ({
-      ...prev,
-      blocked: Math.max(0, prev.blocked - 1),
-      waitingForHuman: Math.max(0, prev.waitingForHuman - 1),
-    }));
-
     showToast(`決策已套用：${resolution}`);
 
     // If currently selected, update drawer
@@ -207,12 +215,6 @@ export default function App() {
         nextAction: '1-click Merge PR & release to UAT',
       };
     });
-  };
-
-  // Resolve single attention item
-  const handleResolveAttentionItem = (itemId: string, projectId: string) => {
-    setAttentionItems((prev) => prev.filter((i) => i.id !== itemId));
-    showToast(`已放行待辦項目 [${itemId}]，AI 工作流已恢復自主執行。`);
   };
 
   // Approve current gate
@@ -502,10 +504,6 @@ export default function App() {
   const handleConnectRepo = (newProject: MicroSaaSProject) => {
     setProjects((prev) => [newProject, ...prev]);
     setSelectedProject(newProject);
-    setSnapshot((prev) => ({
-      ...prev,
-      waitingForHuman: prev.waitingForHuman + 1,
-    }));
     showToast(`已接入 GitHub 倉庫 [${newProject.repository}]；新建的 8-Gate 工作流卡片是本地模擬狀態，尚未連動真實 Issue/PR/CI。`);
   };
 
@@ -529,13 +527,13 @@ export default function App() {
 
       {/* Cockpit Top Navigation */}
       <CockpitHeader
-        snapshot={snapshot}
+        snapshot={liveSnapshot}
         activeFilter={activeFilter}
         onSelectFilter={setActiveFilter}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         totalProjects={projects.length}
-        attentionCount={attentionItems.length}
+        attentionCount={attentionCount}
         onOpenModelGuide={() => setIsModelGuideOpen(true)}
         onOpenConnectRepo={() => setIsConnectRepoOpen(true)}
         onOpenCiCdMap={() => setIsCiCdModalOpen(true)}
@@ -571,7 +569,7 @@ export default function App() {
               }`}
             >
               <ShieldAlert className="h-3.5 w-3.5 text-amber-700" />
-              <span>待人決策 ({attentionItems.length})</span>
+              <span>待人決策 ({attentionCount})</span>
             </button>
 
             <button
@@ -583,7 +581,7 @@ export default function App() {
               }`}
             >
               <Cpu className="h-3.5 w-3.5" />
-              <span>AI 執行與模型遙測 ({snapshot.aiRunning} 執行中)</span>
+              <span>AI 執行與模型遙測 ({aiRunningCount} 執行中)</span>
             </button>
           </div>
 
@@ -608,9 +606,8 @@ export default function App() {
         {activeTab === 'attention' && (
           <div className="animate-fadeIn space-y-4">
             <NeedsAttentionQueue
-              items={attentionItems}
-              onSelectItem={handleFocusProjectGate}
-              onResolveItem={handleResolveAttentionItem}
+              projects={attentionProjects}
+              onSelectProject={handleSelectProject}
             />
           </div>
         )}
@@ -619,7 +616,7 @@ export default function App() {
         {activeTab === 'telemetry' && (
           <div className="animate-fadeIn space-y-4">
             <AIExecutionSnapshot
-              snapshot={snapshot}
+              snapshot={liveSnapshot}
               onOpenModelGuide={() => setIsModelGuideOpen(true)}
               onFilterByModel={(model) => {
                 setSearchQuery(model);

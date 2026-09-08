@@ -161,11 +161,26 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
    predates this change) still has a few stale "Codex"-named strings for one
    fixture project until that project's state is next rewritten — not a
    source-code issue.
-   Next candidate screens in the one-at-a-time revamp: `NeedsAttentionQueue`
-   and `AIExecutionSnapshot` (still Gate-era jargon), and — as a separate,
-   lower-priority step — a plain-language content redesign of
-   `CiCdWorkflowModal.tsx`/`FeatureDeliveryMatrix.tsx` beyond just their
-   vendor-naming, which this step did not attempt.
+10. **Done (2026-09-08):** the "待人決策" (`NeedsAttentionQueue`) and "AI 執行與
+    模型遙測" (`AIExecutionSnapshot`) tabs got the plain-language pass AND had
+    their underlying data source fixed — both used to be driven by static
+    fixtures (`initialAttentionItems`/`initialExecutionSnapshot`) that never
+    reflected real project state, the same "looks live, isn't" gap already
+    fixed for Portfolio/Next Best Action. New shared hook
+    `src/hooks/useProjectVerdicts.ts` scans every project's real verdict
+    once in `App.tsx`; `attentionCount`/`aiRunningCount`/the execution
+    snapshot's four state tiles are all now derived from that single scan,
+    so the Header's pill counts and both tabs' badges/content stay in sync
+    instead of being four independently-stale numbers. `NeedsAttentionQueue`
+    now renders real `decision`/`danger`-verdict projects as full
+    `ProjectVerdictCard`s (same visual language as Portfolio) with no more
+    fake "Resolve" button. See
+    `docs/superpowers/evidence/2026-09-08-attention-telemetry-real-verdict-non-bridge.md`.
+    This closes out the one-at-a-time plain-language revamp for all primary
+    screens. Remaining, lower-priority: a plain-language *content* redesign
+    of `CiCdWorkflowModal.tsx`/`FeatureDeliveryMatrix.tsx` beyond just their
+    vendor-naming (not attempted in the 2026-09-08 header step), and the
+    still-deferred AI-tool interaction gap (see entry 7 above).
 
 ## Roadmap
 
