@@ -89,7 +89,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Live Architecture Advice Endpoint for ChatGPT ↔ Bridge
+// Live Architecture Advice Endpoint for AI Advisor ↔ Bridge
 app.post('/api/bridge/chatgpt-advice', async (req, res) => {
   try {
     const { project, userQuery } = req.body || {};
@@ -173,7 +173,7 @@ Evaluate the situation with high rigor.`;
       const responseText = geminiRes.text || '';
 
       res.json({
-        provider: 'ChatGPT Bridge Engine (Powered by Gemini 3.7 Flash)',
+        provider: 'AI Bridge Engine (Powered by Gemini 3.7 Flash)',
         modelUsed: 'gemini-3.7-flash',
         analysisMarkdown: responseText,
         recommendedOption: responseText.includes('Option A') ? 'Option A' : 'Option B',
@@ -185,15 +185,15 @@ Evaluate the situation with high rigor.`;
 
     // 3. Fallback response if no keys are set
     res.json({
-      provider: 'ChatGPT Bridge (Local Fallback Policy)',
+      provider: 'AI Bridge (Local Fallback Policy)',
       modelUsed: 'rule-based-architect',
-      analysisMarkdown: `### ChatGPT Architecture Evaluation (ProSync - CSV Batch Import)
+      analysisMarkdown: `### AI Architecture Evaluation (ProSync - CSV Batch Import)
 
 1. **Recommended Strategy**: **Option A (Skip with Audit Error Report)**
    - *Security & Data Integrity*: In multi-tenant B2B architectures, silent account overwriting without explicit user confirmation risks unauthorized data contamination.
    - *Audit Trail*: Returning a downloadable \`import_errors.csv\` with row numbers and \`ERR_DUPLICATE_EMAIL\` provides complete transparency to end users.
 
-2. **Actionable Directive for Codex (Terra Tier)**:
+2. **Actionable Directive for AI Agent (Terra Tier)**:
    - Modify \`src/services/importer.ts\` to collect duplicate collision rows into an in-memory \`skippedRecords\` buffer.
    - Emit a summary banner on UI: \`Imported X records, Y skipped due to duplication\`.
 
@@ -212,7 +212,7 @@ Evaluate the situation with high rigor.`;
   }
 });
 
-// Live AI Auto-Extraction of Features from ChatGPT PRD / Raw Specs
+// Live AI Auto-Extraction of Features from AI Advisor PRD / Raw Specs
 app.post('/api/bridge/extract-features', async (req, res) => {
   try {
     const { text, project, source } = req.body || {};
@@ -287,7 +287,7 @@ Respond ONLY with valid JSON array. No markdown code blocks, no other text.`;
       {
         id: `feat-${Date.now()}-1`,
         name: `即時欄位格式自動驗證 (Live Validation)`,
-        description: `依據 ChatGPT 討論之 PRD 規範，在上傳前即時校驗 Email 與欄位型態。`,
+        description: `依據 AI 顧問討論之 PRD 規範，在上傳前即時校驗 Email 與欄位型態。`,
         category: 'Core',
         stageStatus: 'Testing',
         prodStatus: 'Pending Release',

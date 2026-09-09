@@ -303,14 +303,14 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
             <div className="flex items-center gap-2">
               <span className="font-bold text-stone-900 text-sm flex items-center gap-1.5">
                 <Layers className="h-4 w-4 text-stone-700" />
-                功能交付與 Feature Flag 矩陣 (Feature Delivery Matrix)
+                每個功能現在的狀態
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-white text-stone-600 border border-stone-300">
                 共 {features.length} 項功能
               </span>
             </div>
             <p className="text-[11px] text-stone-500 mt-1 font-sans leading-relaxed">
-              解決「Stage 做了多個新功能，但只想先推部分到 Prod」的發布難題。支援 <strong>AI 顧問 PRD 一鍵同步</strong> 與 <strong>GitHub Repo 連動</strong>，杜絕人工作業出入！
+              當測試環境做了很多功能，但只想先推部分上線時，這裡幫你管理每個功能該不該對外開放。可以從 <strong>AI 顧問的討論內容</strong>或 <strong>GitHub</strong> 一鍵同步，不用手動一項項輸入。
             </p>
           </div>
 
@@ -410,7 +410,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-emerald-700" />
               <span className="font-bold text-stone-900 text-sm">
-                新增 / 同步功能至長期交付矩陣 (Feature Ingestion Hub)
+                新增或同步功能到這份列表
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
                 AI 顧問 ↔ AI 代理 ↔ Matrix 連動
@@ -490,7 +490,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-emerald-950 flex items-center gap-1.5">
                     <Bot className="h-4 w-4 text-emerald-700" />
-                    從當前專案 AI 顧問 PRD 提取規範（0 手填，資訊 100% 對齊）
+                    直接從你跟 AI 顧問的討論內容抓功能，不用自己打字
                   </span>
                   <button
                     onClick={() => handleExtractFromAI()}
@@ -498,12 +498,11 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                     className="px-2.5 py-1 bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded font-semibold flex items-center gap-1 text-[10px] cursor-pointer"
                   >
                     {isExtracting ? <RefreshCw className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                    <span>重新由 AI 掃描 PRD</span>
+                    <span>重新掃描一次</span>
                   </button>
                 </div>
                 <p className="text-emerald-900">
-                  系統直接抓取專案在 <strong>Phase 1 (DISCUSS / SPECIFY)</strong> 與 AI 顧問討論的架構規範與任務（
-                  <code>{project.currentTask}</code>），由 AI 自動提取出結構化功能名稱、驗收條件、自動產生標準 Feature Flag Key 與關聯 Issue。
+                  系統會看你這個專案跟 AI 顧問討論過的內容（目前任務：<code>{project.currentTask}</code>），自動整理出功能名稱、驗收條件，並產生對應的開關代號跟關聯 Issue，不用你手動填寫。
                 </p>
               </div>
 
@@ -512,10 +511,10 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                 <div className="py-8 text-center space-y-2 bg-stone-50 rounded-lg border border-dashed border-stone-300">
                   <RefreshCw className="h-6 w-6 text-emerald-600 animate-spin mx-auto" />
                   <div className="text-xs font-semibold text-stone-800">
-                    正在由 AI 顧問智慧解析 PRD 規格中...
+                    AI 正在整理討論內容中…
                   </div>
                   <p className="text-[11px] text-stone-500 font-sans">
-                    自動對齊驗收條件與產生 <code>domain.feature_name</code> 旗標鍵值
+                    自動整理驗收條件，並產生對應的開關代號
                   </p>
                 </div>
               ) : extractedCandidates.length > 0 ? (
@@ -523,7 +522,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-stone-800 flex items-center gap-1">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                      AI 成功萃取出的候選功能清單 ({extractedCandidates.length} 項)：
+                      AI 找到的功能清單 ({extractedCandidates.length} 項)：
                     </span>
                     <button
                       onClick={() => {
@@ -616,7 +615,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
           {addMode === 'paste_ai' && (
             <div className="space-y-3">
               <div className="p-3 bg-sky-50 border border-sky-200 rounded-lg text-[11px] text-sky-900 font-sans leading-relaxed">
-                將您在 AI 顧問或 AI 代理討論中的 User Stories、PRD 規格或需求文字直接貼在下方，AI 會即時自動拆解為結構化功能卡片。
+                把你跟 AI 顧問或 AI 代理討論的需求文字直接貼在下方，AI 會自動幫你拆成一張張功能卡片。
               </div>
 
               <textarea
@@ -691,7 +690,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                     連線倉庫：<code>{project.repository}</code>
                   </div>
                   <p className="text-stone-500 text-[10px] mt-0.5">
-                    以下為 GitHub 上由 AI 代理與開發團隊建立的 Open Issues 與 Merged PRs，點擊即可秒級登記至交付矩陣：
+                    以下是 AI 代理跟開發團隊在 GitHub 上建立的待處理項目跟已完成的修改，點一下就能加進這份列表：
                   </p>
                 </div>
               </div>

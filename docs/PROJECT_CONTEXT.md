@@ -177,10 +177,26 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     fake "Resolve" button. See
     `docs/superpowers/evidence/2026-09-08-attention-telemetry-real-verdict-non-bridge.md`.
     This closes out the one-at-a-time plain-language revamp for all primary
-    screens. Remaining, lower-priority: a plain-language *content* redesign
-    of `CiCdWorkflowModal.tsx`/`FeatureDeliveryMatrix.tsx` beyond just their
-    vendor-naming (not attempted in the 2026-09-08 header step), and the
-    still-deferred AI-tool interaction gap (see entry 7 above).
+    screens.
+11. **Done (2026-09-09):** `CiCdWorkflowModal.tsx` (all 4 tabs) and the
+    highest jargon-density prose in `FeatureDeliveryMatrix.tsx` (top banner,
+    AI-sync drawer intro/loading text) rewritten from engineering-jargon
+    prose into plain Chinese explanation — structure unchanged, Gate IDs
+    and Luna/Terra/Sol tier names kept (core app vocabulary, not disposable
+    jargon). While verifying, found and fixed a leftover "ChatGPT" mention
+    the 2026-09-08 sweep couldn't reach because it deliberately skipped
+    `server.ts` (a boundary `CLAUDE.md` keeps separately protected). Got
+    explicit owner re-authorization via `AskUserQuestion` before touching
+    it; fixed the `/api/bridge/chatgpt-advice` and `/api/bridge/extract-
+    features` routes' **display/fallback strings only** (provider labels,
+    fallback markdown, two comments) — deliberately left the real system
+    prompts sent to OpenAI/Gemini untouched (still say "ChatGPT" internally;
+    that's live provider behavior, a different category from display text,
+    and the owner explicitly chose not to touch it this round). See
+    `docs/superpowers/evidence/2026-09-09-cicd-modal-plain-language-content-non-bridge.md`.
+    Remaining, lower-priority: `FeatureDeliveryMatrix.tsx`'s data-table
+    structure itself was not redesigned (only its surrounding prose), and
+    the still-deferred AI-tool interaction gap (see entry 7 above).
 
 ## Roadmap
 

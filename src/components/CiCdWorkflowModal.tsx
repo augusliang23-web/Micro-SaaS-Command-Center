@@ -53,15 +53,15 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-stone-900 font-mono uppercase tracking-wider">
-                  Bridge 8-Gate ↔ 標準 CI/CD 流程 & 改版迭代機制
+                <h3 className="text-sm font-bold text-stone-900">
+                  AI 怎麼把每次改動安全地送上線
                 </h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-300">
-                  Standard CI/CD Architecture
+                  標準 CI/CD 架構
                 </span>
               </div>
               <p className="text-xs text-stone-500 mt-0.5">
-                將 AI Agent 自主編程納入企業級 Pre-Commit ➔ CI ➔ CD 與上線後改版回流循環。
+                從 AI 動手改代碼開始，到自動測試、人工確認、正式上線，每一步都留下紀錄可以回溯。
               </p>
             </div>
           </div>
@@ -84,7 +84,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
             }`}
           >
             <Workflow className="h-4 w-4" />
-            <span>三階段 CI/CD 流水線架構</span>
+            <span>三個階段：準備、驗證、上線</span>
           </button>
           <button
             onClick={() => setActiveTab('environments')}
@@ -95,7 +95,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
             }`}
           >
             <Server className="h-4 w-4 text-sky-700" />
-            <span>🌐 Stage vs. Production 雙軌環境</span>
+            <span>🌐 測試環境跟正式環境的差別</span>
           </button>
           <button
             onClick={() => setActiveTab('selective')}
@@ -106,7 +106,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
             }`}
           >
             <Zap className="h-4 w-4 text-emerald-700" />
-            <span>🎯 選擇性發布 (Selective Release & 旗標)</span>
+            <span>🎯 只推部分功能上線的做法</span>
           </button>
           <button
             onClick={() => setActiveTab('iteration')}
@@ -117,7 +117,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
             }`}
           >
             <RotateCcw className="h-4 w-4 text-amber-700" />
-            <span>⚡ 改版迭代與 Hotfix 回流路徑</span>
+            <span>⚡ 改版跟緊急修復怎麼處理</span>
           </button>
         </div>
 
@@ -155,14 +155,14 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-amber-900 font-bold">
                       <Bot className="h-4 w-4 text-amber-700" />
-                      <span>PHASE 1: PRE-COMMIT</span>
+                      <span>第一階段：想清楚再動手</span>
                     </div>
                     <span className="text-[10px] bg-amber-50 text-amber-900 px-1.5 py-0.2 rounded border border-amber-200">
                       AI 決策與架構
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-600 leading-relaxed">
-                    在代碼產生前建立明確規格契約與模型路由，避免 AI 瞎猜與無謂消耗 Token。
+                    AI 動手改代碼之前，先跟你把需求對齊、寫清楚要做什麼，避免猜錯方向白做工。
                   </p>
                   <div className="space-y-2 pt-1 border-t border-stone-100">
                     <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
@@ -179,7 +179,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     </div>
                   </div>
                   <div className="text-[10px] text-stone-500 bg-stone-100 p-2 rounded">
-                    ⚡ <strong>輸出產物</strong>：.bridge/context.md 規格檔與 Issue 指派
+                    ⚡ <strong>這階段結束時會有</strong>：一份寫清楚需求的規格文件，以及派給誰執行的紀錄
                   </div>
                 </div>
 
@@ -189,14 +189,14 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-sky-950 font-bold">
                       <Terminal className="h-4 w-4 text-sky-700" />
-                      <span>PHASE 2: CI (整合驗證)</span>
+                      <span>第二階段：動手改，自動檢查</span>
                     </div>
                     <span className="text-[10px] bg-sky-50 text-sky-900 px-1.5 py-0.2 rounded border border-sky-200">
                       GitHub Actions
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-600 leading-relaxed">
-                    自主背景工作者撰寫代碼並即時執行測試流水線，落實「Tests PASS ≠ Review PASS」。
+                    AI 開始寫代碼，改完立刻自動跑測試——測試通過不代表沒問題，所以還會再讓另一個 AI 覆核一次。
                   </p>
                   <div className="space-y-2 pt-1 border-t border-stone-100">
                     <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
@@ -213,7 +213,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     </div>
                   </div>
                   <div className="text-[10px] text-stone-500 bg-stone-100 p-2 rounded">
-                    ⚡ <strong>輸出產物</strong>：Pull Request + CI 綠燈測試報告
+                    ⚡ <strong>這階段結束時會有</strong>：一個等你確認的修改請求（PR），附上自動測試都通過的報告
                   </div>
                 </div>
 
@@ -223,14 +223,14 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-emerald-950 font-bold">
                       <Rocket className="h-4 w-4 text-emerald-700" />
-                      <span>PHASE 3: CD (交付發布)</span>
+                      <span>第三階段：你點頭，正式上線</span>
                     </div>
                     <span className="text-[10px] bg-emerald-50 text-emerald-900 px-1.5 py-0.2 rounded border border-emerald-200">
-                      Release & Deploy
+                      發布與部署
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-600 leading-relaxed">
-                    人工看門人放行（Human-in-the-loop）後，觸發正式環境與預發環境的容器發布。
+                    最後一定要等你親自按下確認，系統才會把改動實際發布到正式環境跟測試環境。
                   </p>
                   <div className="space-y-2 pt-1 border-t border-stone-100">
                     <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
@@ -243,53 +243,53 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     </div>
                   </div>
                   <div className="text-[10px] text-stone-500 bg-stone-100 p-2 rounded">
-                    ⚡ <strong>輸出產物</strong>：Live Production 營運版本
+                    ⚡ <strong>這階段結束時會有</strong>：正式環境上跑著最新、通過驗證的版本
                   </div>
                 </div>
               </div>
 
               {/* End-to-End Visual Workflow Comparison Matrix */}
               <div className="bg-white p-4 rounded-xl border border-stone-300 space-y-3 shadow-xs">
-                <h4 className="font-bold text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
+                <h4 className="font-bold text-stone-900 flex items-center gap-1.5">
                   <Sparkles className="h-4 w-4 text-amber-700" />
-                  <span>Bridge 與傳統 CI/CD 的關鍵差別對照</span>
+                  <span>這套流程跟「工程師自己土法煉鋼」差在哪</span>
                 </h4>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-[11px]">
                     <thead>
                       <tr className="border-b border-stone-200 bg-[#F7F6F2] text-stone-500">
                         <th className="py-2 px-3">環節</th>
-                        <th className="py-2 px-3">傳統 CI/CD (Legacy)</th>
-                        <th className="py-2 px-3 text-emerald-800 font-bold">Bridge + CI/CD 協同流水線 (Modern)</th>
+                        <th className="py-2 px-3">沒有這套流程時</th>
+                        <th className="py-2 px-3 text-emerald-800 font-bold">現在這裡怎麼做</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-200 text-stone-700">
                       <tr>
-                        <td className="py-2.5 px-3 font-semibold">需求與 PRD</td>
-                        <td className="py-2.5 px-3 text-stone-500">人類在 Jira 撰寫，無程式碼合約綁定</td>
+                        <td className="py-2.5 px-3 font-semibold">需求怎麼定義</td>
+                        <td className="py-2.5 px-3 text-stone-500">工程師自己寫需求文件，代碼不一定照著做</td>
                         <td className="py-2.5 px-3 font-medium text-stone-900">
-                          <strong>AI 顧問 (Gate 1-2)</strong> 自動產出標準化 <code>.bridge/context.md</code>
+                          <strong>AI 顧問</strong>先跟你對齊，再自動產出跟代碼綁定的規格文件
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2.5 px-3 font-semibold">模型與運算分配</td>
-                        <td className="py-2.5 px-3 text-stone-500">無（工程師手動手刻）</td>
+                        <td className="py-2.5 px-3 font-semibold">誰來執行</td>
+                        <td className="py-2.5 px-3 text-stone-500">沒有分派機制，全靠工程師自己判斷</td>
                         <td className="py-2.5 px-3 font-medium text-stone-900">
-                          <strong>Dynamic Routing (Gate 3)</strong> 依風險分流至 Luna / Terra / Sol
+                          系統依風險高低，自動分配給 Luna / Terra / Sol 其中一個
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2.5 px-3 font-semibold">代碼審查機制</td>
-                        <td className="py-2.5 px-3 text-stone-500">僅看單元測試是否 PASS</td>
+                        <td className="py-2.5 px-3 font-semibold">怎麼把關品質</td>
+                        <td className="py-2.5 px-3 text-stone-500">只看自動測試有沒有過</td>
                         <td className="py-2.5 px-3 font-medium text-stone-900">
-                          <strong>Tests PASS ≠ Review PASS (Gate 6)</strong> 測試過仍須獨立 AI 審查死鎖與安全
+                          測試過仍不算數——<strong>再讓另一個 AI 覆核一次</strong>安全性跟邏輯
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2.5 px-3 font-semibold">最終發布決策</td>
-                        <td className="py-2.5 px-3 text-stone-500">手動建立 PR，逐行 Code Review</td>
+                        <td className="py-2.5 px-3 font-semibold">誰拍板上線</td>
+                        <td className="py-2.5 px-3 text-stone-500">工程師逐行看完代碼才敢合併</td>
                         <td className="py-2.5 px-3 font-medium text-stone-900">
-                          <strong>Human Gatekeeper (Gate 7)</strong> 專注於架構決策與一鍵放行
+                          <strong>你</strong>只需要看結論、一鍵放行，不用懂代碼細節
                         </td>
                       </tr>
                     </tbody>
@@ -305,10 +305,10 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
               <div className="bg-sky-50/70 border border-sky-300 rounded-xl p-4 space-y-2">
                 <div className="flex items-center gap-2 text-sky-950 font-bold">
                   <Server className="h-4 w-4 text-sky-700" />
-                  <span>雙軌環境架構：Stage (測試/預發驗證) ➔ Production (正式線上穩定)</span>
+                  <span>永遠先在測試環境試跑，你點頭才上正式環境</span>
                 </div>
                 <p className="text-[11px] text-sky-900 leading-relaxed">
-                  為了避免 AI 自主修改的程式碼或改版直接衝擊線上付費用戶，系統落實<strong>「隔離預發（Stage Preview）」</strong>與<strong>「線上正式（Production）」</strong>雙軌架構。所有改版分支皆會自動佈署至獨立的 Stage 測試網址，供創辦人實測無誤後，方可 1-Click Promote 至 Production。
+                  為了不讓 AI 改的東西直接影響到正在使用產品的用戶，任何改動都會先自動部署到一個獨立的<strong>測試網址（Stage）</strong>，你可以先點進去實際操作看看沒問題，才會一鍵推上<strong>正式環境（Production）</strong>。
                 </p>
               </div>
 
@@ -331,19 +331,19 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="space-y-2 text-[11px] text-stone-600">
                     <div className="flex items-start gap-2">
                       <span className="text-amber-700 font-bold">•</span>
-                      <span><strong>版號命名規則：</strong> 候選版本 (Release Candidate)，如 <code>v1.2.0-rc.1</code> 或 <code>v1.1.1-hotfix.1</code>。</span>
+                      <span><strong>版號怎麼標：</strong> 標示為「候選版本」，例如 <code>v1.2.0-rc.1</code>，代表還在等你驗收，還不是正式版。</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-amber-700 font-bold">•</span>
-                      <span><strong>自動部署時機：</strong> 當 AI 在 Phase 2（Gate 4 IMPLEMENT）完成代碼並通過 Gate 5 自動測試時，CI 立即自動構建預發容器。</span>
+                      <span><strong>什麼時候會出現：</strong> AI 一改完代碼、自動測試也通過，這裡就會立刻更新成最新的測試版本。</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-amber-700 font-bold">•</span>
-                      <span><strong>主要用途：</strong> 供創辦人點擊測試 URL，親自驗證 UI/UX 與新功能邏輯，不影響線上運行的資料庫。</span>
+                      <span><strong>用來做什麼：</strong> 讓你點連結親自試用新功能，確認沒問題再決定要不要正式上線。</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-amber-700 font-bold">•</span>
-                      <span><strong>資料庫配置：</strong> 使用 Staging 獨立沙盒 DB 或 Mock 數據，隔離正式線上生產數據。</span>
+                      <span><strong>資料安全：</strong> 用的是獨立的測試資料，不會動到正式環境裡用戶的真實資料。</span>
                     </div>
                   </div>
                 </div>
@@ -365,19 +365,19 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="space-y-2 text-[11px] text-stone-600">
                     <div className="flex items-start gap-2">
                       <span className="text-emerald-700 font-bold">•</span>
-                      <span><strong>版號命名規則：</strong> 正式語意化版號 (SemVer)，如 <code>v1.1.0</code>、<code>v1.2.0</code>。</span>
+                      <span><strong>版號怎麼標：</strong> 正式版號，例如 <code>v1.1.0</code>、<code>v1.2.0</code>，代表已經上線給用戶用的版本。</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-emerald-700 font-bold">•</span>
-                      <span><strong>發布門檻：</strong> 必須滿足 <strong>Tests PASS</strong> (Gate 5) + <strong>Review PASS</strong> (Gate 6) + <strong>Human 1-Click Approval</strong> (Gate 7)。</span>
+                      <span><strong>什麼時候能上線：</strong> 一定要自動測試通過、另一個 AI 覆核過，而且<strong>你親自按下確認</strong>，三個條件缺一不可。</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-emerald-700 font-bold">•</span>
-                      <span><strong>零中斷更新 (Blue/Green)：</strong> Cloud Run / 容器平滑切換流量，失敗時自動回滾至上一穩定版號。</span>
+                      <span><strong>切換不中斷：</strong> 更新時用戶不會感覺到服務中斷；如果新版出問題，系統會自動退回上一個穩定版本。</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-emerald-700 font-bold">•</span>
-                      <span><strong>即時遙測：</strong> 監控 99.99% Uptime 與 P95 Latency，若發生崩潰則自動告警並啟動 Hotfix 流程。</span>
+                      <span><strong>持續監控：</strong> 系統會持續觀察正式環境是否正常運作，一旦異常就自動告警並啟動緊急修復流程。</span>
                     </div>
                   </div>
                 </div>
@@ -385,44 +385,44 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
 
               {/* Versioning & Release Tracking Explanation */}
               <div className="bg-white rounded-xl border border-stone-300 p-4 space-y-3 shadow-xs">
-                <h4 className="font-bold text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
+                <h4 className="font-bold text-stone-900 flex items-center gap-1.5">
                   <Activity className="h-4 w-4 text-stone-700" />
-                  <span>改版後如何清楚知道當前版本與升級狀態？</span>
+                  <span>怎麼知道現在正式環境跟測試環境分別是哪個版本</span>
                 </h4>
 
                 <div className="space-y-3 text-[11px] text-stone-600">
                   <p className="leading-relaxed">
-                    在 Bridge 看板與專案抽屜中，系統透過<strong>三層版本可視化</strong>隨時讓您掌握版本升級動態：
+                    有三個地方可以隨時查看版本狀態，不用自己去記：
                   </p>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-1">
                       <div className="font-bold text-stone-800 flex items-center gap-1">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
-                        1. 看板「環境與版本」欄位
+                        1. 專案卡片的版本欄位
                       </div>
                       <div className="text-[10px] text-stone-500">
-                        隨時並列顯示 <code>Prod: v1.1.0</code> 與 <code>Stage: v1.2.0-rc.1</code>，並在改版中顯示 <code>v1.1.0 ➔ v1.2.0</code> 升級徽章。
+                        同時顯示正式環境（<code>v1.1.0</code>）跟測試環境（<code>v1.2.0-rc.1</code>）目前各是哪一版。
                       </div>
                     </div>
 
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-1">
                       <div className="font-bold text-stone-800 flex items-center gap-1">
                         <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                        2. 抽屜「版本改版流向」圖
+                        2. 專案詳情裡的版本進度圖
                       </div>
                       <div className="text-[10px] text-stone-500">
-                        點開任一專案抽屜第 4 區塊，即見「目前線上 ➔ 預發測試 ➔ 目標發布」三階即時動態卡。
+                        打開任一專案的詳情頁，可以看到「目前線上 ➔ 測試中 ➔ 準備發布」的即時進度。
                       </div>
                     </div>
 
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-1">
                       <div className="font-bold text-stone-800 flex items-center gap-1">
                         <span className="h-1.5 w-1.5 rounded-full bg-sky-600" />
-                        3. 1-Click Promote 自動升級
+                        3. 一鍵升級，自動記錄
                       </div>
                       <div className="text-[10px] text-stone-500">
-                        驗證通過點擊 Promote 後，系統自動將 Target Version 寫入 Production，並記錄歷史 Timeline。
+                        你確認沒問題、按下推上正式環境後，系統會自動更新版號，並把這次上線記錄下來方便之後查。
                       </div>
                     </div>
                   </div>
@@ -437,10 +437,10 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
               <div className="bg-emerald-50/80 border border-emerald-300 rounded-xl p-4 space-y-2">
                 <div className="flex items-center gap-2 text-emerald-950 font-bold">
                   <Zap className="h-4 w-4 text-emerald-700" />
-                  <span>核心問題解決：Stage 開發了 10 個功能，但時間緊迫只想推 3 個到 Prod？</span>
+                  <span>常見情況：測試環境做了 10 個功能，但現在只想先推 3 個上線</span>
                 </div>
                 <p className="text-[11px] text-emerald-900 leading-relaxed">
-                  在一人創業或 Micro-SaaS 敏捷開發中，經常會遇到「預發環境一口氣堆疊了 10 個新功能，但其中 7 個需要更長時間驗證或屬於未公開的進階功能」。平台提供 <strong>Feature Flags 旗標隔離</strong> 與 <strong>Git Cherry-Pick 精選推送</strong> 兩大標準解法，並以 <strong>Feature Delivery Matrix</strong> 永久記錄所有待推與已推功能！
+                  一人創業常會遇到「測試環境已經堆了一堆新功能，但其中幾個還需要更多驗證，或還不想公開」的情況。這裡提供兩種做法讓你可以只推部分功能上線，並且用<strong>功能交付列表</strong>幫你永久記住每個功能現在的狀態，不用自己記。
                 </p>
               </div>
 
@@ -451,7 +451,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="flex items-center justify-between pb-2 border-b border-stone-200">
                     <div className="flex items-center gap-2">
                       <span className="h-2 w-2 rounded-full bg-emerald-600" />
-                      <h4 className="font-bold text-stone-900 text-xs">方案 A：Feature Flags 旗標隔離 (業界最佳實踐 ⭐)</h4>
+                      <h4 className="font-bold text-stone-900 text-xs">做法 A：功能開關（推薦 ⭐）</h4>
                     </div>
                     <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-900 font-bold rounded">
                       推薦首選
@@ -459,15 +459,15 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   </div>
 
                   <p className="text-[11px] text-stone-600 leading-relaxed font-sans">
-                    將 10 個功能的程式碼<strong>整包發布到 Production</strong>，但在 Production 環境上<strong>僅將 3 個功能的 Feature Flag 設為 ON，其餘 7 個設為 OFF（隔離隱藏）</strong>。
+                    10 個功能的代碼<strong>一起發布上線</strong>，但只把想公開的 3 個功能「開關」打開，其餘 7 個保持關閉、用戶看不到。
                   </p>
 
                   <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-1.5 text-[11px]">
-                    <div className="font-bold text-stone-800">✅ 核心優勢：</div>
+                    <div className="font-bold text-stone-800">✅ 好處：</div>
                     <ul className="list-disc list-inside space-y-1 text-stone-600">
-                      <li><strong>零 Git 分支衝突 (Zero Merge Hell)：</strong> Stage 與 Prod 的主幹程式碼完全一致，不用維護多條複雜分支。</li>
-                      <li><strong>秒級線上開關：</strong> 當其餘 7 個功能驗證通過時，<strong>無需重新部署</strong>，直接在儀表板將 Flag 切換為 ON 即可秒級對用戶生效！</li>
-                      <li><strong>即時降級安全網：</strong> 若新上線功能突發 Bug，直接將 Flag 切回 OFF 即可止血，不用慌張 Rollback。</li>
+                      <li><strong>不用管理多條代碼分支：</strong> 測試環境跟正式環境的代碼永遠一致，少了很多維護上的麻煩。</li>
+                      <li><strong>之後要開放，不用重新發布：</strong> 剩下 7 個功能驗證通過後，直接把開關切成 ON，用戶馬上就看得到。</li>
+                      <li><strong>出問題可以馬上關掉：</strong> 新功能如果出 Bug，把開關切回 OFF 就能立刻止血，不用緊急回滾整個版本。</li>
                     </ul>
                   </div>
                 </div>
@@ -477,7 +477,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="flex items-center justify-between pb-2 border-b border-stone-200">
                     <div className="flex items-center gap-2">
                       <span className="h-2 w-2 rounded-full bg-sky-600" />
-                      <h4 className="font-bold text-stone-900 text-xs">方案 B：Git Cherry-Pick 精選提交 (實體隔離)</h4>
+                      <h4 className="font-bold text-stone-900 text-xs">做法 B：只挑選要上線的部分</h4>
                     </div>
                     <span className="text-[10px] px-1.5 py-0.5 bg-stone-100 text-stone-700 rounded">
                       乾淨發布
@@ -485,14 +485,14 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   </div>
 
                   <p className="text-[11px] text-stone-600 leading-relaxed font-sans">
-                    建立獨立的發布分支 <code>release/vX.Y.Z</code>，僅挑選與這 3 個功能相關的 Git Commits 合併至 <code>main</code>。
+                    建立一個獨立的發布版本，只挑出跟這 3 個功能有關的代碼變更，其餘 7 個完全不放進去。
                   </p>
 
                   <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 space-y-1.5 text-[11px]">
-                    <div className="font-bold text-stone-800">⚠️ 適用情境與注意事項：</div>
+                    <div className="font-bold text-stone-800">⚠️ 適合的情況跟要注意的地方：</div>
                     <ul className="list-disc list-inside space-y-1 text-stone-600">
-                      <li><strong>程式碼完全隔離：</strong> Production 的打包檔案中完全不包含未發布功能的代碼。</li>
-                      <li><strong>需注意依賴關係：</strong> 若 3 個功能的代碼依賴了其餘 7 個功能的共用模組，需要 AI 自動進行相依性補齊。</li>
+                      <li><strong>代碼完全隔離：</strong> 正式環境裡完全不會有還沒公開的功能代碼，最乾淨的做法。</li>
+                      <li><strong>要注意功能之間的關聯：</strong> 如果這 3 個功能剛好用到其他 7 個功能的共用部分，AI 需要先處理好這個相依關係。</li>
                     </ul>
                   </div>
                 </div>
@@ -504,7 +504,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                   <div className="flex items-center gap-2">
                     <Layers className="h-4 w-4 text-stone-700" />
                     <h4 className="font-bold text-stone-900 text-xs">
-                      久了以後還會記得有哪些待開發與待推送的功能嗎？ (Long-term Delivery Memory)
+                      過了幾個月，還記得哪些功能推了、哪些還沒嗎？
                     </h4>
                   </div>
                   <span className="text-[10px] font-mono text-stone-500 bg-stone-100 px-2 py-0.5 rounded">
@@ -513,26 +513,26 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                 </div>
 
                 <p className="text-[11px] text-stone-600 leading-relaxed">
-                  系統透過 <strong>功能交付矩陣（Feature Delivery Matrix）</strong> 與 <strong>自動變更紀錄（Release Notes Generator）</strong>，替您終生記憶每一項功能的狀態：
+                  不用靠自己記——系統會把每個功能現在的狀態記下來，隨時可以回頭查：
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                   <div className="p-3 rounded-lg bg-stone-50 border border-stone-200 space-y-1">
-                    <strong className="text-stone-900 block">1. 狀態標籤隨時可查</strong>
+                    <strong className="text-stone-900 block">1. 狀態一目了然</strong>
                     <p className="text-[11px] text-stone-500">
-                      清楚標示 <code>Live (線上)</code>、<code>Pending (待推)</code>、<code>Flag OFF (關閉)</code>、<code>Backlog (規劃)</code>，一秒掌握進度。
+                      清楚標示「已上線」「等待推送」「開關已關閉」「還在規劃」，一眼看懂每項功能現在的進度。
                     </p>
                   </div>
                   <div className="p-3 rounded-lg bg-stone-50 border border-stone-200 space-y-1">
-                    <strong className="text-stone-900 block">2. 目標版號關聯</strong>
+                    <strong className="text-stone-900 block">2. 知道預計何時上線</strong>
                     <p className="text-[11px] text-stone-500">
-                      每項功能皆連結 <code>targetReleaseVersion</code>（例如 v0.4.3、v0.5.0），明確知道它預計何時上線。
+                      每項功能都標好預計上線的版本（例如 v0.4.3、v0.5.0），不用自己去猜。
                     </p>
                   </div>
                   <div className="p-3 rounded-lg bg-stone-50 border border-stone-200 space-y-1">
-                    <strong className="text-stone-900 block">3. 歷史版本自動歸檔</strong>
+                    <strong className="text-stone-900 block">3. 每次發布自動留紀錄</strong>
                     <p className="text-[11px] text-stone-500">
-                      每次 Selective Release 均會自動產生 Markdown Release Notes，記錄「本次發布了哪些、保留了哪些」。
+                      每次選擇性上線後，系統會自動整理一份紀錄，寫下「這次推了什麼、保留了什麼」。
                     </p>
                   </div>
                 </div>
@@ -546,18 +546,18 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
               <div className="bg-amber-50/70 border border-amber-300 rounded-xl p-4 space-y-2">
                 <div className="flex items-center gap-2 text-amber-950 font-bold">
                   <RotateCcw className="h-4 w-4 text-amber-700" />
-                  <span>核心觀念：改版不是單純「倒退」，而是開啟新的可追蹤迭代循環（Iteration Run）</span>
+                  <span>發起改版，不會動到已經上線的版本，只會開一條新的紀錄</span>
                 </div>
                 <p className="text-[11px] text-amber-900 leading-relaxed">
-                  在現代 CI/CD 與 Bridge 協議中，已上線到 Production 的版本是<strong>不可變的歷史基準（Immutable Baseline）</strong>。當您發起改版時，系統會站在當前 Production 的基底上建立新分支，並<strong>依據改動的性質，智慧分流至不同的切入起點</strong>！
+                  已經上線的版本會被完整保留，不會被覆蓋。每次你發起改版，系統都會以目前正式環境的版本為基礎，開一條新的紀錄，並<strong>依照改動的大小跟急迫程度，走不同的處理路徑</strong>——小修改不用像大改版那樣走完整流程。
                 </p>
               </div>
 
               {/* Scenario Interactive Selector */}
               <div className="space-y-3">
-                <h4 className="font-bold text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
+                <h4 className="font-bold text-stone-900 flex items-center gap-1.5">
                   <Zap className="h-4 w-4 text-amber-700" />
-                  <span>點擊查看 4 種改版情境的 CI/CD 執行路徑：</span>
+                  <span>點一下看看 4 種不同情況分別怎麼處理：</span>
                 </h4>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -630,12 +630,12 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="h-2 w-2 rounded-full bg-amber-500" />
-                        <h4 className="font-bold text-stone-900 text-sm">情境 A：重大改版 ➔ 完整重新跑 Phase 1~3</h4>
+                        <h4 className="font-bold text-stone-900 text-sm">情境 A：重大改版 ➔ 完整走完三個階段</h4>
                       </div>
                       <span className="text-[10px] px-2 py-0.5 bg-stone-900 text-stone-50 rounded">建議模型：Sol / Terra</span>
                     </div>
                     <p className="text-[11px] text-stone-600">
-                      牽涉核心商業邏輯或 DB Schema 變更。<strong>從 Gate 1 (DISCUSS) 切入</strong>，先由 AI 顧問與您重新對齊目標並產出最新 <code>.bridge/context.md</code> 規格，再交由 AI 代理實作與全套 CI/CD。
+                      牽涉核心邏輯或資料庫結構變更的大改版。<strong>從頭開始</strong>，先由 AI 顧問跟你重新對齊目標、寫出最新規格，再交由 AI 代理實作，完整跑完三個階段。
                     </p>
                     {/* Visual Loop diagram */}
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[10px] font-mono space-y-2">
@@ -668,12 +668,12 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="h-2 w-2 rounded-full bg-sky-500" />
-                        <h4 className="font-bold text-stone-900 text-sm">情境 B：日常功能迭代 ➔ 跳過冗長探討，從 Gate 2/3 切入</h4>
+                        <h4 className="font-bold text-stone-900 text-sm">情境 B：日常功能迭代 ➔ 省略前期討論，直接寫規格</h4>
                       </div>
                       <span className="text-[10px] px-2 py-0.5 bg-stone-900 text-stone-50 rounded">建議模型：Terra</span>
                     </div>
                     <p className="text-[11px] text-stone-600">
-                      需求明確（例如新增篩選器或匯出 CSV 功能）。<strong>跳過 Gate 1 的初步探索</strong>，直接在 GitHub Issue 補充規格契約（Gate 2），系統自動 Route 給 Terra 實作並走 CI 驗證。
+                      需求已經很明確（例如新增一個篩選器、加個匯出功能）。<strong>跳過前期討論</strong>，直接補上規格細節，系統會自動指派給 Terra 實作，照樣走完整測試流程。
                     </p>
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[10px] font-mono space-y-2">
                       <div className="text-stone-500">執行路徑：</div>
@@ -703,12 +703,12 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="h-2 w-2 rounded-full bg-rose-600" />
-                        <h4 className="font-bold text-rose-950 text-sm">情境 C：線上緊急修復 (Hotfix) ➔ Phase 2 快速通道</h4>
+                        <h4 className="font-bold text-rose-950 text-sm">情境 C：線上緊急修復 ➔ 快速通道</h4>
                       </div>
                       <span className="text-[10px] px-2 py-0.5 bg-rose-900 text-rose-50 rounded font-bold">高推理模型：Sol</span>
                     </div>
                     <p className="text-[11px] text-stone-600">
-                      線上生產環境出現嚴重 Bug 或 Sentry 警報。<strong>完全跳過 Phase 1</strong>，直接拉出 <code>hotfix/*</code> 分支進 <strong>Gate 4 (IMPLEMENT)</strong>，由 Sol 高推理模型直接分析日誌並修復，跑完完整 CI 測試與 AI 審查後，等待您一鍵放行發布。
+                      正式環境出現嚴重問題，需要馬上處理。<strong>直接跳過討論階段</strong>，由高推理能力的 Sol 模型直接分析問題並修復，一樣要跑完自動測試跟 AI 覆核，最後等你一鍵放行才會發布。
                     </p>
                     <div className="p-3 bg-rose-50/60 rounded-lg border border-rose-200 text-[10px] font-mono space-y-2">
                       <div className="text-rose-900 font-semibold">⚡ Hotfix 快速通道路徑：</div>
@@ -734,12 +734,12 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                        <h4 className="font-bold text-stone-900 text-sm">情境 D：確定性維護 / 文案 ➔ Phase 2 輕量通道</h4>
+                        <h4 className="font-bold text-stone-900 text-sm">情境 D：小修小改 ➔ 輕量通道</h4>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 bg-stone-900 text-stone-50 rounded">省 Token 模型：Luna</span>
+                      <span className="text-[10px] px-2 py-0.5 bg-stone-900 text-stone-50 rounded">省成本模型：Luna</span>
                     </div>
                     <p className="text-[11px] text-stone-600">
-                      例如 Dependabot 依賴升級、文字修訂或小 CSS 微調。<strong>直接交由 Luna 輕量模型</strong> 在分支執行並跑測試，成本極低、速度極快。
+                      像是套件升級、文案修正、小小的樣式調整。<strong>直接交給 Luna 輕量模型</strong>處理並跑測試，速度快、成本也低。
                     </p>
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[10px] font-mono space-y-2">
                       <div className="text-stone-500">執行路徑：</div>
@@ -763,7 +763,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
               <div className="p-3 bg-stone-100 rounded-lg border border-stone-200 text-[11px] text-stone-600 flex items-start gap-2">
                 <ShieldCheck className="h-4 w-4 text-emerald-700 shrink-0 mt-0.5" />
                 <div>
-                  <strong className="text-stone-900">核心安全鐵律：</strong> 不論是哪種改版情境，<strong>都絕對不可繞過 Gate 5 (自動測試) 與 Gate 7 (人工放行)</strong>。這樣即便 AI 出現幻覺或邏輯瑕疵，也不會直接推爆 Production！
+                  <strong className="text-stone-900">不會被跳過的兩道防線：</strong> 不管是哪種情況，<strong>自動測試</strong>跟<strong>你的最終確認</strong>都不會被跳過。就算 AI 判斷錯誤或邏輯有問題，也不會未經你同意就直接影響正式環境。
                 </div>
               </div>
             </div>
@@ -773,7 +773,7 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
         {/* Modal Footer */}
         <div className="bg-white border-t border-stone-200 px-6 py-3 flex items-center justify-between">
           <span className="text-[11px] text-stone-500 font-mono">
-            標準化 CI/CD 生命週期 & 迭代回流協議已就緒
+            這套流程一直在背景運作，隨時保護你的正式環境
           </span>
           <button
             onClick={onClose}
