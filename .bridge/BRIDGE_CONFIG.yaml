@@ -7,12 +7,12 @@ runtime:
   node: "20.20.2"
   npm: "10.8.2"
   canonical_package_manager: npm
-  package_state: BLOCKED_DECISION
+  package_state: LOCAL_PACKAGE_SCRIPTS_VERIFIED_2026_09_09
 commands:
   lint: npm run lint
   build: npm run build
-  test: BLOCKED_DECISION
-  verify_ui: BLOCKED_DECISION
+  test: npm test
+  verify_ui: npm run test:ui
 environments:
   preview: PROTOTYPE_ONLY
   development: NOT_ESTABLISHED
@@ -22,6 +22,11 @@ environments:
 deployment:
   policy: HUMAN_AUTHORIZATION_REQUIRED
 routing:
+  v0_4_local_codex_proposal:
+    capability: READ_ONLY_REPOSITORY_INSPECTION
+    runtime: LOCAL_DEVELOPMENT_ONLY
+    authorization: SERVER_SIDE_LOCAL_ALLOWLIST_REQUIRED
+    non_authoritative: true
   adapter_docs:
     model: luna
     reasoning_effort: low
