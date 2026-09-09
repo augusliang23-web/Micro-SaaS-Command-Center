@@ -195,8 +195,29 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     and the owner explicitly chose not to touch it this round). See
     `docs/superpowers/evidence/2026-09-09-cicd-modal-plain-language-content-non-bridge.md`.
     Remaining, lower-priority: `FeatureDeliveryMatrix.tsx`'s data-table
-    structure itself was not redesigned (only its surrounding prose), and
-    the still-deferred AI-tool interaction gap (see entry 7 above).
+    structure itself was not redesigned (only its surrounding prose).
+12. **Partially done (2026-09-09):** started closing the AI-tool interaction
+    gap (entry 7) — `CodexHandoffPanel` can now genuinely propose *and*,
+    once a human approves the specific plan, actually execute file changes
+    for one pilot project (this repo itself), instead of only ever running
+    a hardcoded read-only demo. New `WORKSPACE_WRITE_EXECUTION` task
+    classification in `src/bridge/codexHandoff.mjs`, gated by a new
+    per-project `write_enabled` allowlist flag; `sandbox` now threads from
+    classification through `server/codexAppServerClient.mjs` into the real
+    Codex CLI's own sandbox (`read-only` vs `workspace-write`); commit/push
+    are blocked at three layers (server-side validation, an explicit prompt
+    instruction, and a real post-hoc `git rev-parse HEAD` verification, not
+    just trust). Verified live end-to-end against the real `codex app-server`
+    process — see
+    `docs/superpowers/evidence/2026-09-09-codex-write-execution-propose-approve-execute-non-bridge.md`
+    for the full record, including a real pre-existing gap found and fixed
+    (`npm run dev` never set `NODE_ENV=development`, so this route was
+    unreachable through the normal dev workflow even before this change).
+    Still open: `ChatGPTBridgeModal`'s "apply decision" is not wired to any
+    real dispatch; every project except the one pilot stays read-only; the
+    Execute (write) path has been verified at the test level and the
+    propose path live end-to-end, but Execute itself has not yet been
+    clicked live — that belongs to the owner, on a plan he's actually read.
 
 ## Roadmap
 

@@ -5,7 +5,24 @@ export const CANONICAL_PROHIBITED_ACTIONS = Object.freeze([
   'secrets_changes',
   'destructive_actions',
   'self_approval',
+  'git_commit',
+  'git_push',
 ]);
+
+// Each task classification the MVP accepts, and exactly what it authorizes.
+// A classification not listed here is rejected outright.
+const TASK_CLASSIFICATION_RULES = Object.freeze({
+  READ_ONLY_REPOSITORY_INSPECTION: {
+    authorizedActions: ['repository_read'],
+    requiredConstraint: 'read-only',
+    requiresWriteEnabled: false,
+  },
+  WORKSPACE_WRITE_EXECUTION: {
+    authorizedActions: ['repository_read', 'file_write', 'command_execute'],
+    requiredConstraint: 'no-commit-no-push',
+    requiresWriteEnabled: true,
+  },
+});
 
 export const HANDOFF_REQUIRED_FIELDS = Object.freeze([
   'handoff_id',
@@ -90,16 +107,23 @@ export function validateDispatch({ dispatch, project }) {
   if (dispatch.execution_authority?.explicit_user_action !== true) {
     throw new Error('Dispatch requires an explicit user action');
   }
-  if (dispatch.task_classification !== 'READ_ONLY_REPOSITORY_INSPECTION') {
-    throw new Error('This MVP accepts only a read-only repository inspection');
+  const classificationRules = TASK_CLASSIFICATION_RULES[dispatch.task_classification];
+  if (!classificationRules) {
+    throw new Error(
+      'This MVP accepts only a read-only repository inspection or an allowlisted workspace-write execution',
+    );
+  }
+  if (classificationRules.requiresWriteEnabled && project.write_enabled !== true) {
+    throw new Error('Project is not allowlisted for workspace-write execution');
   }
   const authorizedActions = dispatch.execution_authority?.authorized_actions;
+  const expectedActions = classificationRules.authorizedActions;
   if (
     !Array.isArray(authorizedActions) ||
-    !authorizedActions.includes('repository_read') ||
-    authorizedActions.some((action) => action !== 'repository_read')
+    expectedActions.some((action) => !authorizedActions.includes(action)) ||
+    authorizedActions.some((action) => !expectedActions.includes(action))
   ) {
-    throw new Error('This MVP authority must be limited to repository_read');
+    throw new Error(`This MVP authority must be limited to exactly: ${expectedActions.join(', ')}`);
   }
   if (!project.allowed_risk_levels?.includes(dispatch.risk_level)) {
     throw new Error(`Task risk ${dispatch.risk_level} is outside the allowed risk boundary`);
@@ -139,8 +163,8 @@ export function validateDispatch({ dispatch, project }) {
       throw new Error(`prohibited_actions must preserve ${action}`);
     }
   }
-  if (!dispatch.constraints.includes('read-only')) {
-    throw new Error('This MVP must preserve the read-only constraint');
+  if (!dispatch.constraints.includes(classificationRules.requiredConstraint)) {
+    throw new Error(`This MVP must preserve the ${classificationRules.requiredConstraint} constraint`);
   }
 }
 
@@ -184,11 +208,16 @@ export function buildHandoff({ dispatch, project, handoffId }) {
 }
 
 export function formatHandoffPrompt(handoff) {
-  return [
+  const lines = [
     'Execute this Bridge V0.4 handoff exactly within its authority and constraints.',
     'This handoff does not authorize merge, deployment, release, billing, secrets changes, destructive actions, or self-approval.',
     'Return the required completion evidence in your final response.',
-    '',
-    JSON.stringify(handoff, null, 2),
-  ].join('\n');
+  ];
+  if (handoff.task_classification === 'WORKSPACE_WRITE_EXECUTION') {
+    lines.push(
+      'Do not run `git commit`, `git add -A && git commit`, `git push`, or any other command that creates a commit or publishes changes, under any circumstances. Editing files and running tests/build/lint commands is authorized; committing or pushing is not, no matter how confident you are that the work is complete.',
+    );
+  }
+  lines.push('', JSON.stringify(handoff, null, 2));
+  return lines.join('\n');
 }

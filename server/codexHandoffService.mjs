@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 
 import {
   STATUS_REQUIRED_FIELDS,
@@ -96,12 +97,21 @@ export class CodexHandoffService {
     this.handoffs.set(handoff.handoff_id, record);
     this.byIdempotencyKey.set(handoff.idempotency_key, handoff.handoff_id);
 
-    const onUpdate = (update) => this.#applyUpdate(handoff.handoff_id, update);
+    const isWriteExecution = handoff.task_classification === 'WORKSPACE_WRITE_EXECUTION';
+    const headBeforeSha = isWriteExecution ? await this.#readHeadSha(project.cwd) : null;
+
+    const onUpdate = (update) => {
+      this.#applyUpdate(handoff.handoff_id, update);
+      if (isWriteExecution && update.state && TERMINAL_EXECUTION_STATES.includes(update.state)) {
+        void this.#verifyNoUnauthorizedGitActivity(handoff.handoff_id, project.cwd, headBeforeSha);
+      }
+    };
     try {
       const started = await this.providerFactory().start({
         cwd: project.cwd,
         prompt: formatHandoffPrompt(handoff),
         handoff: clone(handoff),
+        sandbox: isWriteExecution ? 'workspace-write' : 'read-only',
         onUpdate,
       });
       this.#applyUpdate(handoff.handoff_id, {
@@ -160,6 +170,28 @@ export class CodexHandoffService {
       update.blocker
     ) {
       status.last_meaningful_activity = this.now();
+    }
+  }
+
+  // Best-effort real verification (not just trust in the prompt) that a
+  // WORKSPACE_WRITE_EXECUTION handoff did not commit or push despite being
+  // instructed not to. Never throws — a git failure here must not mask the
+  // handoff's own real outcome.
+  #readHeadSha(cwd) {
+    return new Promise((resolve) => {
+      execFile('git', ['rev-parse', 'HEAD'], { cwd }, (error, stdout) => {
+        resolve(error ? null : stdout.trim());
+      });
+    });
+  }
+
+  async #verifyNoUnauthorizedGitActivity(handoffId, cwd, headBeforeSha) {
+    if (!headBeforeSha) return;
+    const headAfterSha = await this.#readHeadSha(cwd);
+    if (headAfterSha && headAfterSha !== headBeforeSha) {
+      this.#applyUpdate(handoffId, {
+        blocker: `⚠️ Verification: HEAD moved from ${headBeforeSha} to ${headAfterSha} despite the no-commit instruction — a commit may have been made. Review before trusting this result.`,
+      });
     }
   }
 

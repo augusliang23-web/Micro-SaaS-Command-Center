@@ -2,11 +2,19 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 import {
   HANDOFF_REQUIRED_FIELDS,
   STATUS_REQUIRED_FIELDS,
   buildHandoff,
+  formatHandoffPrompt,
   validateDispatch,
 } from '../src/bridge/codexHandoff.mjs';
 import {
@@ -58,6 +66,8 @@ const dispatch = {
     'secrets_changes',
     'destructive_actions',
     'self_approval',
+    'git_commit',
+    'git_push',
   ],
   context_refs: ['Command Center project drawer'],
   architecture_refs: ['Bridge V0.4 Zero-Copy Codex Handoff MVP Design'],
@@ -126,6 +136,164 @@ test('dispatch requires evidenced native execution and all canonical prohibition
       }),
     /repository_read/,
   );
+});
+
+const writeDispatch = {
+  ...dispatch,
+  task_id: 'task-write-execution',
+  canonical_task_ref: 'local://command-center/task-write-execution',
+  task_classification: 'WORKSPACE_WRITE_EXECUTION',
+  execution_authority: {
+    explicit_user_action: true,
+    authorized_by: 'local_user',
+    authorized_actions: ['repository_read', 'file_write', 'command_execute'],
+  },
+  objective: 'Execute the approved plan: fix the typo in README.md.',
+  scope: ['edit README.md as described in the approved plan'],
+  acceptance_criteria: ['README.md is corrected', 'no commit or push is made'],
+  constraints: ['no-commit-no-push', 'do not run git commit', 'do not run git push'],
+};
+
+test('workspace-write execution is rejected unless the project is explicitly write_enabled', () => {
+  assert.throws(
+    () => validateDispatch({ dispatch: writeDispatch, project }),
+    /write_enabled|allowlisted for workspace-write/i,
+  );
+  assert.doesNotThrow(() => validateDispatch({ dispatch: writeDispatch, project: { ...project, write_enabled: true } }));
+});
+
+test('workspace-write execution requires exactly repository_read, file_write, and command_execute', () => {
+  const writeEnabledProject = { ...project, write_enabled: true };
+  assert.throws(
+    () =>
+      validateDispatch({
+        dispatch: {
+          ...writeDispatch,
+          execution_authority: { ...writeDispatch.execution_authority, authorized_actions: ['repository_read'] },
+        },
+        project: writeEnabledProject,
+      }),
+    /file_write/,
+  );
+  assert.throws(
+    () =>
+      validateDispatch({
+        dispatch: {
+          ...writeDispatch,
+          execution_authority: {
+            ...writeDispatch.execution_authority,
+            authorized_actions: ['repository_read', 'file_write', 'command_execute', 'git_push'],
+          },
+        },
+        project: writeEnabledProject,
+      }),
+    /file_write/,
+  );
+});
+
+test('every dispatch, read-only or write, must preserve git_commit and git_push prohibitions', () => {
+  assert.throws(
+    () =>
+      validateDispatch({
+        dispatch: { ...dispatch, prohibited_actions: dispatch.prohibited_actions.filter((a) => a !== 'git_commit') },
+        project,
+      }),
+    /git_commit/,
+  );
+  const writeEnabledProject = { ...project, write_enabled: true };
+  assert.throws(
+    () =>
+      validateDispatch({
+        dispatch: {
+          ...writeDispatch,
+          prohibited_actions: writeDispatch.prohibited_actions.filter((a) => a !== 'git_push'),
+        },
+        project: writeEnabledProject,
+      }),
+    /git_push/,
+  );
+});
+
+test('workspace-write execution requires the no-commit-no-push constraint, not read-only', () => {
+  const writeEnabledProject = { ...project, write_enabled: true };
+  assert.throws(
+    () =>
+      validateDispatch({
+        dispatch: { ...writeDispatch, constraints: ['read-only'] },
+        project: writeEnabledProject,
+      }),
+    /no-commit-no-push/,
+  );
+});
+
+test('formatHandoffPrompt adds an explicit no-commit/no-push instruction only for workspace-write execution', () => {
+  const readOnlyHandoff = buildHandoff({ dispatch, project, handoffId: 'handoff-prompt-read' });
+  const writeHandoff = buildHandoff({
+    dispatch: writeDispatch,
+    project: { ...project, write_enabled: true },
+    handoffId: 'handoff-prompt-write',
+  });
+  assert.doesNotMatch(formatHandoffPrompt(readOnlyHandoff), /git push/i);
+  assert.match(formatHandoffPrompt(writeHandoff), /git commit/i);
+  assert.match(formatHandoffPrompt(writeHandoff), /git push/i);
+});
+
+test('handoff service threads sandbox mode from task classification into the provider', async () => {
+  const starts = [];
+  const provider = {
+    async start(input) {
+      starts.push(input);
+      input.onUpdate({ state: 'COMPLETED', result: 'done' });
+      return { threadId: 'thread-1', turnId: 'turn-1' };
+    },
+  };
+  const readOnlyService = new CodexHandoffService({ projects: [project], provider, idFactory: () => 'handoff-ro' });
+  await readOnlyService.dispatch(dispatch);
+
+  const writeEnabledProject = { ...project, write_enabled: true };
+  const writeService = new CodexHandoffService({
+    projects: [writeEnabledProject],
+    provider,
+    idFactory: () => 'handoff-write',
+  });
+  await writeService.dispatch(writeDispatch);
+
+  assert.equal(starts[0].sandbox, 'read-only');
+  assert.equal(starts[1].sandbox, 'workspace-write');
+});
+
+test('a workspace-write handoff that commits despite instructions is flagged by real verification, not trusted', async () => {
+  const repoDir = await mkdtemp(path.join(tmpdir(), 'command-center-git-verify-'));
+  try {
+    await execFileAsync('git', ['init'], { cwd: repoDir });
+    await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
+    await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: repoDir });
+
+    const provider = {
+      async start(input) {
+        // Simulate the AI disobeying the no-commit instruction.
+        await execFileAsync('git', ['commit', '--allow-empty', '-m', 'unauthorized commit'], { cwd: repoDir });
+        input.onUpdate({ state: 'COMPLETED', result: 'done, allegedly without committing' });
+        return { threadId: 'thread-1', turnId: 'turn-1' };
+      },
+    };
+    const writeEnabledProject = { ...project, cwd: repoDir, write_enabled: true };
+    const service = new CodexHandoffService({
+      projects: [writeEnabledProject],
+      provider,
+      idFactory: () => 'handoff-verify',
+    });
+
+    await service.dispatch(writeDispatch);
+    // The verification step runs after the awaited start() resolves; give its microtasks a turn.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const status = service.getStatus('handoff-verify');
+    assert.match(status.normalized_blocker, /HEAD moved|commit may have been made/i);
+  } finally {
+    await rm(repoDir, { recursive: true, force: true });
+  }
 });
 
 test('handoff service deduplicates an active dispatch and reports the full status contract', async () => {
@@ -341,6 +509,16 @@ test('App Server client performs the official handshake and starts read-only wor
   assert.equal(threadStart.params.approvalPolicy, 'on-request');
   assert.equal(threadStart.params.sandbox, 'read-only');
   assert.deepEqual(started, { threadId: 'thread-1', turnId: 'turn-1', model: 'reported-model' });
+});
+
+test('App Server client passes an explicit sandbox mode through to thread/start', async () => {
+  const child = new FakeChild();
+  const client = new CodexAppServerClient({ spawnImpl: () => child });
+
+  await client.start({ cwd: project.cwd, prompt: 'write task', sandbox: 'workspace-write', onUpdate() {} });
+
+  const threadStart = child.stdin.messages.find((message) => message.method === 'thread/start');
+  assert.equal(threadStart.params.sandbox, 'workspace-write');
 });
 
 test('App Server client rejects any non-ChatGPT account without starting a thread', async () => {

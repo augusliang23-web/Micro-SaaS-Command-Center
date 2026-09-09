@@ -47,7 +47,7 @@ export class CodexAppServerClient {
     this.stderr = '';
   }
 
-  async start({ cwd, prompt, onUpdate }) {
+  async start({ cwd, prompt, onUpdate, sandbox = 'read-only' }) {
     const spec = buildAppServerSpawnSpec();
     this.onUpdate = onUpdate;
     this.completed = false;
@@ -72,7 +72,7 @@ export class CodexAppServerClient {
       const threadResult = await this.#request('thread/start', {
         cwd,
         approvalPolicy: 'on-request',
-        sandbox: 'read-only',
+        sandbox,
         experimentalRawEvents: false,
         persistExtendedHistory: true,
       });
