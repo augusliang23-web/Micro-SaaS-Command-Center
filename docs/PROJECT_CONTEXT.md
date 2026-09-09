@@ -196,7 +196,7 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     `docs/superpowers/evidence/2026-09-09-cicd-modal-plain-language-content-non-bridge.md`.
     Remaining, lower-priority: `FeatureDeliveryMatrix.tsx`'s data-table
     structure itself was not redesigned (only its surrounding prose).
-12. **Partially done (2026-09-09):** started closing the AI-tool interaction
+12. **Done for the pilot project (2026-09-09):** closed the AI-tool interaction
     gap (entry 7) — `CodexHandoffPanel` can now genuinely propose *and*,
     once a human approves the specific plan, actually execute file changes
     for one pilot project (this repo itself), instead of only ever running
@@ -213,11 +213,20 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     for the full record, including a real pre-existing gap found and fixed
     (`npm run dev` never set `NODE_ENV=development`, so this route was
     unreachable through the normal dev workflow even before this change).
-    Still open: `ChatGPTBridgeModal`'s "apply decision" is not wired to any
-    real dispatch; every project except the one pilot stays read-only; the
-    Execute (write) path has been verified at the test level and the
-    propose path live end-to-end, but Execute itself has not yet been
-    clicked live — that belongs to the owner, on a plan he's actually read.
+    Owner exercised the full flow live the same day — Propose → reviewed
+    the plan → Execute — and it produced real, accurate output: Codex
+    rewrote 4 `.bridge/` docs plus one new spec, correctly replacing stale
+    `BLOCKED_DECISION` placeholders with the real V0.4 architecture, and
+    `git log` confirmed no commit was made during its own turn. Reviewed
+    and committed (`cbba415`) after catching one thing worth checking first
+    — the diff silently repointed `.bridge/PROJECT_CONTEXT.md`'s "Local
+    workspace" path away from a second, separate clone of this repo at
+    `/Users/augusliang/Developer/workspaces/micro-saas-command-center`;
+    confirmed that clone is stale (5 days untouched, 16 commits behind
+    `origin/main`) and no longer in use, so the change was accurate, not
+    destructive. Still open: `ChatGPTBridgeModal`'s "apply decision" is not
+    wired to any real dispatch; every project except the one pilot stays
+    read-only.
 
 ## Roadmap
 
