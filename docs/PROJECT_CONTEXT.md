@@ -250,6 +250,23 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     `docs/superpowers/evidence/2026-09-10-cicd-matrix-structural-simplification-non-bridge.md`.
     This completes the three items requested this round. Both surfaces
     stay behind the app's "技術細節" opt-in toggle.
+15. **Reverted (2026-09-10, same day):** after using it, the owner judged
+    the real write-execution UI (`CodexHandoffPanel`, `ChatGPTBridgeModal`'s
+    "apply decision" dispatch) didn't add real value over just working
+    directly in Claude Code/Codex CLI — single-shot, no commit/push, only
+    two whitelisted projects, no back-and-forth. Removed the UI: deleted
+    `src/components/CodexHandoffPanel.tsx`,
+    `src/components/CodexDispatchStatus.tsx`, `src/hooks/useCodexHandoff.ts`,
+    and the dispatch card in `ChatGPTBridgeModal.tsx`. **Deliberately kept**
+    the server-side Bridge V0.4 pipeline intact
+    (`server/codexHandoffService.mjs`, `server/codexAppServerClient.mjs`,
+    `server/codexHandoffRoutes.mjs`, `src/bridge/codexHandoff.mjs`, all 93
+    tests including the `WORKSPACE_WRITE_EXECUTION` ones) — real, tested,
+    just currently unreachable from the UI, so resuming this later (if a
+    concrete use case ever justifies it) is cheap. See
+    `docs/superpowers/evidence/2026-09-10-remove-assisted-execution-ui-non-bridge.md`.
+    Command Center's role is back to being a monitoring + advice dashboard,
+    not an execution surface.
 
 ## Roadmap
 
