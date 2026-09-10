@@ -471,7 +471,15 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
             )}
           </section>
 
-          {/* SECTION 2: Bridge Workflow Lifecycle Visualization */}
+          {/* SECTION 2: Bridge Workflow Lifecycle Visualization — this 8-Gate
+              model has no real-world counterpart to observe from GitHub (no
+              API tells you "is this in SPECIFY vs ROUTE"), so for a real,
+              GitHub-connected project it can only ever show frozen fixture
+              state from the moment the repo was connected, never updating
+              again. Shown only for fixture/demo projects, where it's an
+              honestly-labeled simulated illustration, not a stale claim
+              about a real project. */}
+          {!isRealGithubRepo(project.repository) && (
           <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-stone-200 flex-wrap gap-2">
               <div className="flex items-center gap-2">
@@ -604,6 +612,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
               )}
             </div>
           </section>
+          )}
 
           {/* SECTION 3 & 4: Execution Context & Environment Status */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

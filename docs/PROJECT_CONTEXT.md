@@ -267,6 +267,23 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     `docs/superpowers/evidence/2026-09-10-remove-assisted-execution-ui-non-bridge.md`.
     Command Center's role is back to being a monitoring + advice dashboard,
     not an execution surface.
+16. **Done (2026-09-10):** the legacy "Bridge 8-Gate 流水線軌道" section in the
+    project drawer's 技術細節 is now hidden for real, GitHub-connected
+    projects (still shown for fixture/demo projects). It has no real-world
+    counterpart observable from GitHub — `currentGate` is set once from a
+    dropdown at connection time and never updates — so for a real project it
+    could only ever show frozen, increasingly-stale fixture state. Also
+    produced an inventory of the drawer's other technical-detail sections
+    with the same "frozen fixture, not real" problem — sections 1 (Current
+    Focus), 5 (Feature Delivery Matrix), and 6 (Context Memory Timeline)
+    show the same class of frozen data with no "Simulated / Prototype"
+    disclosure at all (sections 2, 3, 4 already have it); section 3
+    (Execution Context) additionally has a visible internal contradiction —
+    its own frozen "Pull Request" field can disagree with the real PR the
+    verdict card above it links to, within the same screen. See
+    `docs/superpowers/evidence/2026-09-10-hide-legacy-8gate-for-real-projects-non-bridge.md`
+    for the full table. Not yet acted on for sections 1/3/4/5/6 — owner to
+    decide next steps per section.
 
 ## Roadmap
 
