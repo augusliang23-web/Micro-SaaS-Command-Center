@@ -349,7 +349,17 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
             </section>
           )}
 
-          {/* Technical detail toggle */}
+          {/* Technical detail toggle + the six simulated sections below it are
+              only meaningful for fixture/demo projects. For a real,
+              GitHub-connected project every one of these sections turned out
+              to be frozen fixture state set once at connection and never
+              updated again — some contradicting the real verdict card above
+              (see docs/superpowers/evidence/2026-09-10-remove-simulated-technical-detail-for-real-projects-non-bridge.md).
+              Real projects already get their real signal from the verdict
+              card and the "在 GitHub 上查看" link above; there's nothing
+              honest left to show behind this toggle for them. */}
+          {!isRealGithubRepo(project.repository) && (
+          <>
           <button
             onClick={() => setShowTechDetail((v) => !v)}
             className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-700 transition-colors cursor-pointer"
@@ -471,15 +481,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
             )}
           </section>
 
-          {/* SECTION 2: Bridge Workflow Lifecycle Visualization — this 8-Gate
-              model has no real-world counterpart to observe from GitHub (no
-              API tells you "is this in SPECIFY vs ROUTE"), so for a real,
-              GitHub-connected project it can only ever show frozen fixture
-              state from the moment the repo was connected, never updating
-              again. Shown only for fixture/demo projects, where it's an
-              honestly-labeled simulated illustration, not a stale claim
-              about a real project. */}
-          {!isRealGithubRepo(project.repository) && (
+          {/* SECTION 2: Bridge Workflow Lifecycle Visualization */}
           <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-stone-200 flex-wrap gap-2">
               <div className="flex items-center gap-2">
@@ -612,7 +614,6 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
               )}
             </div>
           </section>
-          )}
 
           {/* SECTION 3 & 4: Execution Context & Environment Status */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -960,6 +961,8 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
               ))}
             </div>
           </section>
+          </>
+          )}
           </>
           )}
         </div>

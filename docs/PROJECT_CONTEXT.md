@@ -282,8 +282,21 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     its own frozen "Pull Request" field can disagree with the real PR the
     verdict card above it links to, within the same screen. See
     `docs/superpowers/evidence/2026-09-10-hide-legacy-8gate-for-real-projects-non-bridge.md`
-    for the full table. Not yet acted on for sections 1/3/4/5/6 — owner to
-    decide next steps per section.
+    for the full table.
+17. **Done (2026-09-10, same day):** acted on that inventory — the owner
+    said plainly he no longer trusts what's real vs simulated in the app
+    and asked to remove the fake sections outright rather than just label
+    them. The entire "顯示技術細節" toggle and sections 1 (Current Focus), 3
+    (Execution Context), 4 (Environments & Versioning), 5 (Feature Delivery
+    Matrix), and 6 (Context Memory Timeline) are now hidden for real,
+    GitHub-connected projects — same treatment as the 8-Gate section.
+    Confirmed while doing this that section 5's "從 GitHub 倉庫 Issues 讀取"
+    tab reads from a literal hardcoded `mockRepoIssues` array, not a real
+    API call. Real projects' drawers are now intentionally shorter than
+    fixture projects' — verdict card (+ manual decision UI when
+    applicable) only, nothing behind the toggle, because that's genuinely
+    all that's real today. See
+    `docs/superpowers/evidence/2026-09-10-remove-simulated-technical-detail-for-real-projects-non-bridge.md`.
 
 ## Roadmap
 
