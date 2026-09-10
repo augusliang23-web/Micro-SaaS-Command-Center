@@ -349,7 +349,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
             }`}
           >
             <div className="text-[10px] text-stone-500 flex items-center justify-between">
-              <span>線上運行中 (Prod Live)</span>
+              <span>線上運行中</span>
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
             </div>
             <div className="text-base font-bold text-emerald-900 mt-0.5">{liveCount} 項</div>
@@ -364,7 +364,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
             }`}
           >
             <div className="text-[10px] text-stone-500 flex items-center justify-between">
-              <span>Stage 候選中 (Staged)</span>
+              <span>測試中待推送</span>
               <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
             </div>
             <div className="text-base font-bold text-amber-900 mt-0.5">{stagedCount} 項</div>
@@ -379,7 +379,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
             }`}
           >
             <div className="text-[10px] text-stone-500 flex items-center justify-between">
-              <span>旗標暫關閉 (Flags OFF)</span>
+              <span>旗標關閉中</span>
               <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
             </div>
             <div className="text-base font-bold text-sky-900 mt-0.5">{flagOffCount} 項</div>
@@ -394,7 +394,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
             }`}
           >
             <div className="text-[10px] text-stone-500 flex items-center justify-between">
-              <span>待開發規劃 (Backlog)</span>
+              <span>待開發規劃</span>
               <span className="h-1.5 w-1.5 rounded-full bg-stone-400" />
             </div>
             <div className="text-base font-bold text-stone-800 mt-0.5">{backlogCount} 項</div>
@@ -413,7 +413,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
                 新增或同步功能到這份列表
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                AI 顧問 ↔ AI 代理 ↔ Matrix 連動
+                AI 自動同步
               </span>
             </div>
             <button
@@ -858,7 +858,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               activeTab === 'staged' ? 'bg-amber-100 text-amber-900 font-bold' : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            Stage 待推 ({stagedCount})
+            測試中待推 ({stagedCount})
           </button>
           <button
             onClick={() => setActiveTab('live')}
@@ -866,7 +866,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               activeTab === 'live' ? 'bg-emerald-100 text-emerald-900 font-bold' : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            Prod 線上中 ({liveCount})
+            已上線 ({liveCount})
           </button>
           <button
             onClick={() => setActiveTab('disabled')}
@@ -882,7 +882,7 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               activeTab === 'backlog' ? 'bg-stone-200 text-stone-900 font-bold' : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            Backlog 規劃 ({backlogCount})
+            待規劃 ({backlogCount})
           </button>
         </div>
 
@@ -927,9 +927,9 @@ export const FeatureDeliveryMatrix: React.FC<FeatureDeliveryMatrixProps> = ({
               <tr className="border-b border-stone-200 bg-[#F7F6F2] text-[10px] text-stone-500 uppercase tracking-wider">
                 <th className="py-2.5 px-4 font-medium min-w-[200px]">功能名稱 / 說明</th>
                 <th className="py-2.5 px-3 font-medium">領域</th>
-                <th className="py-2.5 px-3 font-medium">Stage 狀態</th>
-                <th className="py-2.5 px-3 font-medium">Production 狀態 & 版號</th>
-                <th className="py-2.5 px-3 font-medium min-w-[140px]">Feature Flag 開關 (Prod)</th>
+                <th className="py-2.5 px-3 font-medium">測試環境狀態</th>
+                <th className="py-2.5 px-3 font-medium">正式環境狀態與版號</th>
+                <th className="py-2.5 px-3 font-medium min-w-[140px]">是否對外開放</th>
                 <th className="py-2.5 px-4 text-right font-medium">操作</th>
               </tr>
             </thead>

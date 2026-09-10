@@ -239,6 +239,17 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     Still open: manual "Copy Context" stays clipboard-only; every project
     except the two pilots (Command Center, pm-dashboard-uat) stays
     read-only.
+14. **Done (2026-09-10):** `CiCdWorkflowModal`/`FeatureDeliveryMatrix`
+    structurally simplified, not just reworded — removed the pipeline
+    tab's 8 nested Gate-ID sub-item boxes (folded into each phase's
+    existing paragraph), replaced the iteration tab's 4 raw 8-step
+    Gate-ID pill chains with 3-4 node paths using the same 準備/驗證/上線
+    language as the pipeline tab, and rewrote `FeatureDeliveryMatrix`'s
+    quick-stats/filter/table-header labels to drop stray English technical
+    terms. See
+    `docs/superpowers/evidence/2026-09-10-cicd-matrix-structural-simplification-non-bridge.md`.
+    This completes the three items requested this round. Both surfaces
+    stay behind the app's "技術細節" opt-in toggle.
 
 ## Roadmap
 

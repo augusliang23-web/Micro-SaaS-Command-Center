@@ -4,24 +4,14 @@ import {
   Bot,
   Terminal,
   Rocket,
-  GitBranch,
-  GitPullRequest,
-  CheckCircle2,
-  AlertTriangle,
   ArrowRight,
   ShieldCheck,
-  Cpu,
   Layers,
   Sparkles,
   Server,
   Zap,
   RotateCcw,
-  RefreshCw,
-  Flame,
-  FileCode2,
-  FileCheck2,
   Workflow,
-  HelpCircle,
   Activity,
 } from 'lucide-react';
 import { MicroSaaSProject } from '../types';
@@ -162,22 +152,8 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-600 leading-relaxed">
-                    AI 動手改代碼之前，先跟你把需求對齊、寫清楚要做什麼，避免猜錯方向白做工。
+                    AI 動手改代碼之前，先跟你把需求對齊、寫清楚要做什麼，再依難度跟風險決定要交給哪個模型處理，避免猜錯方向白做工。
                   </p>
-                  <div className="space-y-2 pt-1 border-t border-stone-100">
-                    <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
-                      <div className="font-bold text-stone-800">1. DISCUSS (對齊目標)</div>
-                      <div className="text-[10px] text-stone-500">AI 顧問上下文對話、產品方向溝通</div>
-                    </div>
-                    <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
-                      <div className="font-bold text-stone-800">2. SPECIFY (規格契約)</div>
-                      <div className="text-[10px] text-stone-500">技術 PRD、Schema 定義、Safety Checklist</div>
-                    </div>
-                    <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
-                      <div className="font-bold text-stone-800">3. ROUTE (模型分流)</div>
-                      <div className="text-[10px] text-stone-500">依爆炸半徑動態指派 Luna / Terra / Sol</div>
-                    </div>
-                  </div>
                   <div className="text-[10px] text-stone-500 bg-stone-100 p-2 rounded">
                     ⚡ <strong>這階段結束時會有</strong>：一份寫清楚需求的規格文件，以及派給誰執行的紀錄
                   </div>
@@ -196,22 +172,8 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-600 leading-relaxed">
-                    AI 開始寫代碼，改完立刻自動跑測試——測試通過不代表沒問題，所以還會再讓另一個 AI 覆核一次。
+                    AI 代理背景執行、動手改多個檔案，改完立刻自動跑測試——測試通過不代表沒問題，所以還會再讓另一個 AI 覆核一次安全性跟邏輯。
                   </p>
-                  <div className="space-y-2 pt-1 border-t border-stone-100">
-                    <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
-                      <div className="font-bold text-stone-800">4. IMPLEMENT (自主開發)</div>
-                      <div className="text-[10px] text-stone-500">AI 代理背景分支執行、多檔案自動修改</div>
-                    </div>
-                    <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
-                      <div className="font-bold text-stone-800">5. TEST (自動化測試)</div>
-                      <div className="text-[10px] text-stone-500">Unit Tests、Linting、型別檢查、安全掃描</div>
-                    </div>
-                    <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
-                      <div className="font-bold text-stone-800">6. REVIEW (獨立 AI 審查)</div>
-                      <div className="text-[10px] text-stone-500">第二獨立 AI 審查架構安全與死鎖風險</div>
-                    </div>
-                  </div>
                   <div className="text-[10px] text-stone-500 bg-stone-100 p-2 rounded">
                     ⚡ <strong>這階段結束時會有</strong>：一個等你確認的修改請求（PR），附上自動測試都通過的報告
                   </div>
@@ -230,18 +192,8 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-600 leading-relaxed">
-                    最後一定要等你親自按下確認，系統才會把改動實際發布到正式環境跟測試環境。
+                    最後一定要等你親自按一鍵放行，系統才會把改動實際發布到正式環境跟測試環境，全程自動部署，不用手動操作。
                   </p>
-                  <div className="space-y-2 pt-1 border-t border-stone-100">
-                    <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
-                      <div className="font-bold text-stone-800">7. APPROVE (人工放行)</div>
-                      <div className="text-[10px] text-stone-500">人類工程師 1-Click PR Merge / 合併分支</div>
-                    </div>
-                    <div className="p-2 bg-stone-50 rounded border border-stone-200 space-y-0.5">
-                      <div className="font-bold text-stone-800">8. DONE (自動部屬上線)</div>
-                      <div className="text-[10px] text-stone-500">Docker 映像檔構建、推送至 Cloud Run / UAT</div>
-                    </div>
-                  </div>
                   <div className="text-[10px] text-stone-500 bg-stone-100 p-2 rounded">
                     ⚡ <strong>這階段結束時會有</strong>：正式環境上跑著最新、通過驗證的版本
                   </div>
@@ -635,29 +587,18 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                       <span className="text-[10px] px-2 py-0.5 bg-stone-900 text-stone-50 rounded">建議模型：Sol / Terra</span>
                     </div>
                     <p className="text-[11px] text-stone-600">
-                      牽涉核心邏輯或資料庫結構變更的大改版。<strong>從頭開始</strong>，先由 AI 顧問跟你重新對齊目標、寫出最新規格，再交由 AI 代理實作，完整跑完三個階段。
+                      牽涉核心邏輯或資料庫結構變更的大改版。<strong>從頭開始</strong>，先由 AI 顧問跟你重新對齊目標、寫出最新規格，再交由 AI 代理實作，完整跑完三個階段，一步都不省略。
                     </p>
-                    {/* Visual Loop diagram */}
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[10px] font-mono space-y-2">
                       <div className="text-stone-500">執行路徑：</div>
                       <div className="flex items-center gap-1.5 flex-wrap text-stone-800 font-bold">
-                        <span className="px-2 py-1 bg-stone-200 rounded text-stone-600">Prod v1.0 (Live)</span>
+                        <span className="px-2 py-1 bg-stone-200 rounded text-stone-600">目前線上 v1.0</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">1. DISCUSS (AI 顧問)</span>
+                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">準備（討論＋規格）</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">2. SPECIFY (PRD)</span>
+                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">驗證（動手改＋測試＋覆核）</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">3. ROUTE</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">4. IMPLEMENT</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">5. TEST</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">6. REVIEW</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded">7. APPROVE</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-emerald-600 text-white rounded">8. DONE (v2.0)</span>
+                        <span className="px-2 py-1 bg-emerald-600 text-white rounded">上線 v2.0</span>
                       </div>
                     </div>
                   </div>
@@ -673,26 +614,18 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                       <span className="text-[10px] px-2 py-0.5 bg-stone-900 text-stone-50 rounded">建議模型：Terra</span>
                     </div>
                     <p className="text-[11px] text-stone-600">
-                      需求已經很明確（例如新增一個篩選器、加個匯出功能）。<strong>跳過前期討論</strong>，直接補上規格細節，系統會自動指派給 Terra 實作，照樣走完整測試流程。
+                      需求已經很明確（例如新增一個篩選器、加個匯出功能）。<strong>簡化準備階段</strong>，直接補上規格細節，系統會自動指派給 Terra 實作，照樣走完整測試流程。
                     </p>
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[10px] font-mono space-y-2">
                       <div className="text-stone-500">執行路徑：</div>
                       <div className="flex items-center gap-1.5 flex-wrap text-stone-800 font-bold">
-                        <span className="px-2 py-1 bg-stone-200 rounded text-stone-600">Prod v1.0 (Live)</span>
+                        <span className="px-2 py-1 bg-stone-200 rounded text-stone-600">目前線上 v1.0</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">2. SPECIFY</span>
+                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">準備（簡化，補規格）</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded">3. ROUTE (Terra)</span>
+                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">驗證（Terra 實作＋測試＋覆核）</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">4. IMPLEMENT</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">5. TEST</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">6. REVIEW</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded">7. APPROVE</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-emerald-600 text-white rounded">8. DONE (v1.1)</span>
+                        <span className="px-2 py-1 bg-emerald-600 text-white rounded">上線 v1.1</span>
                       </div>
                     </div>
                   </div>
@@ -708,22 +641,16 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                       <span className="text-[10px] px-2 py-0.5 bg-rose-900 text-rose-50 rounded font-bold">高推理模型：Sol</span>
                     </div>
                     <p className="text-[11px] text-stone-600">
-                      正式環境出現嚴重問題，需要馬上處理。<strong>直接跳過討論階段</strong>，由高推理能力的 Sol 模型直接分析問題並修復，一樣要跑完自動測試跟 AI 覆核，最後等你一鍵放行才會發布。
+                      正式環境出現嚴重問題，需要馬上處理。<strong>直接跳過準備階段</strong>，由高推理能力的 Sol 模型直接分析問題並修復，一樣要跑完自動測試跟 AI 覆核，最後等你一鍵放行才會發布。
                     </p>
                     <div className="p-3 bg-rose-50/60 rounded-lg border border-rose-200 text-[10px] font-mono space-y-2">
-                      <div className="text-rose-900 font-semibold">⚡ Hotfix 快速通道路徑：</div>
+                      <div className="text-rose-900 font-semibold">⚡ 緊急修復快速通道：</div>
                       <div className="flex items-center gap-1.5 flex-wrap text-stone-800 font-bold">
-                        <span className="px-2 py-1 bg-rose-100 text-rose-900 border border-rose-300 rounded">Prod Alert 💥</span>
+                        <span className="px-2 py-1 bg-rose-100 text-rose-900 border border-rose-300 rounded">正式環境出問題 💥</span>
                         <ArrowRight className="h-3 w-3 text-rose-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">4. IMPLEMENT (Sol 修復)</span>
+                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">驗證（Sol 修復＋測試＋覆核）</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">5. TEST (Unit/Lint)</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">6. REVIEW (安全檢查)</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded">7. APPROVE (1-Click)</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-emerald-600 text-white rounded">8. DONE (Hotfix Live)</span>
+                        <span className="px-2 py-1 bg-emerald-600 text-white rounded">上線（修復生效）</span>
                       </div>
                     </div>
                   </div>
@@ -744,15 +671,11 @@ export const CiCdWorkflowModal: React.FC<CiCdWorkflowModalProps> = ({
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[10px] font-mono space-y-2">
                       <div className="text-stone-500">執行路徑：</div>
                       <div className="flex items-center gap-1.5 flex-wrap text-stone-800 font-bold">
-                        <span className="px-2 py-1 bg-stone-200 rounded text-stone-600">Prod v1.0</span>
+                        <span className="px-2 py-1 bg-stone-200 rounded text-stone-600">目前線上 v1.0</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">4. IMPLEMENT (Luna)</span>
+                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">驗證（Luna 處理＋測試）</span>
                         <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded">5. TEST (綠燈)</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded">7. APPROVE</span>
-                        <ArrowRight className="h-3 w-3 text-stone-400" />
-                        <span className="px-2 py-1 bg-emerald-600 text-white rounded">8. DONE</span>
+                        <span className="px-2 py-1 bg-emerald-600 text-white rounded">上線</span>
                       </div>
                     </div>
                   </div>
