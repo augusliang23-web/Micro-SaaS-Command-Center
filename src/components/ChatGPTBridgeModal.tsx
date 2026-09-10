@@ -4,31 +4,27 @@ import {
   Bot,
   Copy,
   Check,
-  Send,
   Sparkles,
-  ArrowRight,
-  ShieldCheck,
   MessageSquare,
   FileText,
   HelpCircle,
   Cpu,
   RefreshCw,
-  Sliders,
 } from 'lucide-react';
 import { MicroSaaSProject } from '../types';
+import { useCodexHandoff } from '../hooks/useCodexHandoff';
+import { CodexDispatchStatus } from './CodexDispatchStatus';
 
 interface ChatGPTBridgeModalProps {
   project: MicroSaaSProject | null;
   isOpen: boolean;
   onClose: () => void;
-  onApplyResolution?: (projectId: string, resolution: string) => void;
 }
 
 export const ChatGPTBridgeModal: React.FC<ChatGPTBridgeModalProps> = ({
   project,
   isOpen,
   onClose,
-  onApplyResolution,
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'api' | 'prompt'>('api');
@@ -40,6 +36,9 @@ export const ChatGPTBridgeModal: React.FC<ChatGPTBridgeModalProps> = ({
   const [customQuestion, setCustomQuestion] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const { proposeStatus, executeStatus, requestError, proposing, executing, canExecute, runPropose, runExecute } =
+    useCodexHandoff(project);
 
   if (!isOpen || !project) return null;
 
@@ -125,12 +124,32 @@ Questions for AI Advisor:
     }
   };
 
-  const handleApplyDecision = () => {
-    if (onApplyResolution) {
-      onApplyResolution(project.id, decisionString);
-    }
-    onClose();
-  };
+  const handleTurnDecisionIntoPlan = () =>
+    runPropose({
+      taskIdSuffix: 'decision-propose',
+      objective: `A human has made this decision and it needs to be implemented — without modifying anything yet, propose a concrete file-by-file plan to implement it. Decision: ${decisionString}. Project context: current task is "${project.currentTask}", blocker is "${
+        project.blocker || 'none recorded'
+      }".`,
+      scope: ['read repository metadata and source', 'propose a file-by-file change plan implementing the decision, do not execute it'],
+      acceptanceCriteria: [
+        'plan lists specific files to change to implement the decision',
+        'plan describes what changes for each file and why',
+        'no files are actually modified',
+      ],
+      contextRefs: [`Command Center project ${project.id}`, `Human decision: ${decisionString}`],
+    });
+
+  const handleExecuteDecision = () =>
+    runExecute({
+      taskIdSuffix: 'decision-execute',
+      scope: ['edit the files described in the approved plan', 'run tests/build/lint to verify the change'],
+      acceptanceCriteria: [
+        'the described files are changed as planned',
+        'relevant tests are run and their result is reported',
+        'no commit or push is made',
+      ],
+      contextRefs: [`Command Center project ${project.id}`, `Approved plan:\n${proposeStatus?.terminal_result || ''}`],
+    });
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4">
@@ -266,25 +285,38 @@ Questions for AI Advisor:
                     {simulatedResponse}
                   </div>
 
-                  {/* One-click Sync Action Card */}
-                  <div className="bg-stone-100 border border-stone-300 rounded-lg p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
-                    <div className="space-y-0.5 text-left">
-                      <div className="text-stone-900 font-semibold flex items-center gap-1.5 text-xs">
-                        <ShieldCheck className="h-4 w-4 text-emerald-700" />
-                        <span>Ready to Sync Decision Spec to Bridge</span>
+                  {/* Turn the decision into a real, human-approved execution */}
+                  <div className="bg-stone-100 border border-stone-300 rounded-lg p-3.5 space-y-3 shadow-xs">
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                      <div className="space-y-0.5 text-left">
+                        <div className="text-stone-900 font-semibold flex items-center gap-1.5 text-xs">
+                          <Bot className="h-4 w-4 text-emerald-700" />
+                          <span>把這個決定變成可執行的計畫</span>
+                        </div>
+                        <p className="text-stone-600 text-[11px]">
+                          請 AI 依照這個決定提出具體的改動計畫（唯讀，不會先動手）；你看過計畫、按下核准後才會真的執行。
+                        </p>
                       </div>
-                      <p className="text-stone-600 text-[11px]">
-                        Will unblock <strong className="text-stone-900">{project.name}</strong>, record decision in history, and advance gate to <strong className="text-emerald-800">APPROVE</strong>.
-                      </p>
+
+                      <button
+                        onClick={handleTurnDecisionIntoPlan}
+                        disabled={Boolean(proposing || executing)}
+                        className="w-full sm:w-auto px-4 py-2 bg-stone-900 hover:bg-stone-800 disabled:bg-stone-400 text-stone-50 font-bold rounded-md flex items-center justify-center gap-1.5 transition-colors shadow-xs shrink-0 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <Check className="h-4 w-4" />
+                        <span>{proposing ? '規劃中…' : '請 AI 把決定變成計畫'}</span>
+                      </button>
                     </div>
 
-                    <button
-                      onClick={handleApplyDecision}
-                      className="w-full sm:w-auto px-4 py-2 bg-stone-900 hover:bg-stone-800 text-stone-50 font-bold rounded-md flex items-center justify-center gap-1.5 transition-colors shadow-xs shrink-0 cursor-pointer"
-                    >
-                      <Check className="h-4 w-4" />
-                      <span>Sync Decision to Project & Unblock</span>
-                    </button>
+                    <CodexDispatchStatus
+                      requestError={requestError}
+                      proposeStatus={proposeStatus}
+                      executeStatus={executeStatus}
+                      canExecute={canExecute}
+                      executing={executing}
+                      onExecute={handleExecuteDecision}
+                      planLabel="實作計畫"
+                    />
                   </div>
                 </div>
               ) : (

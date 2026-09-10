@@ -957,12 +957,11 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
           )}
         </div>
 
-        {/* ChatGPT Bridge Modal */}
+        {/* AI Advisor Modal */}
         <ChatGPTBridgeModal
           project={project}
           isOpen={isChatGPTModalOpen}
           onClose={() => setIsChatGPTModalOpen(false)}
-          onApplyResolution={onResolveBlocker}
         />
 
         {/* CI/CD Pipeline Mapping Modal */}

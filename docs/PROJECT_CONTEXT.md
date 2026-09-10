@@ -224,8 +224,20 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     `/Users/augusliang/Developer/workspaces/micro-saas-command-center`;
     confirmed that clone is stale (5 days untouched, 16 commits behind
     `origin/main`) and no longer in use, so the change was accurate, not
-    destructive. Still open: `ChatGPTBridgeModal`'s "apply decision" is not
-    wired to any real dispatch; every project except the one pilot stays
+    destructive.
+13. **Done (2026-09-10):** `ChatGPTBridgeModal`'s "apply decision" is now
+    wired to the same real Propose → human review → Execute pipeline, and
+    a second project (`pm-dashboard-uat`) was added to the write-execution
+    pilot. Extracted the shared mechanics into
+    `src/hooks/useCodexHandoff.ts` + `src/components/CodexDispatchStatus.tsx`
+    so `CodexHandoffPanel` and the modal both use the exact same real
+    dispatch machinery. Deliberately left `ProjectDetailDrawer.tsx`'s inline
+    Option A/B decision UI on the old fake handler — it can only ever show
+    for manual/fixture projects, which can never be write-enabled, so
+    wiring it would be pure churn. See
+    `docs/superpowers/evidence/2026-09-10-chatgpt-bridge-modal-real-dispatch-non-bridge.md`.
+    Still open: manual "Copy Context" stays clipboard-only; every project
+    except the two pilots (Command Center, pm-dashboard-uat) stays
     read-only.
 
 ## Roadmap
