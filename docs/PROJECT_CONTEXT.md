@@ -310,6 +310,19 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     (they'd accumulated across 2026-09-08 through 2026-09-10 without ever
     being pushed) — the real verdict card's "6 天前" staleness the owner
     noticed was accurate reporting of that gap, not a bug.
+19. **Done (2026-09-11, same day):** same collision, second instance — the
+    owner had separately connected the real `augusliang23-web/pm-dashboard`
+    (production) repo himself via "+ 接入新專案" (not part of this session's
+    work), which collided with a leftover `mockData.ts` fixture also named
+    "PM Dashboard" (fake `github.com/my-org/pm-dashboard` repo). Removed the
+    fixture entry (`proj-pm-dash`) from `mockData.ts` and persisted state,
+    same treatment as entry 18. Also confirmed for the owner that both
+    "Pm Dashboard" and "Pm Dashboard Uat" independently showing "PR #4" was
+    a genuine coincidence (two separate GitHub repos, each with its own
+    independent PR counter), not a data mix-up. See
+    `docs/superpowers/evidence/2026-09-11-remove-second-duplicate-fixture-pm-dashboard-non-bridge.md`.
+    Worth checking `mockData.ts` for any *other* fixture entries whose name
+    might collide with a project the owner connects for real in the future.
 
 ## Roadmap
 
