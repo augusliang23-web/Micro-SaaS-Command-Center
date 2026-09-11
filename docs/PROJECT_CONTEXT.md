@@ -297,6 +297,19 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     applicable) only, nothing behind the toggle, because that's genuinely
     all that's real today. See
     `docs/superpowers/evidence/2026-09-10-remove-simulated-technical-detail-for-real-projects-non-bridge.md`.
+18. **Done (2026-09-11):** removed a second, separately-confusing issue —
+    `mockData.ts` had a fixture project also named "Micro-SaaS Command
+    Center" (distinguishable only by tagline and a fake `github.com/my-org/`
+    repository URL), which the owner clicked by mistake and mistook for
+    evidence the 2026-09-10 removal hadn't worked. Deleted the fixture
+    entry (`proj-command-center`) from `mockData.ts` and from the already-
+    persisted `data/app-state.json`. Exactly one "Micro SaaS Command
+    Center" project exists now — the real one. See
+    `docs/superpowers/evidence/2026-09-11-remove-duplicate-name-fixture-project-non-bridge.md`.
+    Also pushed 18 local-only commits to `origin/main` this same session
+    (they'd accumulated across 2026-09-08 through 2026-09-10 without ever
+    being pushed) — the real verdict card's "6 天前" staleness the owner
+    noticed was accurate reporting of that gap, not a bug.
 
 ## Roadmap
 
