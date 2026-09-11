@@ -323,6 +323,24 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     `docs/superpowers/evidence/2026-09-11-remove-second-duplicate-fixture-pm-dashboard-non-bridge.md`.
     Worth checking `mockData.ts` for any *other* fixture entries whose name
     might collide with a project the owner connects for real in the future.
+20. **Done (2026-09-12):** added a changed-files list and optional AI
+    diff summary to the verdict card's technical-detail section, for real
+    GitHub-connected projects only. `server/githubPullStatus.mjs` gained
+    `fetchChangedFiles()` (reuses the existing `gh api` proxy) and the
+    `active` state now carries `lastCommitSha`. New route
+    `GET /api/github/changed-files` (file list only, no diff content) and
+    new route `POST /api/bridge/summarize-changes` (re-fetches with diff
+    patches server-side, asks Gemini for a plain-language Traditional
+    Chinese summary; if no `GEMINI_API_KEY` is configured, returns the real
+    file list with an explicit "no AI key" note instead of a fabricated
+    summary). Verified against real repos (`augusliang23-web/pm-dashboard`
+    PR #4, and a direct-push commit on this repo) by cross-checking against
+    `gh api` output directly — file lists matched exactly. See
+    `docs/superpowers/evidence/2026-09-12-changed-files-and-ai-summary-non-bridge.md`.
+    Side finding: manual verification surfaced that commit `496bdbc`
+    ("remove fixture PM Dashboard project colliding with the real one") was
+    never actually pushed to `origin/main` — confirms the open question
+    noted at the end of entry 19.
 
 ## Roadmap
 

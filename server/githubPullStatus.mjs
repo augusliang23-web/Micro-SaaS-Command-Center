@@ -98,6 +98,38 @@ export async function fetchPullRequestStatus(repo, { execFileFn = execFile } = {
     lastCommitMessage: (latestCommit.commit?.message || '').split('\n')[0],
     lastCommitAt: latestCommit.commit?.author?.date || latestCommit.commit?.committer?.date,
     lastCommitUrl: latestCommit.html_url,
+    lastCommitSha: latestCommit.sha,
     ciStatus: aggregateCiStatus(checkRuns),
   };
+}
+
+function normalizeChangedFile(file) {
+  return {
+    filename: file.filename,
+    status: file.status,
+    additions: file.additions ?? 0,
+    deletions: file.deletions ?? 0,
+    patch: file.patch,
+  };
+}
+
+/**
+ * Read-only list of files changed by a PR (all commits) or by a single commit
+ * (direct-push case, no open PR). Exactly one of prNumber/sha must be given.
+ */
+export async function fetchChangedFiles(repo, { prNumber, sha } = {}, { execFileFn = execFile } = {}) {
+  if (!isRealGithubRepo(repo)) {
+    throw new GithubCliError(`Not a valid owner/repo slug: ${repo}`, 'failed');
+  }
+  if (!prNumber && !sha) {
+    throw new GithubCliError('Either prNumber or sha is required', 'failed');
+  }
+
+  if (prNumber) {
+    const files = await ghApiJson(`repos/${repo}/pulls/${prNumber}/files?per_page=100`, { execFileFn });
+    return Array.isArray(files) ? files.map(normalizeChangedFile) : [];
+  }
+
+  const commit = await ghApiJson(`repos/${repo}/commits/${sha}`, { execFileFn });
+  return Array.isArray(commit.files) ? commit.files.map(normalizeChangedFile) : [];
 }

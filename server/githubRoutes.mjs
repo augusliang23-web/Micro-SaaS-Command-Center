@@ -1,7 +1,7 @@
 import express from 'express';
 import { isLoopbackOrigin } from './codexHandoffRoutes.mjs';
 import { fetchGithubRepos, GithubCliError } from './githubRepos.mjs';
-import { fetchPullRequestStatus, isRealGithubRepo } from './githubPullStatus.mjs';
+import { fetchPullRequestStatus, fetchChangedFiles, isRealGithubRepo } from './githubPullStatus.mjs';
 
 function requestOrigin(req) {
   const origin = req.get('origin');
@@ -22,7 +22,11 @@ export function evaluateGithubRequest({ origin }) {
   return { ok: true };
 }
 
-export function createGithubRouter({ fetchRepos = fetchGithubRepos, fetchPullStatus = fetchPullRequestStatus } = {}) {
+export function createGithubRouter({
+  fetchRepos = fetchGithubRepos,
+  fetchPullStatus = fetchPullRequestStatus,
+  fetchFiles = fetchChangedFiles,
+} = {}) {
   const router = express.Router();
 
   router.use((req, res, next) => {
@@ -66,6 +70,32 @@ export function createGithubRouter({ fetchRepos = fetchGithubRepos, fetchPullSta
       }
       console.error('Error fetching GitHub pull status:', error);
       res.status(500).json({ error: 'Failed to fetch GitHub pull request status.' });
+    }
+  });
+
+  router.get('/changed-files', async (req, res) => {
+    const repo = typeof req.query.repo === 'string' ? req.query.repo : '';
+    const prNumber = typeof req.query.pr === 'string' && req.query.pr ? Number(req.query.pr) : undefined;
+    const sha = typeof req.query.sha === 'string' ? req.query.sha : undefined;
+    if (!isRealGithubRepo(repo)) {
+      res.status(400).json({ error: 'Query param "repo" must be an owner/name GitHub slug.' });
+      return;
+    }
+    if (!prNumber && !sha) {
+      res.status(400).json({ error: 'Query param "pr" or "sha" is required.' });
+      return;
+    }
+    try {
+      const files = await fetchFiles(repo, { prNumber, sha });
+      res.json({ files: files.map(({ filename, status, additions, deletions }) => ({ filename, status, additions, deletions })) });
+    } catch (error) {
+      if (error instanceof GithubCliError) {
+        const status = error.kind === 'not_authenticated' ? 401 : error.kind === 'not_found' ? 503 : 502;
+        res.status(status).json({ error: error.message });
+        return;
+      }
+      console.error('Error fetching GitHub changed files:', error);
+      res.status(500).json({ error: 'Failed to fetch changed files.' });
     }
   });
 

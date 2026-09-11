@@ -12,6 +12,8 @@ import {
 } from './server/codexHandoffRoutes.mjs';
 import { createStateRouter } from './server/stateRoutes.mjs';
 import { createGithubRouter } from './server/githubRoutes.mjs';
+import { fetchChangedFiles, isRealGithubRepo } from './server/githubPullStatus.mjs';
+import { GithubCliError } from './server/githubRepos.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -332,6 +334,90 @@ Respond ONLY with valid JSON array. No markdown code blocks, no other text.`;
   } catch (error) {
     console.error('Error in /api/bridge/extract-features:', error);
     res.status(500).json({ error: 'Failed to extract features.' });
+  }
+});
+
+// Plain-language AI summary of what actually changed in a PR/commit
+const MAX_PATCH_CHARS = 12000;
+
+app.post('/api/bridge/summarize-changes', async (req, res) => {
+  try {
+    const { repo, prNumber, sha } = req.body || {};
+
+    if (!isRealGithubRepo(repo)) {
+      res.status(400).json({ error: '"repo" must be an owner/name GitHub slug.' });
+      return;
+    }
+    if (!prNumber && !sha) {
+      res.status(400).json({ error: 'Either "prNumber" or "sha" is required.' });
+      return;
+    }
+
+    const files = await fetchChangedFiles(repo, { prNumber, sha });
+    const fileListText = files
+      .map((f: { filename: string; status: string; additions: number; deletions: number }) =>
+        `- ${f.filename} (${f.status}, +${f.additions}/-${f.deletions})`,
+      )
+      .join('\n');
+
+    let patchText = '';
+    let truncated = false;
+    for (const file of files as Array<{ filename: string; patch?: string }>) {
+      if (!file.patch) continue;
+      const chunk = `\n--- ${file.filename} ---\n${file.patch}`;
+      if (patchText.length + chunk.length > MAX_PATCH_CHARS) {
+        truncated = true;
+        break;
+      }
+      patchText += chunk;
+    }
+
+    const ai = getGeminiClient();
+    if (!ai) {
+      res.json({
+        summary: `目前沒有設定 AI 金鑰（GEMINI_API_KEY），無法產生摘要。以下是這次變更的檔案清單：\n\n${fileListText || '（無檔案變更資訊）'}`,
+        provider: 'local-fallback (no AI key configured)',
+        fileCount: files.length,
+      });
+      return;
+    }
+
+    const systemPrompt = `你是一位技術顧問，正在為一位不具軟體工程背景的產品負責人，用清楚易懂的白話文摘要一次程式碼變更。
+請說明：這次修改大致做了什麼、影響了哪些功能或使用者體驗、有沒有看起來需要注意的風險。
+不要使用艱澀的技術術語，如果必須提到技術名詞，請簡單解釋。用繁體中文回答，控制在 300 字以內。`;
+
+    const userPrompt = `Repository: ${repo}
+變更檔案清單：
+${fileListText || '（無檔案變更資訊）'}
+${truncated ? '\n（註：程式碼差異內容過長，以下僅節錄部分內容）' : ''}
+
+程式碼差異內容：
+${patchText || '（無可用的差異內容）'}`;
+
+    const geminiRes = await ai.models.generateContent({
+      model: 'gemini-3.7-flash',
+      contents: `${systemPrompt}\n\n=== CONTEXT ===\n${userPrompt}`,
+      config: {
+        temperature: 0.2,
+      },
+    });
+
+    res.json({
+      summary: geminiRes.text || '（AI 未回傳摘要內容）',
+      provider: 'Gemini 3.7 Flash',
+      fileCount: files.length,
+    });
+  } catch (error) {
+    if (error instanceof GithubCliError) {
+      const status = error.kind === 'not_authenticated' ? 401 : error.kind === 'not_found' ? 503 : 502;
+      res.status(status).json({ error: error.message });
+      return;
+    }
+    console.error('Error in /api/bridge/summarize-changes:', error);
+    res.status(500).json({
+      error: 'Failed to summarize changes.',
+      detail: error instanceof Error ? error.message : String(error),
+    });
   }
 });
 

@@ -6,6 +6,7 @@ import {
   aggregateCiStatus,
   aggregateReviewDecision,
   fetchPullRequestStatus,
+  fetchChangedFiles,
 } from '../server/githubPullStatus.mjs';
 
 test('isRealGithubRepo accepts owner/repo slugs and rejects fixture placeholders', () => {
@@ -146,6 +147,7 @@ test('fetchPullRequestStatus reports "active" when the branch has moved past the
   assert.equal(status.state, 'active');
   assert.equal(status.lastCommitMessage, 'chore: isolate local UAT emulator tooling');
   assert.equal(status.ciStatus, 'none');
+  assert.equal(status.lastCommitSha, 'newer-direct-push-sha');
 });
 
 test('fetchPullRequestStatus returns none when the repo has no commits at all', async () => {
@@ -168,6 +170,67 @@ test('fetchPullRequestStatus rejects a non owner/repo slug without shelling out'
         throw new Error('should not be called');
       },
     }),
+    /Not a valid owner\/repo slug/,
+  );
+});
+
+test('fetchChangedFiles(prNumber) normalizes the PR files array response', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    const path = args[1];
+    if (path.includes('pulls/42/files')) {
+      callback(
+        null,
+        JSON.stringify([
+          { filename: 'src/foo.ts', status: 'modified', additions: 5, deletions: 2, patch: '@@ -1 +1 @@' },
+          { filename: 'src/bar.ts', status: 'added', additions: 10, deletions: 0, patch: '@@ -0,0 +1,10 @@' },
+        ]),
+        '',
+      );
+    } else {
+      callback(new Error(`unexpected path: ${path}`), '', '');
+    }
+  };
+
+  const files = await fetchChangedFiles('me/repo', { prNumber: 42 }, { execFileFn });
+  assert.equal(files.length, 2);
+  assert.equal(files[0].filename, 'src/foo.ts');
+  assert.equal(files[0].status, 'modified');
+  assert.equal(files[0].additions, 5);
+  assert.equal(files[0].deletions, 2);
+  assert.equal(files[0].patch, '@@ -1 +1 @@');
+});
+
+test('fetchChangedFiles(sha) normalizes the commit object\'s files array', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    const path = args[1];
+    if (path.includes('commits/abc123')) {
+      callback(
+        null,
+        JSON.stringify({
+          sha: 'abc123',
+          files: [{ filename: 'server.ts', status: 'modified', additions: 3, deletions: 1 }],
+        }),
+        '',
+      );
+    } else {
+      callback(new Error(`unexpected path: ${path}`), '', '');
+    }
+  };
+
+  const files = await fetchChangedFiles('me/repo', { sha: 'abc123' }, { execFileFn });
+  assert.equal(files.length, 1);
+  assert.equal(files[0].filename, 'server.ts');
+  assert.equal(files[0].additions, 3);
+  assert.equal(files[0].deletions, 1);
+});
+
+test('fetchChangedFiles rejects when neither prNumber nor sha is given, and when repo is not a real slug', async () => {
+  const execFileFn = () => {
+    throw new Error('should not be called');
+  };
+  await assert.rejects(fetchChangedFiles('me/repo', {}, { execFileFn }), /Either prNumber or sha is required/);
+  await assert.rejects(
+    fetchChangedFiles('github.com/my-org/fixture-repo', { prNumber: 1 }, { execFileFn }),
     /Not a valid owner\/repo slug/,
   );
 });

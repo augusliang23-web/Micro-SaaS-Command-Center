@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, HelpCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, GitPullRequest, RefreshCw } from 'lucide-react';
-import { MicroSaaSProject, GithubPullStatus } from '../types';
+import { AlertCircle, HelpCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, GitPullRequest, RefreshCw, Sparkles } from 'lucide-react';
+import { MicroSaaSProject, GithubPullStatus, GithubChangedFile } from '../types';
 import { getModelBadgeStyle, getGateStatusBadgeStyle, isRealGithubRepo, outcomeBadgeStyle } from '../utils';
 import { getVerdict, getVerdictStyle } from '../verdict.mjs';
 
@@ -23,6 +23,11 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project,
   const [expanded, setExpanded] = useState(false);
   const [githubState, setGithubState] = useState<GithubPullStatus | null>(null);
   const [isLoadingGithub, setIsLoadingGithub] = useState(false);
+  const [changedFiles, setChangedFiles] = useState<GithubChangedFile[] | null>(null);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [diffSummary, setDiffSummary] = useState<string | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const isLinkedToRealRepo = isRealGithubRepo(project.repository);
 
   const loadGithubState = useCallback(() => {
@@ -38,6 +43,45 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project,
   useEffect(() => {
     loadGithubState();
   }, [loadGithubState]);
+
+  const changeRef =
+    githubState?.state === 'open' || githubState?.state === 'merged'
+      ? { pr: githubState.prNumber }
+      : githubState?.state === 'active' && githubState.lastCommitSha
+      ? { sha: githubState.lastCommitSha }
+      : null;
+
+  useEffect(() => {
+    if (!expanded || !changeRef || changedFiles !== null || isLoadingFiles) return;
+    setIsLoadingFiles(true);
+    const params = new URLSearchParams({ repo: project.repository });
+    if (changeRef.pr) params.set('pr', String(changeRef.pr));
+    if (changeRef.sha) params.set('sha', changeRef.sha);
+    fetch(`/api/github/changed-files?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setChangedFiles(data?.files ?? []))
+      .catch(() => setChangedFiles([]))
+      .finally(() => setIsLoadingFiles(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, changeRef?.pr, changeRef?.sha]);
+
+  const handleSummarizeChanges = useCallback(() => {
+    if (!changeRef) return;
+    setIsSummarizing(true);
+    setSummaryError(null);
+    fetch('/api/bridge/summarize-changes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo: project.repository, prNumber: changeRef.pr, sha: changeRef.sha }),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || '摘要失敗');
+        setDiffSummary(data.summary);
+      })
+      .catch((err) => setSummaryError(err instanceof Error ? err.message : '摘要失敗'))
+      .finally(() => setIsSummarizing(false));
+  }, [changeRef, project.repository]);
 
   const verdict = getVerdict(project, githubState ?? undefined);
   const style = getVerdictStyle(verdict.level);
@@ -142,7 +186,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project,
               </span>
             </div>
 
-            {verdict.source === 'github' && githubState && githubState.state !== 'none' ? (
+            {verdict.source === 'github' && githubState && githubState.state !== 'none' && (
               <div className="flex items-center gap-2 flex-wrap">
                 {githubState.state === 'active' ? (
                   <>
@@ -199,7 +243,47 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project,
                   Model: {project.model}
                 </span>
               </div>
-            ) : (
+            )}
+            {verdict.source === 'github' && githubState && githubState.state !== 'none' && changeRef && (
+              <div className="mt-3 pt-3 border-t border-dashed border-stone-200 font-sans">
+                <div className="text-[10px] text-stone-400 uppercase tracking-wider mb-1.5">修改的檔案</div>
+                {isLoadingFiles && <div className="text-[11px] text-stone-400">讀取中…</div>}
+                {!isLoadingFiles && changedFiles && changedFiles.length === 0 && (
+                  <div className="text-[11px] text-stone-400">查無檔案變更資訊</div>
+                )}
+                {!isLoadingFiles && changedFiles && changedFiles.length > 0 && (
+                  <ul className="space-y-1">
+                    {changedFiles.map((f) => (
+                      <li key={f.filename} className="flex items-center gap-2 text-[11px]">
+                        <span className="text-stone-700 truncate" title={f.filename}>
+                          {f.filename}
+                        </span>
+                        <span className="shrink-0 text-emerald-700">+{f.additions}</span>
+                        <span className="shrink-0 text-rose-700">-{f.deletions}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {!diffSummary && (
+                  <button
+                    onClick={handleSummarizeChanges}
+                    disabled={isSummarizing || !changedFiles || changedFiles.length === 0}
+                    className="mt-2.5 flex items-center gap-1.5 text-[11px] font-bold text-stone-600 hover:text-stone-900 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    {isSummarizing ? 'AI 摘要中…' : '請 AI 摘要這次修改'}
+                  </button>
+                )}
+                {summaryError && <div className="mt-1.5 text-[11px] text-rose-700">{summaryError}</div>}
+                {diffSummary && (
+                  <div className="mt-2.5 text-[12px] text-stone-700 leading-relaxed bg-stone-50 border border-stone-200 rounded-lg p-3 whitespace-pre-wrap">
+                    {diffSummary}
+                  </div>
+                )}
+              </div>
+            )}
+            {!(verdict.source === 'github' && githubState && githubState.state !== 'none') && (
               <div className="flex items-center gap-2 flex-wrap">
                 <span
                   className={`text-[11px] px-2 py-0.5 rounded border ${gateStyle.bg} ${gateStyle.text} ${gateStyle.border}`}

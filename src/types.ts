@@ -188,6 +188,15 @@ export interface GithubPullStatus {
   lastCommitMessage?: string;
   lastCommitAt?: string;
   lastCommitUrl?: string;
+  lastCommitSha?: string;
+}
+
+// Shape returned by GET /api/github/changed-files (server/githubRoutes.mjs)
+export interface GithubChangedFile {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
 }
 
 export interface AttentionItem {
