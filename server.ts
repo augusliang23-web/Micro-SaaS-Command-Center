@@ -436,7 +436,11 @@ ${patchText || '（無可用的差異內容）'}`;
     const geminiStatus = (error as { status?: number })?.status;
     const friendlyError =
       geminiStatus === 503
-        ? 'Google AI 目前用量過大，重試了幾次仍然失敗，請稍後再試一次。'
+        ? `Google AI 目前用量過大，重試了幾次仍然失敗，請稍後再試一次。（錯誤代碼 503）`
+        : geminiStatus === 429
+        ? `Google AI 今日免費額度已經用完了，要等額度重置（通常隔天）才能再用，或改用付費方案。（錯誤代碼 429）`
+        : geminiStatus
+        ? `產生摘要時發生問題，請稍後再試一次。（錯誤代碼 ${geminiStatus}）`
         : '產生摘要時發生問題，請稍後再試一次。';
     res.status(500).json({
       error: friendlyError,
