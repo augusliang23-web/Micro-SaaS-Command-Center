@@ -76,6 +76,24 @@ function getGeminiClient(): GoogleGenAI | null {
   return geminiClient;
 }
 
+// Gemini's free-tier models intermittently return 503 "high demand" — retry
+// a couple of times with a short backoff before surfacing it as a failure.
+async function generateContentWithRetry(
+  ai: GoogleGenAI,
+  params: Parameters<GoogleGenAI['models']['generateContent']>[0],
+  { retries = 2, delayMs = 1200 }: { retries?: number; delayMs?: number } = {},
+) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (error) {
+      const status = (error as { status?: number })?.status;
+      if (status !== 503 || attempt >= retries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+    }
+  }
+}
+
 // Local single-file persistence for the dashboard's own state
 app.use('/api/state', createStateRouter());
 
@@ -395,7 +413,7 @@ ${truncated ? '\n（註：程式碼差異內容過長，以下僅節錄部分內
 程式碼差異內容：
 ${patchText || '（無可用的差異內容）'}`;
 
-    const geminiRes = await ai.models.generateContent({
+    const geminiRes = await generateContentWithRetry(ai, {
       model: 'gemini-3.7-flash',
       contents: `${systemPrompt}\n\n=== CONTEXT ===\n${userPrompt}`,
       config: {
@@ -415,8 +433,13 @@ ${patchText || '（無可用的差異內容）'}`;
       return;
     }
     console.error('Error in /api/bridge/summarize-changes:', error);
+    const geminiStatus = (error as { status?: number })?.status;
+    const friendlyError =
+      geminiStatus === 503
+        ? 'Google AI 目前用量過大，重試了幾次仍然失敗，請稍後再試一次。'
+        : '產生摘要時發生問題，請稍後再試一次。';
     res.status(500).json({
-      error: 'Failed to summarize changes.',
+      error: friendlyError,
       detail: error instanceof Error ? error.message : String(error),
     });
   }
