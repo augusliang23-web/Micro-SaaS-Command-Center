@@ -93,6 +93,20 @@ before adding retries to any metered external API call, check what
 actually gets billed/counted (successes only, or every attempt) rather
 than assuming retries are free insurance.
 
+## Follow-up (2026-09-12, same day): switched to a cheaper/higher-quota model
+
+The owner asked why the free tier is so small, how paid billing works, and
+about cheaper models. Explained the tradeoffs and offered to switch; he
+asked to. Tried `gemini-2.5-flash-lite` first (third-party reports suggest
+a more generous free tier) — Google's API returned a 404 saying that model
+is no longer available to new users and pointed to `gemini-3.5-flash-lite`
+as the replacement. Switched to that instead; verified end-to-end (direct
+API call, then a real browser click) that it returns a correctly-formatted
+plain-language summary. Only `/api/bridge/summarize-changes` was changed —
+the two protected routes (`chatgpt-advice`, `extract-features`) still use
+`gemini-3.7-flash`, untouched, since the request was scoped to this one
+feature.
+
 ## Known gaps
 
 - No dedicated HTTP-level route test for `/api/github/changed-files` or `/api/bridge/summarize-changes` (no precedent for HTTP-level route tests exists elsewhere in this codebase either — logic-level tests cover `fetchChangedFiles()` directly).
