@@ -396,7 +396,7 @@ ${truncated ? '\n（註：程式碼差異內容過長，以下僅節錄部分內
 ${patchText || '（無可用的差異內容）'}`;
 
     const geminiRes = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
+      model: 'gemini-3.5-flash-lite',
       contents: `${systemPrompt}\n\n=== CONTEXT ===\n${userPrompt}`,
       config: {
         temperature: 0.2,
@@ -405,7 +405,7 @@ ${patchText || '（無可用的差異內容）'}`;
 
     res.json({
       summary: geminiRes.text || '（AI 未回傳摘要內容）',
-      provider: 'Gemini 3.7 Flash',
+      provider: 'Gemini 3.5 Flash-Lite',
       fileCount: files.length,
     });
   } catch (error) {
