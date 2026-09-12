@@ -64,6 +64,35 @@ diagnosing a live external-API failure, prefer one or two targeted probes
 over a loop, and stop probing as soon as the failure mode is identified
 rather than continuing to "confirm" it.
 
+## Correction (2026-09-12, same day): removed the retry-on-503 logic
+
+The owner asked directly whether a failed API call (not just a successful
+one) still counts against the daily quota — a fair worry given how quickly
+the account had been rate-limited. Google's own docs
+([rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits),
+[troubleshooting](https://ai.google.dev/gemini-api/docs/troubleshooting))
+and developer-forum threads do **not** explicitly state this either way.
+But tallying every real call made during this session's troubleshooting
+(~20 total attempts, only ~4-5 ever succeeded) against the free tier's
+20-requests/day cap makes it very unlikely that only successes count —
+the account was rate-limited long before 20 successes were ever reached.
+
+Given that, the `generateContentWithRetry()` helper added a few commits
+earlier (retry up to twice on 503, with backoff) was actively
+counterproductive: a single user click hitting a 503 could silently fire
+up to 3 real API calls, tripling quota consumption on the exact failure
+mode being retried, for a request that likely wasn't going to succeed
+anyway during a real capacity outage. Removed it entirely — one attempt
+per click is the safer default until Google explicitly documents that
+failed requests don't count. Also updated the 503 error message to no
+longer claim "retried a few times" since that's no longer what happens.
+
+**Lesson:** a retry-on-error pattern that seems like an obvious reliability
+improvement can be actively harmful under a scarce, per-request quota —
+before adding retries to any metered external API call, check what
+actually gets billed/counted (successes only, or every attempt) rather
+than assuming retries are free insurance.
+
 ## Known gaps
 
 - No dedicated HTTP-level route test for `/api/github/changed-files` or `/api/bridge/summarize-changes` (no precedent for HTTP-level route tests exists elsewhere in this codebase either — logic-level tests cover `fetchChangedFiles()` directly).
