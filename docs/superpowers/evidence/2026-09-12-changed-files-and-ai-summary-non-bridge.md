@@ -27,6 +27,43 @@ Direct follow-up to the real-vs-fake trust audit and plain-language verdict rede
   - `read_console_messages` — no errors in either case.
 - Side finding from the direct-push cross-check: `gh api .../commits/HEAD` resolved to a different commit than local `git log -1` — confirmed via `git status -sb` (`ahead 1`) that local commit `496bdbc` had never been pushed. This is the real-vs-fake distinction the feature is designed to surface, working as intended; it also resolves the open question left at the end of entry 19 in `PROJECT_CONTEXT.md`.
 
+## Follow-up (2026-09-12, same day): retry logic + real root cause found
+
+After the owner set a real `GEMINI_API_KEY` and clicked "請 AI 摘要這次修改" in
+his own browser, it failed intermittently. Fixed the missing piece first —
+`server.ts` never actually loaded `.env` (no `dotenv` import despite it
+being a listed dependency; `.env.example`'s "AI Studio automatically
+injects this" comment only applies to the hosted AI Studio runtime, not a
+local `npm run dev`). Added `import 'dotenv/config'` (owner re-confirmed
+this specific `server.ts` touch).
+
+After that fix, the summarize call still failed intermittently. Direct
+`curl` probing against the running server (bypassing the browser entirely)
+reproduced it: repeated calls to the same PR alternated between success and
+a Gemini 503 "This model is currently experiencing high demand" error —
+confirmed genuinely intermittent, not a config problem. Added
+`generateContentWithRetry()` (retries up to twice on 503 with backoff) and
+replaced the raw English "Failed to summarize changes." message with
+Traditional Chinese, distinguishing transient-overload wording from other
+failures.
+
+Further probing (6 rapid calls in a row) surfaced the **real, underlying
+constraint**: `gemini-3.7-flash`'s free tier caps at **20 requests/day**
+(`RESOURCE_EXHAUSTED`, `generate_content_free_tier_requests`, `limit: 20`).
+The troubleshooting probes themselves likely consumed a meaningful chunk of
+that day's quota. Retrying cannot fix a 429 quota-exhaustion error (only
+503 overload) — the error message now says so. Presented the owner three
+options (wait for reset / find a higher-quota model / turn on paid
+billing); he chose to leave the feature as-is and treat it as
+occasional-use, waiting for the quota to reset when it's hit.
+
+**Lesson:** a working API key does not mean unlimited testing is free —
+this session's own verification loop (repeated curl calls to confirm a fix)
+measurably ate into the account's real daily quota for this feature. When
+diagnosing a live external-API failure, prefer one or two targeted probes
+over a loop, and stop probing as soon as the failure mode is identified
+rather than continuing to "confirm" it.
+
 ## Known gaps
 
 - No dedicated HTTP-level route test for `/api/github/changed-files` or `/api/bridge/summarize-changes` (no precedent for HTTP-level route tests exists elsewhere in this codebase either — logic-level tests cover `fetchChangedFiles()` directly).
