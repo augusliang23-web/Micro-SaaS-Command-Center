@@ -174,9 +174,9 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
           : 'Implementation',
       testOutcome: 'PENDING',
       reviewOutcome: 'PENDING',
-      model: 'Terra', // Dynamic initial default, auto-routes per task
+      model: 'Not Assigned',
       reasoningEffort: 'Medium',
-      routingReason: `Dynamic Model Routing Active: Auto-routes each task to Luna, Terra, or Sol based on task blast radius.`,
+      routingReason: `No AI agent has worked on this project yet — this field is not currently kept in sync with real activity.`,
       repository: repoFullName,
       lastActivity: 'Just now',
       tags: [language, stage, 'GitHub App', 'Dynamic Routing'],

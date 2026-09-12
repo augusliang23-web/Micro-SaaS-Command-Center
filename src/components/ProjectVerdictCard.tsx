@@ -236,12 +236,6 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project,
                     )}
                   </>
                 )}
-                <span
-                  className="text-[11px] px-2 py-0.5 rounded border"
-                  style={{ backgroundColor: modelStyle.bg, color: modelStyle.accent, borderColor: modelStyle.border }}
-                >
-                  Model: {project.model}
-                </span>
               </div>
             )}
             {verdict.source === 'github' && githubState && githubState.state !== 'none' && changeRef && (
