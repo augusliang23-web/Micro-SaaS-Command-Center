@@ -364,6 +364,23 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     for fixtures) and changed the connect-time default to `'Not Assigned'`.
     See `docs/superpowers/evidence/2026-09-12-changed-files-and-ai-summary-non-bridge.md`
     (follow-up sections) for the full chronology.
+22. **Done (2026-09-13):** two new features, both plan-mode.
+    (a) **Delete project**: a `Trash2` icon on `ProjectVerdictCard` opens a
+    confirmation modal (`DeleteProjectModal.tsx`) before removing a project
+    from local state — pure client-side filter, no server changes needed.
+    (b) **Local git status comparison**: the owner pointed out that only
+    checking GitHub's remote state isn't enough — it can't tell you when
+    your own machine has unpushed commits (the exact shape of the
+    2026-09-11 18-unpushed-commits incident). New `server/localGitStatus.mjs`
+    runs `git status --porcelain=v2 --branch` against an owner-entered
+    local clone path (`MicroSaaSProject.localPath`, new optional field) and
+    surfaces ahead/behind/uncommitted counts as a plain-language "本機狀態"
+    badge next to the existing real-time GitHub state. New route
+    `GET /api/local-git/status`. See
+    `docs/superpowers/evidence/2026-09-13-local-git-status-and-delete-project-non-bridge.md`.
+    Known gap: only this repo's own `localPath` has been set so far; the
+    two other real connected projects (`pm-dashboard`, `pm-dashboard-uat`)
+    don't have theirs filled in yet.
 
 ## Roadmap
 

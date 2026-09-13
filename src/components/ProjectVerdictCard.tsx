@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, HelpCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, GitPullRequest, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
-import { MicroSaaSProject, GithubPullStatus, GithubChangedFile } from '../types';
+import { MicroSaaSProject, GithubPullStatus, GithubChangedFile, LocalGitStatus } from '../types';
 import { getModelBadgeStyle, getGateStatusBadgeStyle, isRealGithubRepo, outcomeBadgeStyle } from '../utils';
 import { getVerdict, getVerdictStyle } from '../verdict.mjs';
 import { DeleteProjectModal } from './DeleteProjectModal';
@@ -19,6 +19,7 @@ interface ProjectVerdictCardProps {
   /** Small label rendered above the card, e.g. "🎯 8 個專案中最需要你注意的" for a hero placement. */
   eyebrow?: string;
   onDelete?: (projectId: string) => void;
+  onUpdateLocalPath?: (projectId: string, localPath: string) => void;
 }
 
 export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
@@ -27,6 +28,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
   onSelect,
   eyebrow,
   onDelete,
+  onUpdateLocalPath,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -37,6 +39,11 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
   const [diffSummary, setDiffSummary] = useState<string | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [localStatus, setLocalStatus] = useState<LocalGitStatus | null>(null);
+  const [isLoadingLocalStatus, setIsLoadingLocalStatus] = useState(false);
+  const [localStatusError, setLocalStatusError] = useState<string | null>(null);
+  const [isEditingLocalPath, setIsEditingLocalPath] = useState(false);
+  const [localPathInput, setLocalPathInput] = useState(project.localPath || '');
   const isLinkedToRealRepo = isRealGithubRepo(project.repository);
 
   const loadGithubState = useCallback(() => {
@@ -91,6 +98,30 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
       .catch((err) => setSummaryError(err instanceof Error ? err.message : '摘要失敗'))
       .finally(() => setIsSummarizing(false));
   }, [changeRef, project.repository]);
+
+  useEffect(() => {
+    if (!expanded || !project.localPath || isEditingLocalPath) return;
+    if (localStatus !== null || localStatusError !== null || isLoadingLocalStatus) return;
+    setIsLoadingLocalStatus(true);
+    fetch(`/api/local-git/status?path=${encodeURIComponent(project.localPath)}`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || '無法讀取本機狀態');
+        setLocalStatus(data);
+      })
+      .catch((err) => setLocalStatusError(err instanceof Error ? err.message : '無法讀取本機狀態'))
+      .finally(() => setIsLoadingLocalStatus(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, project.localPath, isEditingLocalPath]);
+
+  const handleSaveLocalPath = () => {
+    const trimmed = localPathInput.trim();
+    if (!trimmed) return;
+    onUpdateLocalPath?.(project.id, trimmed);
+    setIsEditingLocalPath(false);
+    setLocalStatus(null);
+    setLocalStatusError(null);
+  };
 
   const verdict = getVerdict(project, githubState ?? undefined);
   const style = getVerdictStyle(verdict.level);
@@ -257,6 +288,84 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                 )}
               </div>
             )}
+            {verdict.source === 'github' &&
+              githubState &&
+              githubState.state !== 'none' &&
+              (onUpdateLocalPath || project.localPath) && (
+                <div className="mt-3 pt-3 border-t border-dashed border-stone-200 font-sans">
+                  <div className="text-[10px] text-stone-400 uppercase tracking-wider mb-1.5">本機狀態</div>
+                  {!project.localPath || isEditingLocalPath ? (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input
+                        type="text"
+                        value={localPathInput}
+                        onChange={(e) => setLocalPathInput(e.target.value)}
+                        placeholder="這個專案在你電腦上的資料夾路徑"
+                        className="text-[11px] px-2 py-1 rounded border border-stone-300 flex-1 min-w-[220px] font-mono"
+                      />
+                      <button
+                        onClick={handleSaveLocalPath}
+                        disabled={!localPathInput.trim()}
+                        className="text-[11px] px-2.5 py-1 rounded bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        儲存
+                      </button>
+                      {project.localPath && (
+                        <button
+                          onClick={() => {
+                            setIsEditingLocalPath(false);
+                            setLocalPathInput(project.localPath || '');
+                          }}
+                          className="text-[11px] text-stone-400 hover:text-stone-700 cursor-pointer"
+                        >
+                          取消
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {isLoadingLocalStatus && <span className="text-[11px] text-stone-400">讀取中…</span>}
+                      {!isLoadingLocalStatus && localStatusError && (
+                        <span className="text-[11px] px-2 py-0.5 rounded border bg-rose-50 text-rose-800 border-rose-200">
+                          {localStatusError}
+                        </span>
+                      )}
+                      {!isLoadingLocalStatus && !localStatusError && localStatus && (
+                        <>
+                          {localStatus.ahead > 0 && (
+                            <span className="text-[11px] px-2 py-0.5 rounded border bg-amber-50 text-amber-900 border-amber-200">
+                              本機領先遠端 {localStatus.ahead} 個 commit，還沒 push
+                            </span>
+                          )}
+                          {localStatus.behind > 0 && (
+                            <span className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200">
+                              遠端有新更新，本機還沒拉取（{localStatus.behind} 個 commit）
+                            </span>
+                          )}
+                          {localStatus.uncommittedCount > 0 && (
+                            <span className="text-[11px] px-2 py-0.5 rounded border bg-stone-100 text-stone-700 border-stone-300">
+                              本機有 {localStatus.uncommittedCount} 個檔案還沒 commit
+                            </span>
+                          )}
+                          {localStatus.ahead === 0 && localStatus.behind === 0 && localStatus.uncommittedCount === 0 && (
+                            <span className="text-[11px] px-2 py-0.5 rounded border bg-emerald-50 text-emerald-800 border-emerald-200">
+                              本機與遠端一致
+                            </span>
+                          )}
+                        </>
+                      )}
+                      {onUpdateLocalPath && (
+                        <button
+                          onClick={() => setIsEditingLocalPath(true)}
+                          className="text-[11px] text-stone-400 hover:text-stone-700 underline cursor-pointer"
+                        >
+                          修改路徑
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             {verdict.source === 'github' && githubState && githubState.state !== 'none' && changeRef && (
               <div className="mt-3 pt-3 border-t border-dashed border-stone-200 font-sans">
                 <div className="text-[10px] text-stone-400 uppercase tracking-wider mb-1.5">修改的檔案</div>

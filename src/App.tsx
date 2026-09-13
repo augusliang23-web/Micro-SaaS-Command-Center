@@ -514,6 +514,10 @@ export default function App() {
     if (project) showToast(`已刪除專案「${project.name}」`);
   };
 
+  const handleUpdateLocalPath = (projectId: string, localPath: string) => {
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, localPath } : p)));
+  };
+
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-stone-800 font-sans antialiased selection:bg-stone-300 selection:text-stone-900 flex flex-col">
       {/* Persistent Prototype Boundary */}
@@ -550,7 +554,12 @@ export default function App() {
       {/* Main Cockpit Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-4">
         {/* Next Best Action: scans every project's real verdict, not a fixed fixture */}
-        <NextBestActionCard projects={projects} onSelectProject={handleSelectProject} onDeleteProject={handleDeleteProject} />
+        <NextBestActionCard
+          projects={projects}
+          onSelectProject={handleSelectProject}
+          onDeleteProject={handleDeleteProject}
+          onUpdateLocalPath={handleUpdateLocalPath}
+        />
 
         {/* View Mode Navigation Tabs */}
         <div className="flex items-center justify-between border-b border-stone-300/80 pb-2 pt-1 font-mono text-xs">
@@ -606,6 +615,7 @@ export default function App() {
               onSelectProject={handleSelectProject}
               onOpenConnectRepo={() => setIsConnectRepoOpen(true)}
               onDeleteProject={handleDeleteProject}
+              onUpdateLocalPath={handleUpdateLocalPath}
             />
           </div>
         )}
@@ -617,6 +627,7 @@ export default function App() {
               projects={attentionProjects}
               onSelectProject={handleSelectProject}
               onDeleteProject={handleDeleteProject}
+              onUpdateLocalPath={handleUpdateLocalPath}
             />
           </div>
         )}

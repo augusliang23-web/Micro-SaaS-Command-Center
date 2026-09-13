@@ -9,6 +9,7 @@ interface PortfolioOverviewProps {
   onSelectProject: (project: MicroSaaSProject) => void;
   onOpenConnectRepo?: () => void;
   onDeleteProject?: (projectId: string) => void;
+  onUpdateLocalPath?: (projectId: string, localPath: string) => void;
 }
 
 export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
@@ -17,6 +18,7 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
   onSelectProject,
   onOpenConnectRepo,
   onDeleteProject,
+  onUpdateLocalPath,
 }) => {
   const [stageFilter, setStageFilter] = useState<string>('ALL');
   const [healthFilter, setHealthFilter] = useState<string>('ALL');
@@ -122,6 +124,7 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
             isSelected={selectedProjectId === project.id}
             onSelect={() => onSelectProject(project)}
             onDelete={onDeleteProject}
+            onUpdateLocalPath={onUpdateLocalPath}
           />
         ))}
       </div>

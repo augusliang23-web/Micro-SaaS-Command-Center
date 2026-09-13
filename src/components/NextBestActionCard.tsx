@@ -8,6 +8,7 @@ interface NextBestActionCardProps {
   projects: MicroSaaSProject[];
   onSelectProject: (project: MicroSaaSProject) => void;
   onDeleteProject?: (projectId: string) => void;
+  onUpdateLocalPath?: (projectId: string, localPath: string) => void;
 }
 
 /**
@@ -16,7 +17,12 @@ interface NextBestActionCardProps {
  * NextBestAction fixture that never changed no matter what was actually
  * happening in any project.
  */
-export const NextBestActionCard: React.FC<NextBestActionCardProps> = ({ projects, onSelectProject, onDeleteProject }) => {
+export const NextBestActionCard: React.FC<NextBestActionCardProps> = ({
+  projects,
+  onSelectProject,
+  onDeleteProject,
+  onUpdateLocalPath,
+}) => {
   const { verdicts, isLoading } = useProjectVerdicts(projects);
 
   if (projects.length === 0) return null;
@@ -36,6 +42,7 @@ export const NextBestActionCard: React.FC<NextBestActionCardProps> = ({ projects
       isSelected={false}
       onSelect={() => onSelectProject(topProject)}
       onDelete={onDeleteProject}
+      onUpdateLocalPath={onUpdateLocalPath}
       eyebrow={
         projects.length > 1
           ? `🎯 在 ${projects.length} 個專案中，這個最需要你注意`

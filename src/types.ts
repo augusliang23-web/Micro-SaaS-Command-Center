@@ -172,6 +172,8 @@ export interface MicroSaaSProject {
   lastActivity: string;
   activityHistory: ActivityItem[];
   repository: string;
+  /** Absolute path to this project's local clone, set by the owner; used to compare local git state against GitHub. */
+  localPath?: string;
   tags: string[];
   features?: FeatureItem[];
   provenance: ProjectProvenance;
@@ -197,6 +199,14 @@ export interface GithubChangedFile {
   status: string;
   additions: number;
   deletions: number;
+}
+
+// Shape returned by GET /api/local-git/status (server/localGitRoutes.mjs)
+export interface LocalGitStatus {
+  branch: string;
+  ahead: number;
+  behind: number;
+  uncommittedCount: number;
 }
 
 export interface AttentionItem {

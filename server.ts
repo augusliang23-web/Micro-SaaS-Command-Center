@@ -13,6 +13,7 @@ import {
 } from './server/codexHandoffRoutes.mjs';
 import { createStateRouter } from './server/stateRoutes.mjs';
 import { createGithubRouter } from './server/githubRoutes.mjs';
+import { createLocalGitRouter } from './server/localGitRoutes.mjs';
 import { fetchChangedFiles, isRealGithubRepo } from './server/githubPullStatus.mjs';
 import { GithubCliError } from './server/githubRepos.mjs';
 
@@ -81,6 +82,9 @@ app.use('/api/state', createStateRouter());
 
 // Server-side proxy over the local `gh` CLI session; the GitHub token never reaches the browser
 app.use('/api/github', createGithubRouter());
+
+// Runs `git status` against a local clone path the owner typed in himself — read-only, loopback-only
+app.use('/api/local-git', createLocalGitRouter());
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
