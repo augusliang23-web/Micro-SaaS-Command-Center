@@ -341,6 +341,29 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     ("remove fixture PM Dashboard project colliding with the real one") was
     never actually pushed to `origin/main` — confirms the open question
     noted at the end of entry 19.
+21. **Done (2026-09-12):** the AI-summary feature above went through two
+    follow-up fixes the same day, both driven by the owner's direct
+    questions rather than a bug report: (a) `.env` was never actually
+    loaded (`server.ts` had no `dotenv` import despite the dependency being
+    listed) — fixed by adding `import 'dotenv/config'`; (b) the AI-summary
+    call intermittently failed with a Gemini 503, which was first
+    "fixed" with an automatic-retry helper — but tallying real API calls
+    during troubleshooting (~20 attempts, only ~4-5 successes, quota
+    exhausted early) showed failed calls likely count against the
+    free tier's 20-requests/day cap the same as successes, meaning the
+    retry logic could silently triple quota use per click. Removed the
+    retry, then switched the model from `gemini-3.7-flash` to
+    `gemini-3.5-flash-lite` (cheaper, and Google's own API pointed to it
+    after `gemini-2.5-flash-lite` returned 404 "no longer available to new
+    users"). Also, while reviewing the resulting screen, the owner noticed
+    a "Model: Terra" badge on real GitHub-connected projects and asked if
+    it meant anything — it didn't: `ConnectRepoModal.tsx` hardcodes
+    `model: 'Terra'` at connection time and nothing ever updates it,
+    yet `ProjectVerdictCard.tsx` rendered it inside the real-time GitHub
+    section as if it were live. Removed the badge for real projects (kept
+    for fixtures) and changed the connect-time default to `'Not Assigned'`.
+    See `docs/superpowers/evidence/2026-09-12-changed-files-and-ai-summary-non-bridge.md`
+    (follow-up sections) for the full chronology.
 
 ## Roadmap
 
