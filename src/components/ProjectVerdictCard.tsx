@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, HelpCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, GitPullRequest, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertCircle, HelpCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, GitPullRequest, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { MicroSaaSProject, GithubPullStatus, GithubChangedFile } from '../types';
 import { getModelBadgeStyle, getGateStatusBadgeStyle, isRealGithubRepo, outcomeBadgeStyle } from '../utils';
 import { getVerdict, getVerdictStyle } from '../verdict.mjs';
+import { DeleteProjectModal } from './DeleteProjectModal';
 
 const VERDICT_ICON: Record<string, React.ElementType> = {
   danger: AlertCircle,
@@ -17,10 +18,18 @@ interface ProjectVerdictCardProps {
   onSelect: () => void;
   /** Small label rendered above the card, e.g. "🎯 8 個專案中最需要你注意的" for a hero placement. */
   eyebrow?: string;
+  onDelete?: (projectId: string) => void;
 }
 
-export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project, isSelected, onSelect, eyebrow }) => {
+export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
+  project,
+  isSelected,
+  onSelect,
+  eyebrow,
+  onDelete,
+}) => {
   const [expanded, setExpanded] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [githubState, setGithubState] = useState<GithubPullStatus | null>(null);
   const [isLoadingGithub, setIsLoadingGithub] = useState(false);
   const [changedFiles, setChangedFiles] = useState<GithubChangedFile[] | null>(null);
@@ -164,6 +173,16 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project,
               className="text-stone-300 hover:text-stone-600 transition-colors cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isLoadingGithub ? 'animate-spin' : ''}`} />
+            </button>
+          )}
+
+          {onDelete && (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              title="刪除這個專案"
+              className="text-stone-300 hover:text-rose-600 transition-colors cursor-pointer"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           )}
 
@@ -317,6 +336,14 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({ project,
           </div>
         )}
       </div>
+      {onDelete && (
+        <DeleteProjectModal
+          project={project}
+          isOpen={showDeleteConfirm}
+          onClose={() => setShowDeleteConfirm(false)}
+          onConfirmDelete={onDelete}
+        />
+      )}
     </div>
   );
 };

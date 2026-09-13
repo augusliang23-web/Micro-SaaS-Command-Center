@@ -8,6 +8,7 @@ interface PortfolioOverviewProps {
   selectedProjectId: string | null;
   onSelectProject: (project: MicroSaaSProject) => void;
   onOpenConnectRepo?: () => void;
+  onDeleteProject?: (projectId: string) => void;
 }
 
 export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
@@ -15,6 +16,7 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
   selectedProjectId,
   onSelectProject,
   onOpenConnectRepo,
+  onDeleteProject,
 }) => {
   const [stageFilter, setStageFilter] = useState<string>('ALL');
   const [healthFilter, setHealthFilter] = useState<string>('ALL');
@@ -119,6 +121,7 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
             project={project}
             isSelected={selectedProjectId === project.id}
             onSelect={() => onSelectProject(project)}
+            onDelete={onDeleteProject}
           />
         ))}
       </div>

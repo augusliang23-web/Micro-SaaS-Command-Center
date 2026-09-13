@@ -6,9 +6,10 @@ import { ProjectVerdictCard } from './ProjectVerdictCard';
 interface NeedsAttentionQueueProps {
   projects: MicroSaaSProject[];
   onSelectProject: (project: MicroSaaSProject) => void;
+  onDeleteProject?: (projectId: string) => void;
 }
 
-export const NeedsAttentionQueue: React.FC<NeedsAttentionQueueProps> = ({ projects, onSelectProject }) => {
+export const NeedsAttentionQueue: React.FC<NeedsAttentionQueueProps> = ({ projects, onSelectProject, onDeleteProject }) => {
   return (
     <section className="bg-white border border-stone-300/90 rounded-xl p-4 sm:p-5 shadow-xs">
       <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-stone-200">
@@ -35,6 +36,7 @@ export const NeedsAttentionQueue: React.FC<NeedsAttentionQueueProps> = ({ projec
               project={project}
               isSelected={false}
               onSelect={() => onSelectProject(project)}
+              onDelete={onDeleteProject}
             />
           ))}
         </div>
