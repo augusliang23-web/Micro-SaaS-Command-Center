@@ -378,9 +378,19 @@ swapping the storage layer behind the same `MicroSaaSProject[]` shape.
     badge next to the existing real-time GitHub state. New route
     `GET /api/local-git/status`. See
     `docs/superpowers/evidence/2026-09-13-local-git-status-and-delete-project-non-bridge.md`.
-    Known gap: only this repo's own `localPath` has been set so far; the
-    two other real connected projects (`pm-dashboard`, `pm-dashboard-uat`)
-    don't have theirs filled in yet.
+    Filled in `localPath` for the other two real projects directly (paths
+    already known from earlier session context), then the owner asked the
+    natural follow-up: shouldn't this auto-fill at connect time? Added
+    `findLocalClone()` (scans `~/Developer`, matches by `origin` remote)
+    and wired it into `ConnectRepoModal.tsx`'s connect flow plus a
+    retroactive "自動尋找" button on the card. Verifying against the real
+    machine (not just mocked tests) caught two real bugs before shipping:
+    "first match wins" silently preferred a 3-week-stale duplicate clone
+    over an active one (fixed — now picks the most-recently-committed
+    match), and the original `find -type d` filter completely missed git
+    **worktrees** (`.git` is a file there, not a directory) — which turned
+    out to be exactly how the owner's actual UAT checkout is set up. See
+    the same evidence doc's follow-up section for both.
 
 ## Roadmap
 

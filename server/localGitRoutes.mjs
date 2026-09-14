@@ -1,6 +1,7 @@
 import express from 'express';
 import { evaluateGithubRequest } from './githubRoutes.mjs';
-import { fetchLocalGitStatus, LocalGitError } from './localGitStatus.mjs';
+import { fetchLocalGitStatus, findLocalClone, LocalGitError } from './localGitStatus.mjs';
+import { isRealGithubRepo } from './githubPullStatus.mjs';
 
 function requestOrigin(req) {
   const origin = req.get('origin');
@@ -14,7 +15,7 @@ function requestOrigin(req) {
   }
 }
 
-export function createLocalGitRouter({ fetchStatus = fetchLocalGitStatus } = {}) {
+export function createLocalGitRouter({ fetchStatus = fetchLocalGitStatus, findClone = findLocalClone } = {}) {
   const router = express.Router();
 
   router.use((req, res, next) => {
@@ -43,6 +44,21 @@ export function createLocalGitRouter({ fetchStatus = fetchLocalGitStatus } = {})
       }
       console.error('Error fetching local git status:', error);
       res.status(500).json({ error: 'Failed to fetch local git status.' });
+    }
+  });
+
+  router.get('/find', async (req, res) => {
+    const repo = typeof req.query.repo === 'string' ? req.query.repo : '';
+    if (!isRealGithubRepo(repo)) {
+      res.status(400).json({ error: 'Query param "repo" must be an owner/name GitHub slug.' });
+      return;
+    }
+    try {
+      const localPath = await findClone(repo);
+      res.json({ localPath });
+    } catch (error) {
+      console.error('Error searching for a local clone:', error);
+      res.json({ localPath: null });
     }
   });
 

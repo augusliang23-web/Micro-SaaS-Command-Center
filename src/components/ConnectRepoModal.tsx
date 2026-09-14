@@ -28,6 +28,7 @@ import {
   BridgeGateId,
 } from '../types';
 import { projectProvenance } from '../mockData';
+import { isRealGithubRepo } from '../utils';
 
 export interface UnconnectedGitHubRepo {
   id: string;
@@ -65,6 +66,7 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
   const [repos, setRepos] = useState<UnconnectedGitHubRepo[]>([]);
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [repoLoadError, setRepoLoadError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const loadRepos = useCallback(() => {
     setIsLoadingRepos(true);
@@ -126,7 +128,7 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
     setIsManualInput(true);
   };
 
-  const handleConfirmConnect = () => {
+  const handleConfirmConnect = async () => {
     let repoFullName = '';
     let repoName = '';
     let description = '';
@@ -146,6 +148,20 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
       branch = selectedRepo.defaultBranch;
     } else {
       return;
+    }
+
+    let detectedLocalPath: string | undefined;
+    if (isRealGithubRepo(repoFullName)) {
+      setIsConnecting(true);
+      try {
+        const res = await fetch(`/api/local-git/find?repo=${encodeURIComponent(repoFullName)}`);
+        const data = res.ok ? await res.json() : null;
+        detectedLocalPath = data?.localPath || undefined;
+      } catch {
+        detectedLocalPath = undefined;
+      } finally {
+        setIsConnecting(false);
+      }
     }
 
     // Default to dynamic routing with initial gate assignment
@@ -178,6 +194,7 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
       reasoningEffort: 'Medium',
       routingReason: `No AI agent has worked on this project yet — this field is not currently kept in sync with real activity.`,
       repository: repoFullName,
+      localPath: detectedLocalPath,
       lastActivity: 'Just now',
       tags: [language, stage, 'GitHub App', 'Dynamic Routing'],
       gates: [
@@ -597,11 +614,11 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
             </button>
             <button
               onClick={handleConfirmConnect}
-              disabled={!selectedRepo && (!isManualInput || !manualRepoName.trim())}
+              disabled={isConnecting || (!selectedRepo && (!isManualInput || !manualRepoName.trim()))}
               className="px-4 py-1.5 text-xs font-mono font-semibold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-md flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
             >
               <Plus className="h-3.5 w-3.5" />
-              <span>確定接入專案</span>
+              <span>{isConnecting ? '尋找本機路徑中…' : '確定接入專案'}</span>
             </button>
           </div>
         </div>

@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
 
 export class LocalGitError extends Error {
   constructor(message, kind) {
@@ -83,4 +85,72 @@ export function fetchLocalGitStatus(localPath, { execFileFn = execFile } = {}) {
       },
     );
   });
+}
+
+function execFileP(execFileFn, command, args) {
+  return new Promise((resolve) => {
+    execFileFn(command, args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      resolve({ error, stdout: stdout || '', stderr: stderr || '' });
+    });
+  });
+}
+
+function defaultSearchRoots() {
+  const fromEnv = process.env.COMMAND_CENTER_LOCAL_REPO_ROOTS;
+  if (fromEnv) {
+    const roots = fromEnv
+      .split(',')
+      .map((r) => r.trim())
+      .filter(Boolean);
+    if (roots.length > 0) return roots;
+  }
+  return [path.join(os.homedir(), 'Developer')];
+}
+
+function matchesRepoRemote(remoteUrl, repo) {
+  const normalized = remoteUrl.trim().replace(/\.git$/, '').toLowerCase();
+  const target = repo.toLowerCase();
+  const candidates = [`https://github.com/${target}`, `git@github.com:${target}`, `ssh://git@github.com/${target}`];
+  return candidates.includes(normalized);
+}
+
+/**
+ * Best-effort search for a local clone of `repo` (an owner/repo slug) under
+ * a bounded set of directories. Never throws — any failure (find/git
+ * missing, permission-denied subdirs, no match) resolves to `null` so this
+ * can never block a caller that treats it as an optional convenience.
+ */
+export async function findLocalClone(repo, { roots, execFileFn = execFile } = {}) {
+  const searchRoots = roots && roots.length > 0 ? roots : defaultSearchRoots();
+
+  // No `-type d` filter: a git worktree's ".git" is a plain file (pointing
+  // at the main checkout's gitdir), not a directory — filtering by type
+  // would silently skip worktrees, and `git -C <dir>` works fine against
+  // either kind, so there's no reason to exclude them.
+  const { stdout } = await execFileP(execFileFn, 'find', [...searchRoots, '-maxdepth', '4', '-name', '.git']);
+  const gitDirs = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  // Collect every matching clone rather than returning the first one found:
+  // a real machine can easily have more than one local clone of the same
+  // repo (an old copy left behind, a second worktree, ...) and the one
+  // `find` happens to list first is not necessarily the one actually in
+  // use. Break ties by most recent commit — the clone someone is actively
+  // working in is virtually always the one with the freshest history.
+  const matches = [];
+  for (const gitDir of gitDirs) {
+    const cloneDir = gitDir.replace(/\/\.git$/, '');
+    const { error, stdout: remoteOut } = await execFileP(execFileFn, 'git', ['-C', cloneDir, 'remote', 'get-url', 'origin']);
+    if (error || !remoteOut.trim() || !matchesRepoRemote(remoteOut, repo)) continue;
+
+    const { stdout: timeOut } = await execFileP(execFileFn, 'git', ['-C', cloneDir, 'log', '-1', '--format=%at']);
+    const lastCommitAt = Number.parseInt(timeOut.trim(), 10) || 0;
+    matches.push({ cloneDir, lastCommitAt });
+  }
+
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => b.lastCommitAt - a.lastCommitAt);
+  return matches[0].cloneDir;
 }

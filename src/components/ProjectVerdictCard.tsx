@@ -43,6 +43,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
   const [isLoadingLocalStatus, setIsLoadingLocalStatus] = useState(false);
   const [localStatusError, setLocalStatusError] = useState<string | null>(null);
   const [isEditingLocalPath, setIsEditingLocalPath] = useState(false);
+  const [isFindingLocalPath, setIsFindingLocalPath] = useState(false);
   const [localPathInput, setLocalPathInput] = useState(project.localPath || '');
   const isLinkedToRealRepo = isRealGithubRepo(project.repository);
 
@@ -121,6 +122,17 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
     setIsEditingLocalPath(false);
     setLocalStatus(null);
     setLocalStatusError(null);
+  };
+
+  const handleAutoFindLocalPath = () => {
+    setIsFindingLocalPath(true);
+    fetch(`/api/local-git/find?repo=${encodeURIComponent(project.repository)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.localPath) setLocalPathInput(data.localPath);
+      })
+      .catch(() => {})
+      .finally(() => setIsFindingLocalPath(false));
   };
 
   const verdict = getVerdict(project, githubState ?? undefined);
@@ -303,6 +315,13 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                         placeholder="這個專案在你電腦上的資料夾路徑"
                         className="text-[11px] px-2 py-1 rounded border border-stone-300 flex-1 min-w-[220px] font-mono"
                       />
+                      <button
+                        onClick={handleAutoFindLocalPath}
+                        disabled={isFindingLocalPath}
+                        className="text-[11px] px-2.5 py-1 rounded border border-stone-300 text-stone-600 hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        {isFindingLocalPath ? '尋找中…' : '自動尋找'}
+                      </button>
                       <button
                         onClick={handleSaveLocalPath}
                         disabled={!localPathInput.trim()}

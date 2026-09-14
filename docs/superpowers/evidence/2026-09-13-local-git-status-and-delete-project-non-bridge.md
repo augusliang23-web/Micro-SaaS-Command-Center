@@ -33,6 +33,59 @@ Two separate features shipped back-to-back the same day:
 - **Delete project**: browser-verified opening the modal on a real project (correct name shown), cancel leaves the project untouched, confirmed via the automated test suite for the actual delete path (not repeated live against real persisted data, to avoid altering the owner's real project list mid-verification).
 - **Local git status**: verified `fetchLocalGitStatus`'s real-world parsing against this repo's own actual `git status --porcelain=v2 --branch` output directly (exact field-for-field match). Set this repo's own local path via the live UI, confirmed the "N 個檔案還沒 commit" badge matched the real uncommitted-file count. Created a throwaway empty commit (`git commit --allow-empty`), confirmed the badge correctly flipped to "領先遠端 1 個 commit，還沒 push", then removed it with `git reset --soft HEAD~1` (safe — empty commit, no working-tree changes, and there were real uncommitted feature files in the tree at the time that a `--hard` reset would have destroyed). Verified the invalid-path case (honest `"<path>" is not a git repository.` error with a working re-edit link) and restored the correct path afterward. Confirmed `localPath` persists across a full page reload via `data/app-state.json`.
 
+## Follow-up (2026-09-13, same day): auto-detect the local clone path
+
+The owner asked, reasonably, why he still had to type in local paths
+himself, then immediately followed up asking whether this should just
+auto-fill when a new project is connected. Both fair — went through
+`EnterPlanMode` again given the real design decision involved (where to
+search, how to handle multiple matches).
+
+**What shipped:** `server/localGitStatus.mjs` gained `findLocalClone(repo, { roots, execFileFn })` — searches `~/Developer` (overridable via
+`COMMAND_CENTER_LOCAL_REPO_ROOTS`) for a `.git` whose `origin` remote
+matches the given `owner/repo`, using the same `execFile`-based pattern as
+the rest of this module. New `GET /api/local-git/find?repo=...` route.
+`ConnectRepoModal.tsx`'s connect flow now awaits this before creating the
+new project, pre-filling `localPath` automatically (briefly disabling the
+confirm button with a "尋找本機路徑中…" label). `ProjectVerdictCard.tsx`
+also gained a retroactive "自動尋找" button next to the manual path input,
+for projects connected before this existed.
+
+**Two real bugs caught by testing against the owner's actual machine, not
+just mocked tests:**
+
+1. **"First match wins" was wrong.** The owner has multiple local clones
+   of the same repos (e.g. an old copy alongside an active one). The
+   initial version returned whichever `find` happened to list first,
+   which for `pm-dashboard-uat` was a 3-week-stale clone, not the one with
+   commits from 2 hours ago. Fixed: `findLocalClone` now collects every
+   matching clone and picks the one with the most recent `git log -1`
+   timestamp, not the first one found.
+2. **Git worktrees were invisible to the scan.** The owner's actual
+   actively-used UAT checkout (`pm-dashboard-uat-main`) is a `git worktree`
+   of the main checkout — its `.git` is a plain *file* (containing
+   `gitdir: ...`), not a directory. The original `find ... -type d` filter
+   silently excluded it entirely, so auto-detect would never have found
+   the one path that actually mattered. Fixed by dropping `-type d` from
+   the `find` filter — `git -C <dir>` works identically against a worktree
+   or a full clone, so there was no reason to filter by type in the first
+   place.
+
+Both were caught by literally running `findLocalClone` against the real
+`~/Developer` tree during verification and noticing the result didn't
+match reality, rather than trusting the mocked unit tests alone (which,
+by construction, couldn't have caught either bug — they only test the
+logic against inputs the tests themselves invented).
+
+**Lesson:** for anything that scans/searches the real filesystem, mocked
+`execFileFn` tests can only prove the parsing/selection logic is
+internally consistent — they cannot catch a wrong assumption about what
+the real filesystem actually looks like (multiple clones existing, git
+worktrees having file-not-directory `.git`). Run new filesystem-scanning
+code against the real machine at least once before considering it done,
+specifically looking for "does the result match what I already know to be
+true," not just "did it return without erroring."
+
 ## Known gaps
 
 - No automated Express-route-level test for `/api/local-git/status` (no precedent for HTTP-level route tests exists elsewhere in this codebase either — logic-level tests cover `fetchLocalGitStatus()` directly, matching the pattern already used for `fetchChangedFiles`/`fetchPullRequestStatus`).
