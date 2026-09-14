@@ -8,6 +8,7 @@ import {
   outcomeBadgeStyle,
   describeLocalStatus,
   localStatusToneStyle,
+  formatChangeSummaryRef,
 } from '../utils';
 import { getVerdict, getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
 import { DeleteProjectModal } from './DeleteProjectModal';
@@ -460,7 +461,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                               className="text-[12px] text-stone-600 leading-relaxed bg-stone-50 border border-stone-200 rounded-lg p-3 whitespace-pre-wrap"
                             >
                               <div className="text-[10px] text-stone-400 mb-1">
-                                {r.refKey.startsWith('pr:') ? `PR #${r.refKey.slice(3)}` : `commit ${r.refKey.slice(4, 11)}`}
+                                {formatChangeSummaryRef(r.refKey)}
                                 {' · '}
                                 {formatRelativeTime(r.generatedAt)}產生
                                 {r.includedLocalDiff ? '，已包含本機差異' : ''}

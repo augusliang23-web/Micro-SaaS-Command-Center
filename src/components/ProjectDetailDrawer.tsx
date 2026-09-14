@@ -27,6 +27,7 @@ import {
   Terminal,
   Bot,
   MessageSquare,
+  History,
 } from 'lucide-react';
 import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome, FeatureItem, GithubPullStatus } from '../types';
 import { BridgeWorkflowRail } from './BridgeWorkflowRail';
@@ -39,9 +40,10 @@ import {
   getModelBadgeStyle,
   getWaitingStateBadge,
   isRealGithubRepo,
+  formatChangeSummaryRef,
 } from '../utils';
 import { provenanceLabel } from '../statusProvenance.mjs';
-import { getVerdict, getVerdictStyle } from '../verdict.mjs';
+import { getVerdict, getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
 
 const VERDICT_ICON: Record<string, React.ElementType> = {
   danger: AlertCircle,
@@ -346,6 +348,51 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                   <span>送出決定，讓 AI 繼續</span>
                 </button>
               </div>
+            </section>
+          )}
+
+          {/* Update History — a real, per-project timeline of saved AI change
+              summaries (see ChangeSummaryRecord), newest first. Unlike the
+              six legacy sections below, this is genuine data (only ever
+              written after a real AI call against a real GitHub diff), so
+              it's shown for real projects unconditionally rather than
+              gated behind "顯示技術細節". */}
+          {isRealGithubRepo(project.repository) && (
+            <section className="bg-white border border-stone-300/90 rounded-xl p-5 shadow-xs space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-stone-200">
+                <div className="flex items-center gap-2">
+                  <History className="h-4 w-4 text-stone-700" />
+                  <h3 className="text-sm font-bold text-stone-900">更新歷史</h3>
+                </div>
+                {(project.changeSummaries?.length ?? 0) > 0 && (
+                  <span className="text-xs text-stone-400">{project.changeSummaries!.length} 筆記錄</span>
+                )}
+              </div>
+
+              {!project.changeSummaries || project.changeSummaries.length === 0 ? (
+                <p className="text-xs text-stone-400 leading-relaxed">
+                  目前還沒有摘要記錄。到上面「在 GitHub 上查看」旁邊的專案卡片展開「與前一版本相比的改動」，按「請 AI
+                  摘要這次修改」即可開始累積這個專案的更新歷史。
+                </p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {[...project.changeSummaries]
+                    .sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime())
+                    .map((record) => (
+                      <li key={record.id} className="bg-stone-50 border border-stone-200 rounded-lg p-3.5">
+                        <div className="flex items-center gap-2 flex-wrap text-[11px] text-stone-500 mb-1.5">
+                          <span className="font-mono font-semibold text-stone-700">{formatChangeSummaryRef(record.refKey)}</span>
+                          <span>·</span>
+                          <span>{formatRelativeTime(record.generatedAt)}</span>
+                          {record.includedLocalDiff && (
+                            <span className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-200">含本機差異</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-stone-700 leading-relaxed whitespace-pre-wrap">{record.summary}</p>
+                      </li>
+                    ))}
+                </ul>
+              )}
             </section>
           )}
 

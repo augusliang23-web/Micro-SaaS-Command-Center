@@ -157,3 +157,10 @@ export function localStatusToneStyle(tone: 'ok' | 'warn' | 'info'): { bg: string
       return { bg: 'bg-sky-50', text: 'text-sky-900', border: 'border-sky-200' };
   }
 }
+
+// Turns a ChangeSummaryRecord's `refKey` ("pr:42" / "sha:abc123...") into a
+// short label for display, e.g. "PR #42" / "commit abc1234".
+export function formatChangeSummaryRef(refKey: string): string {
+  if (refKey.startsWith('pr:')) return `PR #${refKey.slice(3)}`;
+  return `commit ${refKey.slice(4, 11)}`;
+}
