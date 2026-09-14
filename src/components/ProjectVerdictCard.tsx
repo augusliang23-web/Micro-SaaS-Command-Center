@@ -1,8 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, HelpCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, GitPullRequest, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
-import { MicroSaaSProject, GithubPullStatus, GithubChangedFile, LocalGitStatus } from '../types';
-import { getModelBadgeStyle, getGateStatusBadgeStyle, isRealGithubRepo, outcomeBadgeStyle } from '../utils';
-import { getVerdict, getVerdictStyle } from '../verdict.mjs';
+import { MicroSaaSProject, GithubPullStatus, GithubChangedFile, LocalGitStatus, ChangeSummaryRecord } from '../types';
+import {
+  getModelBadgeStyle,
+  getGateStatusBadgeStyle,
+  isRealGithubRepo,
+  outcomeBadgeStyle,
+  describeLocalStatus,
+  localStatusToneStyle,
+} from '../utils';
+import { getVerdict, getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
 import { DeleteProjectModal } from './DeleteProjectModal';
 
 const VERDICT_ICON: Record<string, React.ElementType> = {
@@ -20,6 +27,7 @@ interface ProjectVerdictCardProps {
   eyebrow?: string;
   onDelete?: (projectId: string) => void;
   onUpdateLocalPath?: (projectId: string, localPath: string) => void;
+  onSaveChangeSummary?: (projectId: string, record: ChangeSummaryRecord) => void;
 }
 
 export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
@@ -29,6 +37,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
   eyebrow,
   onDelete,
   onUpdateLocalPath,
+  onSaveChangeSummary,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -36,9 +45,9 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
   const [isLoadingGithub, setIsLoadingGithub] = useState(false);
   const [changedFiles, setChangedFiles] = useState<GithubChangedFile[] | null>(null);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
-  const [diffSummary, setDiffSummary] = useState<string | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const [localStatus, setLocalStatus] = useState<LocalGitStatus | null>(null);
   const [isLoadingLocalStatus, setIsLoadingLocalStatus] = useState(false);
   const [localStatusError, setLocalStatusError] = useState<string | null>(null);
@@ -68,6 +77,12 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
       ? { sha: githubState.lastCommitSha }
       : null;
 
+  const refKey = changeRef ? (changeRef.pr ? `pr:${changeRef.pr}` : `sha:${changeRef.sha}`) : null;
+  const allSummaries = [...(project.changeSummaries || [])].sort(
+    (a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime(),
+  );
+  const latestSummaryForRef = refKey ? allSummaries.find((r) => r.refKey === refKey) ?? null : null;
+
   useEffect(() => {
     if (!expanded || !changeRef || changedFiles !== null || isLoadingFiles) return;
     setIsLoadingFiles(true);
@@ -83,22 +98,35 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
   }, [expanded, changeRef?.pr, changeRef?.sha]);
 
   const handleSummarizeChanges = useCallback(() => {
-    if (!changeRef) return;
+    if (!changeRef || !refKey) return;
     setIsSummarizing(true);
     setSummaryError(null);
     fetch('/api/bridge/summarize-changes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repo: project.repository, prNumber: changeRef.pr, sha: changeRef.sha }),
+      body: JSON.stringify({
+        repo: project.repository,
+        prNumber: changeRef.pr,
+        sha: changeRef.sha,
+        localPath: project.localPath || undefined,
+      }),
     })
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || '摘要失敗');
-        setDiffSummary(data.summary);
+        onSaveChangeSummary?.(project.id, {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          refKey,
+          summary: data.summary,
+          provider: data.provider,
+          fileCount: data.fileCount ?? 0,
+          includedLocalDiff: !!data.includedLocalDiff,
+          generatedAt: new Date().toISOString(),
+        });
       })
       .catch((err) => setSummaryError(err instanceof Error ? err.message : '摘要失敗'))
       .finally(() => setIsSummarizing(false));
-  }, [changeRef, project.repository]);
+  }, [changeRef, refKey, project.repository, project.id, project.localPath, onSaveChangeSummary]);
 
   useEffect(() => {
     if (!expanded || !project.localPath || isEditingLocalPath) return;
@@ -349,30 +377,20 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                           {localStatusError}
                         </span>
                       )}
-                      {!isLoadingLocalStatus && !localStatusError && localStatus && (
-                        <>
-                          {localStatus.ahead > 0 && (
-                            <span className="text-[11px] px-2 py-0.5 rounded border bg-amber-50 text-amber-900 border-amber-200">
-                              本機領先遠端 {localStatus.ahead} 個 commit，還沒 push
+                      {!isLoadingLocalStatus &&
+                        !localStatusError &&
+                        localStatus &&
+                        (() => {
+                          const { text, tone } = describeLocalStatus(localStatus);
+                          const toneStyle = localStatusToneStyle(tone);
+                          return (
+                            <span
+                              className={`text-[11px] px-2 py-0.5 rounded border ${toneStyle.bg} ${toneStyle.text} ${toneStyle.border}`}
+                            >
+                              {text}
                             </span>
-                          )}
-                          {localStatus.behind > 0 && (
-                            <span className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200">
-                              遠端有新更新，本機還沒拉取（{localStatus.behind} 個 commit）
-                            </span>
-                          )}
-                          {localStatus.uncommittedCount > 0 && (
-                            <span className="text-[11px] px-2 py-0.5 rounded border bg-stone-100 text-stone-700 border-stone-300">
-                              本機有 {localStatus.uncommittedCount} 個檔案還沒 commit
-                            </span>
-                          )}
-                          {localStatus.ahead === 0 && localStatus.behind === 0 && localStatus.uncommittedCount === 0 && (
-                            <span className="text-[11px] px-2 py-0.5 rounded border bg-emerald-50 text-emerald-800 border-emerald-200">
-                              本機與遠端一致
-                            </span>
-                          )}
-                        </>
-                      )}
+                          );
+                        })()}
                       {onUpdateLocalPath && (
                         <button
                           onClick={() => setIsEditingLocalPath(true)}
@@ -387,7 +405,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
               )}
             {verdict.source === 'github' && githubState && githubState.state !== 'none' && changeRef && (
               <div className="mt-3 pt-3 border-t border-dashed border-stone-200 font-sans">
-                <div className="text-[10px] text-stone-400 uppercase tracking-wider mb-1.5">修改的檔案</div>
+                <div className="text-[10px] text-stone-400 uppercase tracking-wider mb-1.5">與前一版本相比的改動</div>
                 {isLoadingFiles && <div className="text-[11px] text-stone-400">讀取中…</div>}
                 {!isLoadingFiles && changedFiles && changedFiles.length === 0 && (
                   <div className="text-[11px] text-stone-400">查無檔案變更資訊</div>
@@ -406,20 +424,52 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                   </ul>
                 )}
 
-                {!diffSummary && (
-                  <button
-                    onClick={handleSummarizeChanges}
-                    disabled={isSummarizing || !changedFiles || changedFiles.length === 0}
-                    className="mt-2.5 flex items-center gap-1.5 text-[11px] font-bold text-stone-600 hover:text-stone-900 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <Sparkles className="h-3 w-3" />
-                    {isSummarizing ? 'AI 摘要中…' : '請 AI 摘要這次修改'}
-                  </button>
-                )}
+                <button
+                  onClick={handleSummarizeChanges}
+                  disabled={isSummarizing || !changedFiles || changedFiles.length === 0}
+                  className="mt-2.5 flex items-center gap-1.5 text-[11px] font-bold text-stone-600 hover:text-stone-900 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  {isSummarizing ? 'AI 摘要中…' : latestSummaryForRef ? '重新產生摘要' : '請 AI 摘要這次修改（含本機差異）'}
+                </button>
                 {summaryError && <div className="mt-1.5 text-[11px] text-rose-700">{summaryError}</div>}
-                {diffSummary && (
+                {latestSummaryForRef && (
                   <div className="mt-2.5 text-[12px] text-stone-700 leading-relaxed bg-stone-50 border border-stone-200 rounded-lg p-3 whitespace-pre-wrap">
-                    {diffSummary}
+                    {latestSummaryForRef.summary}
+                    <div className="mt-2 text-[10px] text-stone-400 not-italic">
+                      {formatRelativeTime(latestSummaryForRef.generatedAt)}產生
+                      {latestSummaryForRef.includedLocalDiff ? '，已包含本機差異' : ''}
+                    </div>
+                  </div>
+                )}
+                {allSummaries.filter((r) => r.id !== latestSummaryForRef?.id).length > 0 && (
+                  <div className="mt-2.5">
+                    <button
+                      onClick={() => setShowHistory((v) => !v)}
+                      className="text-[11px] text-stone-400 hover:text-stone-700 underline cursor-pointer"
+                    >
+                      {showHistory ? '收起歷史摘要記錄' : `查看歷史摘要記錄（${allSummaries.filter((r) => r.id !== latestSummaryForRef?.id).length}）`}
+                    </button>
+                    {showHistory && (
+                      <ul className="mt-2 space-y-2">
+                        {allSummaries
+                          .filter((r) => r.id !== latestSummaryForRef?.id)
+                          .map((r) => (
+                            <li
+                              key={r.id}
+                              className="text-[12px] text-stone-600 leading-relaxed bg-stone-50 border border-stone-200 rounded-lg p-3 whitespace-pre-wrap"
+                            >
+                              <div className="text-[10px] text-stone-400 mb-1">
+                                {r.refKey.startsWith('pr:') ? `PR #${r.refKey.slice(3)}` : `commit ${r.refKey.slice(4, 11)}`}
+                                {' · '}
+                                {formatRelativeTime(r.generatedAt)}產生
+                                {r.includedLocalDiff ? '，已包含本機差異' : ''}
+                              </div>
+                              {r.summary}
+                            </li>
+                          ))}
+                      </ul>
+                    )}
                   </div>
                 )}
               </div>

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Layers, ArrowUpDown, Plus } from 'lucide-react';
-import { MicroSaaSProject, ProjectHealth } from '../types';
+import { MicroSaaSProject, ProjectHealth, ChangeSummaryRecord } from '../types';
 import { ProjectVerdictCard } from './ProjectVerdictCard';
 
 interface PortfolioOverviewProps {
@@ -10,6 +10,7 @@ interface PortfolioOverviewProps {
   onOpenConnectRepo?: () => void;
   onDeleteProject?: (projectId: string) => void;
   onUpdateLocalPath?: (projectId: string, localPath: string) => void;
+  onSaveChangeSummary?: (projectId: string, record: ChangeSummaryRecord) => void;
 }
 
 export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
@@ -19,6 +20,7 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
   onOpenConnectRepo,
   onDeleteProject,
   onUpdateLocalPath,
+  onSaveChangeSummary,
 }) => {
   const [stageFilter, setStageFilter] = useState<string>('ALL');
   const [healthFilter, setHealthFilter] = useState<string>('ALL');
@@ -125,6 +127,7 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
             onSelect={() => onSelectProject(project)}
             onDelete={onDeleteProject}
             onUpdateLocalPath={onUpdateLocalPath}
+            onSaveChangeSummary={onSaveChangeSummary}
           />
         ))}
       </div>

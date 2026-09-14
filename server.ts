@@ -15,6 +15,7 @@ import { createStateRouter } from './server/stateRoutes.mjs';
 import { createGithubRouter } from './server/githubRoutes.mjs';
 import { createLocalGitRouter } from './server/localGitRoutes.mjs';
 import { fetchChangedFiles, isRealGithubRepo } from './server/githubPullStatus.mjs';
+import { fetchLocalDiff } from './server/localGitStatus.mjs';
 import { GithubCliError } from './server/githubRepos.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -347,7 +348,7 @@ const MAX_PATCH_CHARS = 12000;
 
 app.post('/api/bridge/summarize-changes', async (req, res) => {
   try {
-    const { repo, prNumber, sha } = req.body || {};
+    const { repo, prNumber, sha, localPath } = req.body || {};
 
     if (!isRealGithubRepo(repo)) {
       res.status(400).json({ error: '"repo" must be an owner/name GitHub slug.' });
@@ -357,6 +358,10 @@ app.post('/api/bridge/summarize-changes', async (req, res) => {
       res.status(400).json({ error: 'Either "prNumber" or "sha" is required.' });
       return;
     }
+
+    const localDiff =
+      typeof localPath === 'string' && localPath.trim() !== '' ? await fetchLocalDiff(localPath).catch(() => null) : null;
+    const hasLocalDiff = !!localDiff && (localDiff.unpushedDiff || localDiff.uncommittedDiff);
 
     const files = await fetchChangedFiles(repo, { prNumber, sha });
     const fileListText = files
@@ -377,18 +382,42 @@ app.post('/api/bridge/summarize-changes', async (req, res) => {
       patchText += chunk;
     }
 
+    const localDiffText = hasLocalDiff
+      ? `\n本機（你電腦上的複本）目前的差異：${
+          localDiff!.unpushedDiff
+            ? `\n\n尚未推送到 GitHub 的本機 commit 內容：${
+                localDiff!.unpushedTruncated ? '（內容過長，僅節錄部分）' : ''
+              }\n${localDiff!.unpushedDiff}`
+            : ''
+        }${
+          localDiff!.uncommittedDiff
+            ? `\n\n本機尚未 commit 的修改內容：${
+                localDiff!.uncommittedTruncated ? '（內容過長，僅節錄部分）' : ''
+              }\n${localDiff!.uncommittedDiff}`
+            : ''
+        }`
+      : '';
+
     const ai = getGeminiClient();
     if (!ai) {
       res.json({
-        summary: `目前沒有設定 AI 金鑰（GEMINI_API_KEY），無法產生摘要。以下是這次變更的檔案清單：\n\n${fileListText || '（無檔案變更資訊）'}`,
+        summary: `目前沒有設定 AI 金鑰（GEMINI_API_KEY），無法產生摘要。以下是這次變更的檔案清單：\n\n${fileListText || '（無檔案變更資訊）'}${
+          hasLocalDiff ? '\n\n另外偵測到本機還有 GitHub 上看不到的差異（未推送或未 commit 的內容），設定好金鑰後即可一併摘要。' : ''
+        }`,
         provider: 'local-fallback (no AI key configured)',
         fileCount: files.length,
+        includedLocalDiff: false,
       });
       return;
     }
 
     const systemPrompt = `你是一位技術顧問，正在為一位不具軟體工程背景的產品負責人，用清楚易懂的白話文摘要一次程式碼變更。
 請說明：這次修改大致做了什麼、影響了哪些功能或使用者體驗、有沒有看起來需要注意的風險。
+${
+  hasLocalDiff
+    ? '這次還額外提供了本機電腦上尚未推送或尚未 commit 的內容，請額外說明本機和 GitHub 上的版本有什麼落差、需不需要處理（例如提醒該推送或該 commit 了）。'
+    : ''
+}
 不要使用艱澀的技術術語，如果必須提到技術名詞，請簡單解釋。用繁體中文回答，控制在 300 字以內。`;
 
     const userPrompt = `Repository: ${repo}
@@ -397,7 +426,8 @@ ${fileListText || '（無檔案變更資訊）'}
 ${truncated ? '\n（註：程式碼差異內容過長，以下僅節錄部分內容）' : ''}
 
 程式碼差異內容：
-${patchText || '（無可用的差異內容）'}`;
+${patchText || '（無可用的差異內容）'}
+${localDiffText}`;
 
     const geminiRes = await ai.models.generateContent({
       model: 'gemini-3.5-flash-lite',
@@ -410,6 +440,7 @@ ${patchText || '（無可用的差異內容）'}`;
     res.json({
       summary: geminiRes.text || '（AI 未回傳摘要內容）',
       provider: 'Gemini 3.5 Flash-Lite',
+      includedLocalDiff: hasLocalDiff,
       fileCount: files.length,
     });
   } catch (error) {

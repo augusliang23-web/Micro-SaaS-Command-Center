@@ -1,4 +1,4 @@
-import { ProjectHealth, ProjectStage, GateStatus, WaitingState, CodexModelName } from './types';
+import { ProjectHealth, ProjectStage, GateStatus, WaitingState, CodexModelName, LocalGitStatus } from './types';
 
 export function getHealthBadgeStyle(health: ProjectHealth): { bg: string; text: string; border: string; dot: string } {
   switch (health) {
@@ -113,3 +113,47 @@ function outcomeBadgeStyle(outcome: string): { bg: string; text: string; border:
 }
 
 export { outcomeBadgeStyle };
+
+// Plain-language merge of local-vs-GitHub state into one sentence, instead
+// of separate ahead/behind/uncommitted badges the viewer has to combine
+// themselves.
+export function describeLocalStatus(status: LocalGitStatus): { text: string; tone: 'ok' | 'warn' | 'info' } {
+  const { ahead, behind, uncommittedCount, fetchFailed } = status;
+  const parts: string[] = [];
+  let tone: 'ok' | 'warn' | 'info' = 'ok';
+
+  if (ahead > 0 && behind > 0) {
+    parts.push(`本機和 GitHub 各自有新變更（本機領先 ${ahead}、落後 ${behind} 個 commit），需要先同步`);
+    tone = 'warn';
+  } else if (ahead > 0) {
+    parts.push(`本機有 ${ahead} 個 commit 還沒推送到 GitHub`);
+    tone = 'warn';
+  } else if (behind > 0) {
+    parts.push(`GitHub 有 ${behind} 個新 commit，本機還沒同步`);
+    tone = 'info';
+  } else {
+    parts.push('本機與 GitHub 完全同步');
+  }
+
+  if (uncommittedCount > 0) {
+    parts.push(`另外本機有 ${uncommittedCount} 個檔案還沒 commit`);
+    if (tone === 'ok') tone = 'info';
+  }
+
+  let text = parts.join('，');
+  if (fetchFailed) {
+    text += '（連不上 GitHub，以上可能不是最新）';
+  }
+  return { text, tone };
+}
+
+export function localStatusToneStyle(tone: 'ok' | 'warn' | 'info'): { bg: string; text: string; border: string } {
+  switch (tone) {
+    case 'ok':
+      return { bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' };
+    case 'warn':
+      return { bg: 'bg-amber-50', text: 'text-amber-900', border: 'border-amber-200' };
+    case 'info':
+      return { bg: 'bg-sky-50', text: 'text-sky-900', border: 'border-sky-200' };
+  }
+}

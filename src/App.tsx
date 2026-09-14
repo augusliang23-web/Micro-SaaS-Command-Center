@@ -6,7 +6,14 @@ import {
   initialExecutionSnapshot,
   projectProvenance,
 } from './mockData';
-import { MicroSaaSProject, AttentionItem, NextBestAction, AIExecutionSnapshotData, CodexModelName } from './types';
+import {
+  MicroSaaSProject,
+  AttentionItem,
+  NextBestAction,
+  AIExecutionSnapshotData,
+  CodexModelName,
+  ChangeSummaryRecord,
+} from './types';
 import { CockpitHeader } from './components/CockpitHeader';
 import { NextBestActionCard } from './components/NextBestActionCard';
 import { NeedsAttentionQueue } from './components/NeedsAttentionQueue';
@@ -518,6 +525,12 @@ export default function App() {
     setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, localPath } : p)));
   };
 
+  const handleSaveChangeSummary = (projectId: string, record: ChangeSummaryRecord) => {
+    setProjects((prev) =>
+      prev.map((p) => (p.id === projectId ? { ...p, changeSummaries: [...(p.changeSummaries || []), record] } : p)),
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-stone-800 font-sans antialiased selection:bg-stone-300 selection:text-stone-900 flex flex-col">
       {/* Persistent Prototype Boundary */}
@@ -559,6 +572,7 @@ export default function App() {
           onSelectProject={handleSelectProject}
           onDeleteProject={handleDeleteProject}
           onUpdateLocalPath={handleUpdateLocalPath}
+          onSaveChangeSummary={handleSaveChangeSummary}
         />
 
         {/* View Mode Navigation Tabs */}
@@ -616,6 +630,7 @@ export default function App() {
               onOpenConnectRepo={() => setIsConnectRepoOpen(true)}
               onDeleteProject={handleDeleteProject}
               onUpdateLocalPath={handleUpdateLocalPath}
+              onSaveChangeSummary={handleSaveChangeSummary}
             />
           </div>
         )}
@@ -628,6 +643,7 @@ export default function App() {
               onSelectProject={handleSelectProject}
               onDeleteProject={handleDeleteProject}
               onUpdateLocalPath={handleUpdateLocalPath}
+              onSaveChangeSummary={handleSaveChangeSummary}
             />
           </div>
         )}

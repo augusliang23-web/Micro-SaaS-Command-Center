@@ -1,6 +1,6 @@
 import React from 'react';
 import { CheckCircle2, ShieldAlert } from 'lucide-react';
-import { MicroSaaSProject } from '../types';
+import { MicroSaaSProject, ChangeSummaryRecord } from '../types';
 import { ProjectVerdictCard } from './ProjectVerdictCard';
 
 interface NeedsAttentionQueueProps {
@@ -8,6 +8,7 @@ interface NeedsAttentionQueueProps {
   onSelectProject: (project: MicroSaaSProject) => void;
   onDeleteProject?: (projectId: string) => void;
   onUpdateLocalPath?: (projectId: string, localPath: string) => void;
+  onSaveChangeSummary?: (projectId: string, record: ChangeSummaryRecord) => void;
 }
 
 export const NeedsAttentionQueue: React.FC<NeedsAttentionQueueProps> = ({
@@ -15,6 +16,7 @@ export const NeedsAttentionQueue: React.FC<NeedsAttentionQueueProps> = ({
   onSelectProject,
   onDeleteProject,
   onUpdateLocalPath,
+  onSaveChangeSummary,
 }) => {
   return (
     <section className="bg-white border border-stone-300/90 rounded-xl p-4 sm:p-5 shadow-xs">
@@ -44,6 +46,7 @@ export const NeedsAttentionQueue: React.FC<NeedsAttentionQueueProps> = ({
               onSelect={() => onSelectProject(project)}
               onDelete={onDeleteProject}
               onUpdateLocalPath={onUpdateLocalPath}
+              onSaveChangeSummary={onSaveChangeSummary}
             />
           ))}
         </div>

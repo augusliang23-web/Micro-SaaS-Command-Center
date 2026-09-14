@@ -1,5 +1,5 @@
 import React from 'react';
-import { MicroSaaSProject } from '../types';
+import { MicroSaaSProject, ChangeSummaryRecord } from '../types';
 import { pickMostUrgent } from '../verdict.mjs';
 import { useProjectVerdicts } from '../hooks/useProjectVerdicts';
 import { ProjectVerdictCard } from './ProjectVerdictCard';
@@ -9,6 +9,7 @@ interface NextBestActionCardProps {
   onSelectProject: (project: MicroSaaSProject) => void;
   onDeleteProject?: (projectId: string) => void;
   onUpdateLocalPath?: (projectId: string, localPath: string) => void;
+  onSaveChangeSummary?: (projectId: string, record: ChangeSummaryRecord) => void;
 }
 
 /**
@@ -22,6 +23,7 @@ export const NextBestActionCard: React.FC<NextBestActionCardProps> = ({
   onSelectProject,
   onDeleteProject,
   onUpdateLocalPath,
+  onSaveChangeSummary,
 }) => {
   const { verdicts, isLoading } = useProjectVerdicts(projects);
 
@@ -43,6 +45,7 @@ export const NextBestActionCard: React.FC<NextBestActionCardProps> = ({
       onSelect={() => onSelectProject(topProject)}
       onDelete={onDeleteProject}
       onUpdateLocalPath={onUpdateLocalPath}
+      onSaveChangeSummary={onSaveChangeSummary}
       eyebrow={
         projects.length > 1
           ? `🎯 在 ${projects.length} 個專案中，這個最需要你注意`

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { fetchLocalGitStatus, findLocalClone, LocalGitError } from '../server/localGitStatus.mjs';
+import { fetchLocalGitStatus, findLocalClone, fetchLocalDiff, LocalGitError } from '../server/localGitStatus.mjs';
 
 function porcelain({ branch = 'main', upstream = 'origin/main', ahead = 0, behind = 0, files = [] } = {}) {
   const lines = ['# branch.oid abc123', `# branch.head ${branch}`];
@@ -95,6 +95,88 @@ test('fetchLocalGitStatus rejects without shelling out when no path is given', a
       return true;
     },
   );
+});
+
+test('fetchLocalGitStatus fetches from the remote before checking status', async () => {
+  const calls = [];
+  const execFileFn = (command, args, options, callback) => {
+    calls.push(args);
+    callback(null, porcelain(), '');
+  };
+  await fetchLocalGitStatus('/repo', { execFileFn });
+  assert.deepEqual(calls[0], ['-C', '/repo', 'fetch', '--quiet']);
+  assert.deepEqual(calls[1], ['-C', '/repo', 'status', '--porcelain=v2', '--branch']);
+});
+
+test('fetchLocalGitStatus still returns status when fetch fails (e.g. offline), flagged as fetchFailed', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    if (args.includes('fetch')) {
+      callback({ code: 1 }, '', 'fatal: unable to access: Could not resolve host: github.com');
+      return;
+    }
+    callback(null, porcelain({ ahead: 1 }), '');
+  };
+  const status = await fetchLocalGitStatus('/repo', { execFileFn });
+  assert.equal(status.ahead, 1);
+  assert.equal(status.fetchFailed, true);
+});
+
+test('fetchLocalGitStatus does not set fetchFailed when fetch succeeds', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    callback(null, porcelain(), '');
+  };
+  const status = await fetchLocalGitStatus('/repo', { execFileFn });
+  assert.equal(status.fetchFailed, undefined);
+});
+
+test('fetchLocalGitStatus rejects with "not_found" when fetch itself reports not a git repository', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    callback({ code: 1 }, '', 'fatal: not a git repository (or any of the parent directories): .git');
+  };
+  await assert.rejects(fetchLocalGitStatus('/not/a/repo', { execFileFn }), (error) => {
+    assert.ok(error instanceof LocalGitError);
+    assert.equal(error.kind, 'not_found');
+    return true;
+  });
+});
+
+test('fetchLocalDiff returns both the unpushed and uncommitted diff content', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    if (args.includes('@{upstream}...HEAD')) {
+      callback(null, 'diff --git a/x b/x\n+unpushed change\n', '');
+      return;
+    }
+    callback(null, 'diff --git a/y b/y\n+uncommitted change\n', '');
+  };
+  const diff = await fetchLocalDiff('/repo', { execFileFn });
+  assert.match(diff.unpushedDiff, /unpushed change/);
+  assert.match(diff.uncommittedDiff, /uncommitted change/);
+  assert.equal(diff.unpushedTruncated, false);
+  assert.equal(diff.uncommittedTruncated, false);
+});
+
+test('fetchLocalDiff never throws — a failing side just yields empty diff content', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    if (args.includes('@{upstream}...HEAD')) {
+      callback({ code: 128 }, '', 'fatal: no upstream configured for branch');
+      return;
+    }
+    callback(null, 'diff --git a/y b/y\n+uncommitted change\n', '');
+  };
+  const diff = await fetchLocalDiff('/repo', { execFileFn });
+  assert.equal(diff.unpushedDiff, '');
+  assert.match(diff.uncommittedDiff, /uncommitted change/);
+});
+
+test('fetchLocalDiff truncates diff content beyond the size cap', async () => {
+  const bigDiff = 'x'.repeat(20000);
+  const execFileFn = (command, args, options, callback) => {
+    callback(null, bigDiff, '');
+  };
+  const diff = await fetchLocalDiff('/repo', { execFileFn });
+  assert.equal(diff.unpushedTruncated, true);
+  assert.equal(diff.uncommittedTruncated, true);
+  assert.ok(diff.unpushedDiff.length < bigDiff.length);
 });
 
 test('findLocalClone finds the clone whose origin remote matches the repo', async () => {

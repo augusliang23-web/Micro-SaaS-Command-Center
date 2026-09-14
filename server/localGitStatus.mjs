@@ -37,62 +37,97 @@ function parsePorcelainV2(stdout) {
   return { branch, hasUpstream, ahead, behind, uncommittedCount };
 }
 
-/**
- * Read-only local git status for a project's on-disk clone: how far ahead/
- * behind its upstream it is, and how many files have uncommitted changes.
- * Never writes (no commit/push/pull/fetch) — this only ever calls `git status`.
- */
-export function fetchLocalGitStatus(localPath, { execFileFn = execFile } = {}) {
-  if (typeof localPath !== 'string' || localPath.trim() === '') {
-    return Promise.reject(new LocalGitError('A local path is required.', 'failed'));
-  }
-
-  return new Promise((resolve, reject) => {
-    execFileFn(
-      'git',
-      ['-C', localPath, 'status', '--porcelain=v2', '--branch'],
-      { maxBuffer: 10 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          if (error.code === 'ENOENT') {
-            reject(new LocalGitError('git was not found on the server PATH.', 'failed'));
-            return;
-          }
-          if (/not a git repository|no such file or directory/i.test(stderr || '')) {
-            reject(new LocalGitError(`"${localPath}" is not a git repository.`, 'not_found'));
-            return;
-          }
-          reject(new LocalGitError((stderr || error.message || '').trim(), 'failed'));
-          return;
-        }
-
-        const status = parsePorcelainV2(stdout);
-        if (status.branch === null) {
-          reject(new LocalGitError('Could not determine the current branch.', 'failed'));
-          return;
-        }
-        if (!status.hasUpstream) {
-          reject(
-            new LocalGitError(
-              `Branch "${status.branch}" has no upstream configured — cannot compare against the remote.`,
-              'no_upstream',
-            ),
-          );
-          return;
-        }
-        const { branch, ahead, behind, uncommittedCount } = status;
-        resolve({ branch, ahead, behind, uncommittedCount });
-      },
-    );
-  });
-}
-
-function execFileP(execFileFn, command, args) {
+function execFileP(execFileFn, command, args, options = {}) {
   return new Promise((resolve) => {
-    execFileFn(command, args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFileFn(command, args, { maxBuffer: 10 * 1024 * 1024, ...options }, (error, stdout, stderr) => {
       resolve({ error, stdout: stdout || '', stderr: stderr || '' });
     });
   });
+}
+
+const NOT_A_REPO_PATTERN = /not a git repository|no such file or directory/i;
+
+/**
+ * Read-only local git status for a project's on-disk clone: how far ahead/
+ * behind its upstream it is, and how many files have uncommitted changes.
+ * First runs `git fetch` so ahead/behind reflect GitHub's current state
+ * rather than a possibly-stale local remote-tracking cache — this updates
+ * refs only (no commit/push/pull/merge, never touches the working tree). A
+ * fetch failure (offline, timeout, auth) doesn't fail the whole request; it
+ * falls back to whatever the local cache already has and reports
+ * `fetchFailed: true` so a caller can flag the numbers as possibly stale.
+ */
+export async function fetchLocalGitStatus(localPath, { execFileFn = execFile } = {}) {
+  if (typeof localPath !== 'string' || localPath.trim() === '') {
+    throw new LocalGitError('A local path is required.', 'failed');
+  }
+
+  const fetchResult = await execFileP(execFileFn, 'git', ['-C', localPath, 'fetch', '--quiet'], { timeout: 10_000 });
+  if (fetchResult.error && NOT_A_REPO_PATTERN.test(fetchResult.stderr)) {
+    throw new LocalGitError(`"${localPath}" is not a git repository.`, 'not_found');
+  }
+  const fetchFailed = Boolean(fetchResult.error);
+
+  const { error, stdout, stderr } = await execFileP(execFileFn, 'git', [
+    '-C',
+    localPath,
+    'status',
+    '--porcelain=v2',
+    '--branch',
+  ]);
+  if (error) {
+    if (error.code === 'ENOENT') {
+      throw new LocalGitError('git was not found on the server PATH.', 'failed');
+    }
+    if (NOT_A_REPO_PATTERN.test(stderr)) {
+      throw new LocalGitError(`"${localPath}" is not a git repository.`, 'not_found');
+    }
+    throw new LocalGitError((stderr || error.message || '').trim(), 'failed');
+  }
+
+  const status = parsePorcelainV2(stdout);
+  if (status.branch === null) {
+    throw new LocalGitError('Could not determine the current branch.', 'failed');
+  }
+  if (!status.hasUpstream) {
+    throw new LocalGitError(
+      `Branch "${status.branch}" has no upstream configured — cannot compare against the remote.`,
+      'no_upstream',
+    );
+  }
+  const { branch, ahead, behind, uncommittedCount } = status;
+  return { branch, ahead, behind, uncommittedCount, ...(fetchFailed ? { fetchFailed: true } : {}) };
+}
+
+const MAX_DIFF_CHARS = 12000;
+
+function capDiff(text) {
+  if (text.length <= MAX_DIFF_CHARS) return { text, truncated: false };
+  return { text: text.slice(0, MAX_DIFF_CHARS), truncated: true };
+}
+
+/**
+ * Best-effort local diff content, for feeding an AI summary alongside the
+ * GitHub-side diff: what's committed locally but not yet pushed
+ * (`git diff @{upstream}...HEAD`), and what's changed locally but not yet
+ * committed (`git diff HEAD`, staged + unstaged). Read-only, like
+ * `fetchLocalGitStatus`. Never throws — any failure (no upstream, bad path,
+ * git missing) just yields empty diff content for that half, since this is
+ * supplementary context for a prompt, not a hard requirement.
+ */
+export async function fetchLocalDiff(localPath, { execFileFn = execFile } = {}) {
+  const [unpushed, uncommitted] = await Promise.all([
+    execFileP(execFileFn, 'git', ['-C', localPath, 'diff', '@{upstream}...HEAD']),
+    execFileP(execFileFn, 'git', ['-C', localPath, 'diff', 'HEAD']),
+  ]);
+  const unpushedCap = capDiff(unpushed.error ? '' : unpushed.stdout);
+  const uncommittedCap = capDiff(uncommitted.error ? '' : uncommitted.stdout);
+  return {
+    unpushedDiff: unpushedCap.text,
+    unpushedTruncated: unpushedCap.truncated,
+    uncommittedDiff: uncommittedCap.text,
+    uncommittedTruncated: uncommittedCap.truncated,
+  };
 }
 
 function defaultSearchRoots() {

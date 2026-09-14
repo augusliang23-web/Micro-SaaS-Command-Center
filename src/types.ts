@@ -174,9 +174,25 @@ export interface MicroSaaSProject {
   repository: string;
   /** Absolute path to this project's local clone, set by the owner; used to compare local git state against GitHub. */
   localPath?: string;
+  /** History of AI-generated change summaries (see ChangeSummaryRecord), newest last. */
+  changeSummaries?: ChangeSummaryRecord[];
   tags: string[];
   features?: FeatureItem[];
   provenance: ProjectProvenance;
+}
+
+// One saved result of POST /api/bridge/summarize-changes, kept so the same
+// PR/commit doesn't need to be re-summarized (and re-spend AI quota) every
+// time the card is reopened, while still building up a browsable history.
+export interface ChangeSummaryRecord {
+  id: string;
+  /** Identifies which PR or commit this summary is for: `pr:<number>` or `sha:<sha>`. */
+  refKey: string;
+  summary: string;
+  provider: string;
+  fileCount: number;
+  includedLocalDiff: boolean;
+  generatedAt: string;
 }
 
 // Shape returned by GET /api/github/pull-status (server/githubPullStatus.mjs)
@@ -207,6 +223,8 @@ export interface LocalGitStatus {
   ahead: number;
   behind: number;
   uncommittedCount: number;
+  /** True when the pre-check `git fetch` failed (offline, timeout, auth) — ahead/behind may be stale. */
+  fetchFailed?: boolean;
 }
 
 export interface AttentionItem {

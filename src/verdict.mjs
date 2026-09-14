@@ -31,7 +31,7 @@ const VERDICT_STYLE = {
 // Small, dependency-free relative-time formatter (deliberately not imported
 // from server/githubRepos.mjs, which pulls in node:child_process and can't
 // be bundled into the browser build).
-function formatRelativeTime(dateInput, now = new Date()) {
+export function formatRelativeTime(dateInput, now = new Date()) {
   const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
   const diffSec = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
   const diffMin = Math.floor(diffSec / 60);
