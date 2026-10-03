@@ -24,6 +24,7 @@ import { ModelRoutingGuide } from './components/ModelRoutingGuide';
 import { ConnectRepoModal } from './components/ConnectRepoModal';
 import { CiCdWorkflowModal } from './components/CiCdWorkflowModal';
 import { useProjectVerdicts, ProjectStatusesContext } from './hooks/useProjectVerdicts';
+import { useHistoricalBackfill } from './hooks/useHistoricalBackfill';
 import { isUsableSavedState } from './savedState.mjs';
 import { isRealProject, needsAttention, matchesStatusFilter } from './verdict.mjs';
 import {
@@ -522,6 +523,7 @@ export default function App() {
       prev.map((p) => (p.id === projectId ? { ...p, changeSummaries: [...(p.changeSummaries || []), record] } : p)),
     );
   };
+  const backfill = useHistoricalBackfill(handleSaveChangeSummary);
 
   return (
     <ProjectStatusesContext.Provider value={statuses}>
@@ -670,7 +672,7 @@ export default function App() {
         onUpdateFeatures={handleUpdateFeatures}
         onConfirmSelectiveRelease={handleConfirmSelectiveRelease}
         onShowToast={showToast}
-        onSaveChangeSummary={handleSaveChangeSummary}
+        backfill={backfill}
       />
 
       {/* Model Routing Guide Modal */}

@@ -35,7 +35,6 @@ import {
   TestOutcome,
   ReviewOutcome,
   FeatureItem,
-  ChangeSummaryRecord,
   RecentCommit,
 } from '../types';
 import { BridgeWorkflowRail } from './BridgeWorkflowRail';
@@ -53,6 +52,7 @@ import { provenanceLabel } from '../statusProvenance.mjs';
 import { getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
 
 import { useProjectStatus } from '../hooks/useProjectVerdicts';
+import { HistoricalBackfill } from '../hooks/useHistoricalBackfill';
 
 const VERDICT_ICON: Record<string, React.ElementType> = {
   danger: AlertCircle,
@@ -86,7 +86,7 @@ interface ProjectDetailDrawerProps {
     releaseNotes: string
   ) => void;
   onShowToast?: (msg: string) => void;
-  onSaveChangeSummary?: (projectId: string, record: ChangeSummaryRecord) => void;
+  backfill: HistoricalBackfill;
 }
 
 export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
@@ -99,7 +99,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   onUpdateFeatures,
   onConfirmSelectiveRelease,
   onShowToast,
-  onSaveChangeSummary,
+  backfill,
 }) => {
   const [selectedGateId, setSelectedGateId] = useState<string | null>(null);
   const [decisionOption, setDecisionOption] = useState<string>('option1');
@@ -111,25 +111,27 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   const { verdict, githubState, isLoadingGithub, loadGithubState } = useProjectStatus(project);
   const [backfillCandidates, setBackfillCandidates] = useState<RecentCommit[] | null>(null);
   const [isLoadingBackfillCandidates, setIsLoadingBackfillCandidates] = useState(false);
-  const [isBackfilling, setIsBackfilling] = useState(false);
-  const [backfillProgress, setBackfillProgress] = useState<{ done: number; total: number } | null>(null);
   const [backfillError, setBackfillError] = useState<string | null>(null);
-  // Backfill requests can outlive a project switch; only the project that
-  // started them may update this drawer's backfill UI.
+  // Candidate lookups can outlive a project switch; only the project that
+  // started one may update this drawer's backfill UI.
   const backfillProjectIdRef = useRef(project?.id);
+  // The run itself lives in `backfill` (single-flight, app-wide), so a project
+  // switch only resets this drawer's view of it, never the run.
+  const backfillRun = backfill.run;
+  const isRunHere = !!project && backfillRun?.projectId === project.id;
+  const isBackfillingHere = backfill.isRunning && isRunHere;
 
   useEffect(() => {
     backfillProjectIdRef.current = project?.id;
     setShowTechDetail(false);
     setBackfillCandidates(null);
     setIsLoadingBackfillCandidates(false);
-    setIsBackfilling(false);
-    setBackfillProgress(null);
     setBackfillError(null);
   }, [project?.id]);
 
   const handleFindBackfillCandidates = useCallback(() => {
-    if (!project) return;
+    if (!project || backfill.isRunning) return;
+    backfill.clearResult();
     const projectId = project.id;
     const isCurrent = () => backfillProjectIdRef.current === projectId;
     setIsLoadingBackfillCandidates(true);
@@ -152,63 +154,21 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
       .finally(() => {
         if (isCurrent()) setIsLoadingBackfillCandidates(false);
       });
-  }, [project]);
+  }, [project, backfill]);
 
-  const handleRunBackfill = useCallback(async () => {
-    if (!project || !backfillCandidates || backfillCandidates.length === 0) return;
-    const projectId = project.id;
-    const isCurrent = () => backfillProjectIdRef.current === projectId;
-    setIsBackfilling(true);
-    setBackfillError(null);
-    const total = backfillCandidates.length;
-    let done = 0;
-    let quotaExhausted = false;
-
-    for (const commit of backfillCandidates) {
-      try {
-        const res = await fetch('/api/bridge/summarize-changes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ repo: project.repository, sha: commit.sha }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          // The route always answers errors with HTTP 500 and puts Gemini's
-          // real status in the message text — see server.ts's friendlyError.
-          if (typeof data?.error === 'string' && (data.error.includes('429') || data.error.includes('額度已經用完'))) {
-            quotaExhausted = true;
-            break;
-          }
-          continue;
-        }
-        onSaveChangeSummary?.(project.id, {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          refKey: `sha:${commit.sha}`,
-          summary: data.summary,
-          provider: data.provider,
-          fileCount: data.fileCount ?? 0,
-          includedLocalDiff: false,
-          generatedAt: new Date().toISOString(),
-          commitDate: commit.date,
-        });
-        done += 1;
-        if (isCurrent()) setBackfillProgress({ done, total });
-      } catch {
-        // network error on this one commit — skip it, keep going
-      }
-    }
-
-    if (!isCurrent()) return;
-    setIsBackfilling(false);
-    setBackfillCandidates(null);
-    if (quotaExhausted) {
-      setBackfillError(`已經補了 ${done}／${total} 筆，AI 今日額度已用完，剩下的等額度重置後再繼續。`);
-    } else if (done < total) {
-      setBackfillError(`已經補了 ${done}／${total} 筆，其餘 ${total - done} 筆摘要失敗，可以稍後再按一次「回溯摘要」重試。`);
-    }
-  }, [project, backfillCandidates, onSaveChangeSummary]);
+  const handleRunBackfill = () => {
+    if (!project || !backfillCandidates) return;
+    if (backfill.start(project, backfillCandidates)) setBackfillCandidates(null);
+  };
 
   if (!project) return null;
+
+  const backfillResultMessage =
+    isRunHere && backfillRun?.state === 'QUOTA_EXHAUSTED'
+      ? `已經補了 ${backfillRun.done}／${backfillRun.total} 筆，AI 今日額度已用完，剩下的等額度重置後再繼續。`
+      : isRunHere && backfillRun?.state === 'PARTIAL'
+      ? `已經補了 ${backfillRun.done}／${backfillRun.total} 筆，其餘 ${backfillRun.total - backfillRun.done} 筆摘要失敗，可以稍後再按一次「回溯摘要」重試。`
+      : null;
 
   const verdictStyle = getVerdictStyle(verdict.level);
   const VerdictIcon = VERDICT_ICON[verdict.level];
@@ -450,10 +410,10 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                   {(project.changeSummaries?.length ?? 0) > 0 && (
                     <span className="text-xs text-stone-400">{project.changeSummaries!.length} 筆記錄</span>
                   )}
-                  {!backfillCandidates && !isBackfilling && (
+                  {!backfillCandidates && !isBackfillingHere && (
                     <button
                       onClick={handleFindBackfillCandidates}
-                      disabled={isLoadingBackfillCandidates}
+                      disabled={isLoadingBackfillCandidates || backfill.isRunning}
                       className="text-[11px] text-stone-400 hover:text-stone-700 underline cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {isLoadingBackfillCandidates ? '尋找中…' : '回溯摘要更早的紀錄'}
@@ -462,7 +422,11 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                 </div>
               </div>
 
-              {backfillCandidates && !isBackfilling && (
+              {backfill.isRunning && !isRunHere && (
+                <p className="text-xs text-stone-500">另一個專案正在回溯摘要，完成後才能開始新的回溯。</p>
+              )}
+
+              {backfillCandidates && !isBackfillingHere && (
                 <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-3.5 space-y-2">
                   {backfillCandidates.length === 0 ? (
                     <p className="text-xs text-amber-900">目前沒有遺漏的舊紀錄了，每一筆都已經摘要過。</p>
@@ -483,7 +447,8 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                       <div className="flex items-center gap-2 pt-1">
                         <button
                           onClick={handleRunBackfill}
-                          className="px-3 py-1.5 text-xs font-bold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-md transition-colors cursor-pointer"
+                          disabled={backfill.isRunning}
+                          className="px-3 py-1.5 text-xs font-bold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-md transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           開始摘要
                         </button>
@@ -507,14 +472,15 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                 </div>
               )}
 
-              {isBackfilling && (
+              {isBackfillingHere && backfillRun && (
                 <div className="bg-sky-50 border border-sky-200 rounded-lg p-3 text-xs text-sky-900 flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-sky-600 animate-pulse" />
-                  回溯摘要中… {backfillProgress ? `${backfillProgress.done} / ${backfillProgress.total}` : ''}
+                  回溯摘要中… {backfillRun.done} / {backfillRun.total}
                 </div>
               )}
 
               {backfillError && <p className="text-xs text-rose-700">{backfillError}</p>}
+              {backfillResultMessage && <p className="text-xs text-rose-700">{backfillResultMessage}</p>}
 
               <p className="text-xs text-stone-500">AI 歷史摘要（非檢查或部署結果）</p>
               {!project.changeSummaries || project.changeSummaries.length === 0 ? (
