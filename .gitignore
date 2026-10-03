@@ -10,3 +10,4 @@ coverage/
 .npmrc
 .bridge/codex-projects.local.json
 data/
+projects.local.json
