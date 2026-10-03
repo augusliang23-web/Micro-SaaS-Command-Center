@@ -19,7 +19,7 @@ export const AIExecutionSnapshot: React.FC<AIExecutionSnapshotProps> = ({
         <div className="flex items-center gap-2">
           <Cpu className="h-4 w-4 text-stone-700" />
           <h3 className="text-xs font-semibold text-stone-900">
-            AI 目前在忙什麼
+            工作狀態（模型數量為保存的設定，非執行遙測）
           </h3>
         </div>
 
@@ -77,29 +77,29 @@ export const AIExecutionSnapshot: React.FC<AIExecutionSnapshotProps> = ({
         <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-2.5 shadow-xs">
           <div className="text-[10px] font-mono text-amber-900 uppercase tracking-wider flex items-center gap-1">
             <UserCheck className="h-3 w-3 text-amber-700" />
-            <span>需要你決定</span>
+            <span>無法確認</span>
           </div>
           <div className="text-lg font-bold font-mono text-amber-950 mt-0.5">
             {snapshot.waitingForHuman}
           </div>
-          <div className="text-[10px] text-amber-800/80 truncate">等你回答問題</div>
+          <div className="text-[10px] text-amber-800/80 truncate">資料缺少或已過期</div>
         </div>
 
         <div className="bg-emerald-50/70 border border-emerald-200 rounded-lg p-2.5 shadow-xs">
           <div className="text-[10px] font-mono text-emerald-800 uppercase tracking-wider flex items-center gap-1">
             <Clock className="h-3 w-3 text-emerald-700" />
-            <span>可以繼續了</span>
+            <span>等待確認</span>
           </div>
           <div className="text-lg font-bold font-mono text-emerald-950 mt-0.5">
             {snapshot.waitingForReview}
           </div>
-          <div className="text-[10px] text-emerald-800/80 truncate">等你確認即可繼續</div>
+          <div className="text-[10px] text-emerald-800/80 truncate">等待審查或檢查結果</div>
         </div>
 
         <div className="bg-rose-50/70 border border-rose-200 rounded-lg p-2.5 shadow-xs">
           <div className="text-[10px] font-mono text-rose-800 uppercase tracking-wider flex items-center gap-1">
             <ShieldAlert className="h-3 w-3 text-rose-700" />
-            <span>AI 卡住了</span>
+            <span>已知阻塞</span>
           </div>
           <div className="text-lg font-bold font-mono text-rose-950 mt-0.5">
             {snapshot.blocked}
@@ -110,12 +110,12 @@ export const AIExecutionSnapshot: React.FC<AIExecutionSnapshotProps> = ({
         <div className="bg-sky-50/70 border border-sky-200 rounded-lg p-2.5 shadow-xs">
           <div className="text-[10px] font-mono text-sky-800 uppercase tracking-wider flex items-center gap-1">
             <PlayCircle className="h-3 w-3 text-sky-700 animate-spin" />
-            <span>AI 執行中</span>
+            <span>自動檢查中</span>
           </div>
           <div className="text-lg font-bold font-mono text-sky-950 mt-0.5">
             {snapshot.aiRunning}
           </div>
-          <div className="text-[10px] text-sky-700/80 truncate">自動進行中，還沒輪到你</div>
+          <div className="text-[10px] text-sky-700/80 truncate">GitHub 回報檢查執行中</div>
         </div>
       </div>
     </section>

@@ -35,7 +35,7 @@ test('aggregateCiStatus: no runs is none, in-progress wins over completed, failu
       { status: 'completed', conclusion: 'success' },
       { status: 'completed', conclusion: 'skipped' },
     ]),
-    'passing',
+    'unknown',
   );
 });
 
@@ -69,7 +69,7 @@ test('fetchPullRequestStatus returns open-PR state with CI and review aggregates
     if (path.includes('pulls?state=open')) {
       callback(null, JSON.stringify([{ number: 42, html_url: 'https://x/42', draft: false, head: { sha: 'abc' } }]), '');
     } else if (path.includes('check-runs')) {
-      callback(null, JSON.stringify({ check_runs: [{ status: 'completed', conclusion: 'success' }] }), '');
+      callback(null, JSON.stringify({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] }), '');
     } else if (path.includes('reviews')) {
       callback(null, JSON.stringify([{ user: { login: 'a' }, state: 'APPROVED', submitted_at: '2026-09-01T00:00:00Z' }]), '');
     } else {
@@ -138,7 +138,7 @@ test('fetchPullRequestStatus reports "active" when the branch has moved past the
       );
     }
     if (path.includes('check-runs')) {
-      return callback(null, JSON.stringify({ check_runs: [] }), '');
+      return callback(null, JSON.stringify({ total_count: 0, check_runs: [] }), '');
     }
     callback(new Error(`unexpected path: ${path}`), '', '');
   };
@@ -233,4 +233,35 @@ test('fetchChangedFiles rejects when neither prNumber nor sha is given, and when
     fetchChangedFiles('github.com/my-org/fixture-repo', { prNumber: 1 }, { execFileFn }),
     /Not a valid owner\/repo slug/,
   );
+});
+
+test('neutral, unknown and missing check conclusions cannot attest passing', () => {
+  for (const conclusion of ['neutral', 'skipped', 'unknown', null]) {
+    assert.equal(aggregateCiStatus([{status:'completed',conclusion}]), 'unknown');
+  }
+});
+
+test('known CI failure is blocked even while another check runs', () => {
+ assert.equal(aggregateCiStatus([{status:'completed',conclusion:'failure'},{status:'in_progress'}]), 'failing');
+});
+
+test('incomplete CI page never attests passing for open PR or direct commit', async () => {
+ for(const open of [true,false]) {
+  const execFileFn=(_command,args,_options,callback)=>{
+   const endpoint=args[1];let data;
+   if(endpoint.includes('pulls?state=open'))data=open?[{number:1,head:{sha:'abc'},draft:false,html_url:'https://github.com/me/repo/pull/1'}]:[];
+   else if(endpoint.includes('pulls?state=closed'))data=[];
+   else if(endpoint.includes('/commits?'))data=[{sha:'abc',html_url:'https://github.com/me/repo/commit/abc',commit:{message:'update',author:{date:'2026-10-03T00:00:00Z'}}}];
+   else if(endpoint.includes('check-runs'))data={total_count:31,check_runs:Array.from({length:30},()=>({status:'completed',conclusion:'success'}))};
+   else if(endpoint.includes('reviews'))data=[];
+   else return callback(new Error('Unexpected endpoint'),'','');
+   callback(null,JSON.stringify(data),'');
+  };
+  assert.equal((await fetchPullRequestStatus('me/repo',{execFileFn})).ciStatus,'unknown');
+ }
+});
+
+test('queued checks are waiting for execution, and unrecognized status is unknown', () => {
+ assert.equal(aggregateCiStatus([{status:'queued',conclusion:null}]),'pending');
+ assert.equal(aggregateCiStatus([{status:'unexpected',conclusion:null}]),'unknown');
 });

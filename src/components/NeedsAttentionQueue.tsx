@@ -34,7 +34,7 @@ export const NeedsAttentionQueue: React.FC<NeedsAttentionQueueProps> = ({
         <div className="py-8 text-center bg-stone-50 rounded-lg border border-dashed border-stone-300">
           <CheckCircle2 className="h-8 w-8 text-emerald-700 mx-auto mb-2 opacity-80" />
           <p className="text-sm font-medium text-stone-800">太好了，目前沒有需要你處理的事</p>
-          <p className="text-xs text-stone-500 mt-0.5">所有專案的 AI 都在正常運作，沒有卡住或等你決定的地方。</p>
+          <p className="text-xs text-stone-500 mt-0.5">本次查詢沒有需要處理的項目；部署與 AI 執行狀態尚未確認。</p>
         </div>
       ) : (
         <div className="flex flex-col gap-4">

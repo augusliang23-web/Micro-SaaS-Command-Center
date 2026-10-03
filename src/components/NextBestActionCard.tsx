@@ -1,7 +1,7 @@
 import React from 'react';
 import { MicroSaaSProject, ChangeSummaryRecord } from '../types';
 import { pickMostUrgent } from '../verdict.mjs';
-import { useProjectVerdicts } from '../hooks/useProjectVerdicts';
+import { useProjectStatuses } from '../hooks/useProjectVerdicts';
 import { ProjectVerdictCard } from './ProjectVerdictCard';
 
 interface NextBestActionCardProps {
@@ -25,7 +25,8 @@ export const NextBestActionCard: React.FC<NextBestActionCardProps> = ({
   onUpdateLocalPath,
   onSaveChangeSummary,
 }) => {
-  const { verdicts, isLoading } = useProjectVerdicts(projects);
+  const { byId, isLoading } = useProjectStatuses();
+  const verdicts = projects.map(p => byId[p.id]);
 
   if (projects.length === 0) return null;
   if (isLoading) {

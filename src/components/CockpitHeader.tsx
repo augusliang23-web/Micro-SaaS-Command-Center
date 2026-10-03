@@ -4,16 +4,18 @@ import { AIExecutionSnapshotData } from '../types';
 
 interface CockpitHeaderProps {
   snapshot: AIExecutionSnapshotData;
-  activeFilter: 'all' | 'attention' | 'running' | 'production';
-  onSelectFilter: (filter: 'all' | 'attention' | 'running' | 'production') => void;
+  activeFilter: 'all' | 'attention' | 'running' | 'unknown';
+  onSelectFilter: (filter: 'all' | 'attention' | 'running' | 'unknown') => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
-  totalProjects: number;
-  attentionCount: number;
+  totalProjects: number | null;
+  attentionCount: number | null;
   onOpenModelGuide: () => void;
   onOpenConnectRepo: () => void;
   onOpenCiCdMap?: () => void;
-  onRefreshSim: () => void;
+  onRefresh: () => void;
+  sourceSummary: string;
+  isRefreshing: boolean;
 }
 
 export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
@@ -27,7 +29,9 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
   onOpenModelGuide,
   onOpenConnectRepo,
   onOpenCiCdMap,
-  onRefreshSim,
+  onRefresh,
+  sourceSummary,
+  isRefreshing,
 }) => {
   const [showMore, setShowMore] = useState(false);
 
@@ -46,11 +50,11 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
               </h1>
             </div>
             <p className="text-xs text-stone-500 flex items-center gap-2">
-              <span>AI 協作作業中</span>
+              <span>專案狀態快照</span>
               <span className="inline-block h-1 w-1 rounded-full bg-stone-400" />
-              <span className="text-emerald-700 font-mono flex items-center gap-1 font-medium">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                Live Sync
+              <span className="text-stone-500 font-mono flex items-center gap-1 font-medium">
+
+                {sourceSummary}
               </span>
             </p>
           </div>
@@ -88,7 +92,7 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              全部 ({totalProjects})
+              全部 ({totalProjects ?? "—"})
             </button>
             <button
               onClick={() => onSelectFilter('attention')}
@@ -99,7 +103,7 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
               }`}
             >
               <ShieldAlert className="h-3 w-3 text-amber-700" />
-              <span>待你關注 ({attentionCount})</span>
+              <span>待你關注 ({attentionCount ?? "—"})</span>
             </button>
             <button
               onClick={() => onSelectFilter('running')}
@@ -110,17 +114,17 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
               }`}
             >
               <Cpu className="h-3 w-3 text-sky-700" />
-              <span>AI 進行中 ({snapshot.aiRunning})</span>
+              <span>自動檢查中 ({totalProjects === null ? "—" : snapshot.aiRunning})</span>
             </button>
             <button
-              onClick={() => onSelectFilter('production')}
+              onClick={() => onSelectFilter('unknown')}
               className={`px-2.5 py-1 rounded transition-colors ${
-                activeFilter === 'production'
+                activeFilter === 'unknown'
                   ? 'bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-xs'
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              已上線
+              無法確認
             </button>
           </div>
 
@@ -136,9 +140,10 @@ export const CockpitHeader: React.FC<CockpitHeaderProps> = ({
 
           {/* Quick Refresh Sim */}
           <button
-            onClick={onRefreshSim}
+            onClick={onRefresh}
+            disabled={isRefreshing}
             className="p-1.5 text-xs rounded-md bg-white border border-stone-300 text-stone-600 hover:bg-stone-50 hover:text-stone-900 hover:border-stone-400 transition-colors shadow-xs cursor-pointer"
-            title="重新整理本地快照"
+            title="重新查詢 GitHub 最新狀態"
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>

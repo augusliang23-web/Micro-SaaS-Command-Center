@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   ExternalLink,
@@ -29,27 +29,29 @@ import {
   MessageSquare,
   History,
 } from 'lucide-react';
-import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome, FeatureItem, GithubPullStatus } from '../types';
+import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome, FeatureItem } from '../types';
 import { BridgeWorkflowRail } from './BridgeWorkflowRail';
 import { ChatGPTBridgeModal } from './ChatGPTBridgeModal';
 import { CiCdWorkflowModal } from './CiCdWorkflowModal';
 import { FeatureDeliveryMatrix } from './FeatureDeliveryMatrix';
 import {
-  getHealthBadgeStyle,
   getStageBadgeStyle,
   getModelBadgeStyle,
-  getWaitingStateBadge,
   isRealGithubRepo,
   formatChangeSummaryRef,
 } from '../utils';
 import { provenanceLabel } from '../statusProvenance.mjs';
-import { getVerdict, getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
+import { getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
+
+import { useProjectStatus } from '../hooks/useProjectVerdicts';
 
 const VERDICT_ICON: Record<string, React.ElementType> = {
   danger: AlertCircle,
   decision: HelpCircle,
   ready: CheckCircle2,
   waiting: Clock,
+  idle: Clock,
+  unknown: HelpCircle,
 };
 
 function ProvenanceBadge({ provenance }: { provenance?: { authority: string; confidence: string } }) {
@@ -94,40 +96,16 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   const [isChatGPTModalOpen, setIsChatGPTModalOpen] = useState(false);
   const [isCiCdModalOpen, setIsCiCdModalOpen] = useState(false);
   const [iterationPromptOpen, setIterationPromptOpen] = useState(false);
-  const [githubState, setGithubState] = useState<GithubPullStatus | null>(null);
-  const [isLoadingGithub, setIsLoadingGithub] = useState(false);
   const [showTechDetail, setShowTechDetail] = useState(false);
-
-  const loadGithubState = useCallback(() => {
-    if (!project || !isRealGithubRepo(project.repository)) {
-      setGithubState(null);
-      return;
-    }
-    setIsLoadingGithub(true);
-    fetch(`/api/github/pull-status?repo=${encodeURIComponent(project.repository)}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setGithubState(data))
-      .catch(() => setGithubState(null))
-      .finally(() => setIsLoadingGithub(false));
-  }, [project]);
-
-  useEffect(() => {
-    setGithubState(null);
-    setShowTechDetail(false);
-    loadGithubState();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id]);
+  const { verdict, githubState, isLoadingGithub, loadGithubState } = useProjectStatus(project);
+  useEffect(() => { setShowTechDetail(false); }, [project?.id]);
 
   if (!project) return null;
 
-  const verdict = getVerdict(project, githubState ?? undefined);
   const verdictStyle = getVerdictStyle(verdict.level);
   const VerdictIcon = VERDICT_ICON[verdict.level];
   const showTrustBadge = verdict.source === 'github' && githubState;
-  const isTrustworthy =
-    showTrustBadge &&
-    (githubState!.state === 'merged' ||
-      (githubState!.state === 'open' && !githubState!.isDraft && githubState!.ciStatus === 'passing' && githubState!.reviewDecision !== 'changes_requested'));
+  const isTrustworthy = verdict.checksPassed;
   const isDirectPush = showTrustBadge && githubState!.state === 'active';
   const githubLinkUrl = githubState?.prUrl || githubState?.lastCommitUrl;
 
@@ -143,10 +121,8 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
       status: 'CURRENT',
     };
 
-  const healthStyle = getHealthBadgeStyle(project.health);
   const stageStyle = getStageBadgeStyle(project.stage);
   const modelStyle = getModelBadgeStyle(project.model);
-  const waitState = getWaitingStateBadge(project.waitingState);
 
   const handleCopyPrompt = () => {
     const promptText = `Project: ${project.name}\nStage: ${project.stage}\nCurrent Task: ${project.currentTask}\nCurrent Gate: ${project.currentGate}\nModel Assigned: ${project.model}\nBlocker: ${project.blocker || 'None'}\nNext Action: ${project.nextAction}`;
@@ -161,11 +137,11 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
       <div className="absolute inset-0" onClick={onClose} />
 
       {/* Slide-over Drawer Panel */}
-      <div className="relative w-full max-w-4xl bg-[#F7F6F2] border-l border-stone-300 shadow-2xl h-full flex flex-col z-10 overflow-y-auto text-stone-800">
+      <div role="dialog" aria-modal="true" aria-label={project.name} className="relative w-full max-w-4xl bg-[#F7F6F2] border-l border-stone-300 shadow-2xl h-full flex flex-col z-10 overflow-y-auto text-stone-800">
         {/* Sticky Header */}
         <div className="sticky top-0 z-20 bg-[#F7F6F2]/95 backdrop-blur-md border-b border-stone-300 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${healthStyle.dot}`} />
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{backgroundColor: verdictStyle.iconColor}} />
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg font-bold text-stone-900 font-mono tracking-tight">
@@ -174,12 +150,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                 <span className={`text-xs font-mono px-2 py-0.5 rounded border ${stageStyle.bg} ${stageStyle.text} ${stageStyle.border}`}>
                   {project.stage}
                 </span>
-                <span className={`text-xs font-mono px-2 py-0.5 rounded border ${healthStyle.bg} ${healthStyle.text} ${healthStyle.border}`}>
-                  Health: {project.health}
-                </span>
-                <span className={`text-xs font-mono px-2 py-0.5 rounded border ${waitState.bg} ${waitState.text} ${waitState.border}`}>
-                  {waitState.label}
-                </span>
+                <span className="text-xs px-2 py-0.5 rounded border border-stone-300">{verdict.headline}</span>
               </div>
               <p className="text-xs text-stone-500 mt-0.5 flex items-center gap-2">
                 <span>{project.tagline}</span>
@@ -208,6 +179,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
             </button>
             <button
               onClick={onClose}
+              aria-label="關閉專案詳情"
               className="p-1.5 rounded-md text-stone-500 hover:text-stone-900 hover:bg-stone-200 transition-colors cursor-pointer"
             >
               <X className="h-5 w-5" />
@@ -233,7 +205,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                   </h2>
                   {isTrustworthy && (
                     <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-                      <Check className="h-3 w-3" /> 已通過標準檢查
+                      <Check className="h-3 w-3" /> 已取得自動檢查通過結果
                     </span>
                   )}
                   {isDirectPush && (
@@ -243,6 +215,8 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                   )}
                 </div>
                 <p className="text-sm text-stone-700 leading-relaxed mt-2">{verdict.explanation}</p>
+                <p className="text-xs text-stone-500 mt-2">GitHub · {verdict.sourceState} · Last checked: {verdict.checkedAt ? new Date(verdict.checkedAt).toLocaleString() : '尚未查詢'}</p>
+                <details className="mt-3 text-xs text-stone-500"><summary>原始狀態資料（保留供查證）</summary><pre className="overflow-auto whitespace-pre-wrap">{JSON.stringify({ github: githubState, saved: { health: project.health, waitingState: project.waitingState, testOutcome: project.testOutcome, reviewOutcome: project.reviewOutcome, provenance: project.provenance } }, null, 2)}</pre></details>
                 {githubLinkUrl && (
                   <a
                     href={githubLinkUrl}
@@ -257,7 +231,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
             </div>
 
             <div className="mt-4 flex items-center gap-3 flex-wrap">
-              {verdict.hasAction && !verdict.isWaiting && verdict.level !== 'decision' && (
+              {verdict.hasAction && !verdict.isWaiting && (
                 <a
                   href={githubLinkUrl || undefined}
                   target={githubLinkUrl ? '_blank' : undefined}
@@ -369,6 +343,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                 )}
               </div>
 
+              <p className="text-xs text-stone-500">AI 歷史摘要（非檢查或部署結果）</p>
               {!project.changeSummaries || project.changeSummaries.length === 0 ? (
                 <p className="text-xs text-stone-400 leading-relaxed">
                   目前還沒有摘要記錄。到上面「在 GitHub 上查看」旁邊的專案卡片展開「與前一版本相比的改動」，按「請 AI

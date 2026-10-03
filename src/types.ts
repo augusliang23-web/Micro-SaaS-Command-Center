@@ -198,10 +198,11 @@ export interface ChangeSummaryRecord {
 // Shape returned by GET /api/github/pull-status (server/githubPullStatus.mjs)
 export interface GithubPullStatus {
   state: 'open' | 'merged' | 'active' | 'none';
+  mergedAt?: string;
   prNumber?: number;
   prUrl?: string;
   isDraft?: boolean;
-  ciStatus?: 'passing' | 'failing' | 'running' | 'none';
+  ciStatus?: 'passing' | 'failing' | 'running' | 'none' | 'unknown' | 'pending';
   reviewDecision?: 'approved' | 'changes_requested' | 'review_required';
   lastCommitMessage?: string;
   lastCommitAt?: string;

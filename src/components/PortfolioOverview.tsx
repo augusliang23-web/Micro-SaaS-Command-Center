@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Layers, ArrowUpDown, Plus } from 'lucide-react';
-import { MicroSaaSProject, ProjectHealth, ChangeSummaryRecord } from '../types';
+import { MicroSaaSProject, ChangeSummaryRecord } from '../types';
+import { useProjectStatuses } from '../hooks/useProjectVerdicts';
+import { matchesStatusFilter, compareCheckedAt, statusRank } from '../verdict.mjs';
 import { ProjectVerdictCard } from './ProjectVerdictCard';
 
 interface PortfolioOverviewProps {
@@ -22,6 +24,7 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
   onUpdateLocalPath,
   onSaveChangeSummary,
 }) => {
+  const { byId } = useProjectStatuses();
   const [stageFilter, setStageFilter] = useState<string>('ALL');
   const [healthFilter, setHealthFilter] = useState<string>('ALL');
   const [sortBy, setSortBy] = useState<'activity' | 'health' | 'name'>('activity');
@@ -29,20 +32,19 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
   const filteredProjects = projects
     .filter((p) => {
       if (stageFilter !== 'ALL' && p.stage !== stageFilter) return false;
-      if (healthFilter !== 'ALL' && p.health !== healthFilter) return false;
+      if (healthFilter !== 'ALL' && !matchesStatusFilter(byId[p.id], healthFilter)) return false;
       return true;
     })
     .sort((a, b) => {
       if (sortBy === 'name') return a.name.localeCompare(b.name);
       if (sortBy === 'health') {
-        const order: Record<ProjectHealth, number> = { Blocked: 0, 'At Risk': 1, Attention: 2, Healthy: 3 };
-        return order[a.health] - order[b.health];
+        return statusRank(byId[a.id]) - statusRank(byId[b.id]);
       }
-      return 0; // default order
+      return compareCheckedAt(byId[a.id], byId[b.id]);
     });
 
   return (
-    <section className="bg-white border border-stone-300 rounded-xl overflow-hidden shadow-xs">
+    <section aria-label="專案總覽清單" className="bg-white border border-stone-300 rounded-xl overflow-hidden shadow-xs">
       {/* Header & Controls */}
       <div className="p-4 sm:p-5 border-b border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FAF9F6]">
         <div>
@@ -56,7 +58,7 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
             </span>
           </div>
           <p className="text-xs text-stone-500 mt-0.5">
-            每個專案一句話告訴你現在該做什麼；不需要懂技術，AI 已經幫你判斷好了。
+            依可驗證的 GitHub 查詢顯示狀態；資料不足時會明確標示。
           </p>
         </div>
 
@@ -80,26 +82,29 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({
           <div className="flex items-center gap-1 bg-white px-2 py-1 rounded border border-stone-300 shadow-xs">
             <span className="text-stone-500">狀態:</span>
             <select
+              aria-label="專案狀態"
               value={healthFilter}
               onChange={(e) => setHealthFilter(e.target.value)}
               className="bg-transparent text-stone-800 focus:outline-none cursor-pointer"
             >
               <option value="ALL">全部狀態</option>
-              <option value="Attention">需關注</option>
-              <option value="Blocked">已阻礙</option>
-              <option value="At Risk">有風險</option>
-              <option value="Healthy">正常</option>
+              <option value="IDLE">沒有進行中工作</option>
+              <option value="IN_PROGRESS">自動檢查執行中</option>
+              <option value="NEEDS_CONFIRMATION">等待確認</option>
+              <option value="BLOCKED">已知阻塞</option>
+              <option value="UNKNOWN">無法確認</option>
             </select>
           </div>
 
           <div className="flex items-center gap-1 bg-white px-2 py-1 rounded border border-stone-300 shadow-xs">
             <ArrowUpDown className="h-3 w-3 text-stone-400" />
             <select
+              aria-label="排序方式"
               value={sortBy}
               onChange={(e: any) => setSortBy(e.target.value)}
               className="bg-transparent text-stone-800 focus:outline-none cursor-pointer"
             >
-              <option value="activity">依活動排序</option>
+              <option value="activity">依查詢時間排序</option>
               <option value="health">依緊急程度排序</option>
               <option value="name">依名稱排序</option>
             </select>

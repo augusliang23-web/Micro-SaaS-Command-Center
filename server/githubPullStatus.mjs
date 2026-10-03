@@ -7,10 +7,20 @@ export function isRealGithubRepo(repository) {
 
 export function aggregateCiStatus(checkRuns) {
   if (!Array.isArray(checkRuns) || checkRuns.length === 0) return 'none';
-  if (checkRuns.some((run) => run.status !== 'completed')) return 'running';
   const failed = ['failure', 'timed_out', 'cancelled', 'action_required'];
   if (checkRuns.some((run) => failed.includes(run.conclusion))) return 'failing';
-  return 'passing';
+  if (checkRuns.some((run) => !['completed', 'in_progress', 'queued'].includes(run.status))) return 'unknown';
+  if (checkRuns.some((run) => run.status === 'in_progress')) return 'running';
+  if (checkRuns.some((run) => run.status === 'queued')) return 'pending';
+  return checkRuns.every((run) => run.conclusion === 'success') ? 'passing' : 'unknown';
+}
+
+// The first check-runs page is not proof of the complete check set.
+function aggregateCiResponse(response) {
+  if (!response || !Array.isArray(response.check_runs) || !Number.isInteger(response.total_count) || response.total_count < 0) return 'unknown';
+  const result = aggregateCiStatus(response.check_runs);
+  if (result === 'failing') return result; // A known failure remains a blocker.
+  return response.check_runs.length === response.total_count ? result : 'unknown';
 }
 
 export function aggregateReviewDecision(reviews) {
@@ -47,10 +57,10 @@ export async function fetchPullRequestStatus(repo, { execFileFn = execFile } = {
   if (Array.isArray(openPrs) && openPrs.length > 0) {
     const pr = openPrs[0];
     const sha = pr.head?.sha;
-    const [checkRuns, reviews] = await Promise.all([
+    const [ciStatus, reviews] = await Promise.all([
       sha
-        ? ghApiJson(`repos/${repo}/commits/${sha}/check-runs`, { execFileFn }).then((r) => r.check_runs || [])
-        : Promise.resolve([]),
+        ? ghApiJson(`repos/${repo}/commits/${sha}/check-runs?per_page=100`, { execFileFn }).then(aggregateCiResponse)
+        : Promise.resolve('unknown'),
       ghApiJson(`repos/${repo}/pulls/${pr.number}/reviews`, { execFileFn }),
     ]);
 
@@ -59,7 +69,7 @@ export async function fetchPullRequestStatus(repo, { execFileFn = execFile } = {
       prNumber: pr.number,
       prUrl: pr.html_url,
       isDraft: Boolean(pr.draft),
-      ciStatus: aggregateCiStatus(checkRuns),
+      ciStatus,
       reviewDecision: aggregateReviewDecision(reviews),
     };
   }
@@ -90,8 +100,8 @@ export async function fetchPullRequestStatus(repo, { execFileFn = execFile } = {
     };
   }
 
-  const checkRuns = await ghApiJson(`repos/${repo}/commits/${latestCommit.sha}/check-runs`, { execFileFn }).then(
-    (r) => r.check_runs || [],
+  const ciStatus = await ghApiJson(`repos/${repo}/commits/${latestCommit.sha}/check-runs?per_page=100`, { execFileFn }).then(
+    aggregateCiResponse,
   );
   return {
     state: 'active',
@@ -99,7 +109,7 @@ export async function fetchPullRequestStatus(repo, { execFileFn = execFile } = {
     lastCommitAt: latestCommit.commit?.author?.date || latestCommit.commit?.committer?.date,
     lastCommitUrl: latestCommit.html_url,
     lastCommitSha: latestCommit.sha,
-    ciStatus: aggregateCiStatus(checkRuns),
+    ciStatus,
   };
 }
 
