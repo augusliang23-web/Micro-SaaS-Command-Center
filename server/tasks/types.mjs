@@ -7,6 +7,8 @@
 import { classifyAction } from './actionPolicy.mjs';
 
 export const AGENTS = Object.freeze(['claude-code', 'codex']);
+// Internal run identities do not widen the browser-selectable task agents.
+export const RUN_AGENTS = Object.freeze([...AGENTS, 'fake']);
 export const EXECUTION_PROFILES = Object.freeze(['FAST', 'STANDARD', 'DEEP', 'CRITICAL']);
 export const DEFAULT_EXECUTION_PROFILE = 'STANDARD';
 export const RISK_LEVELS = Object.freeze(['LOW', 'MEDIUM', 'HIGH']);
@@ -175,7 +177,7 @@ export function validateAgentRun(run) {
   if (!isRecord(run)) return ['run must be an object'];
   if (!RUN_ID_PATTERN.test(run.runId ?? '')) fail(errors, 'runId is malformed');
   if (!TASK_ID_PATTERN.test(run.taskId ?? '')) fail(errors, 'taskId is malformed');
-  if (!AGENTS.includes(run.agent)) fail(errors, 'agent is not a known agent');
+  if (!RUN_AGENTS.includes(run.agent)) fail(errors, 'agent is not a known run agent');
   if (!RUN_STATUSES.includes(run.status)) fail(errors, 'status is invalid');
   for (const field of ['startedAt', 'endedAt']) {
     if (run[field] !== undefined && !isIsoDate(run[field])) fail(errors, `${field} must be an ISO date`);

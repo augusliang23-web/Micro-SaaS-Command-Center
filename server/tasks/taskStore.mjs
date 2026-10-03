@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 import { ACTIVE_TASK_STATUSES, TASK_ID_PATTERN, validateDevelopmentTask } from './types.mjs';
+import { assertTaskTransition } from './stateTransitions.mjs';
 
 // One JSON file per task: <dir>/<taskId>.json. Writes are atomic
 // (temp file -> fsync -> rename). <taskId>.events.jsonl is reserved for a later
@@ -104,6 +105,20 @@ export class TaskStore {
   }
 
   get(taskId) {
+    return this.#read(taskId);
+  }
+
+  /** Controlled execution updates; task identity, request policy and review are immutable. */
+  update(taskId, patch) {
+    const allowed = ['status', 'baseSha', 'updatedAt', 'startedAt', 'completedAt', 'runIds', 'commitSha', 'pr'];
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(key => !allowed.includes(key))) {
+      throw new Error('Invalid or immutable task update field');
+    }
+    const current = this.#read(taskId);
+    if (!current) throw new Error('Task not found');
+    const next = { ...current, ...patch, updatedAt: patch.updatedAt ?? this.#now() };
+    assertTaskTransition(current.status, next.status);
+    this.#write(next);
     return this.#read(taskId);
   }
 
