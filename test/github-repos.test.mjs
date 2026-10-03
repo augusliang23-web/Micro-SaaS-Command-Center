@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import express from 'express';
 
 import { formatRelativeTime, mapGithubRepo, fetchGithubRepos, GithubCliError } from '../server/githubRepos.mjs';
-import { evaluateGithubRequest, createGithubRouter } from '../server/githubRoutes.mjs';
+import { evaluateGithubRequest, createGithubRouter, parseRecentCommitsLimit } from '../server/githubRoutes.mjs';
 
 test('formatRelativeTime buckets recent timestamps into human phrases', () => {
   const now = new Date('2026-09-05T12:00:00Z');
@@ -95,4 +96,30 @@ test('createGithubRouter is constructible with an injected fetchRepos dependency
 test('createGithubRouter also accepts an injected fetchPullStatus dependency', () => {
   const router = createGithubRouter({ fetchPullStatus: async () => ({ state: 'none' }) });
   assert.equal(typeof router, 'function');
+});
+
+test('parseRecentCommitsLimit normalizes to a whole number in 1..50, else 30', () => {
+  assert.equal(parseRecentCommitsLimit('2.7'), 2);
+  assert.equal(parseRecentCommitsLimit('50'), 50);
+  assert.equal(parseRecentCommitsLimit('1e3'), 50);
+  for (const raw of ['0.5', '0', '-3', 'abc', '', ' ', 'Infinity', undefined, ['5']]) {
+    assert.equal(parseRecentCommitsLimit(raw), 30, `raw=${JSON.stringify(raw)}`);
+  }
+});
+
+test('GET /recent-commits passes an integer limit to GitHub', async () => {
+  const seen = [];
+  const app = express();
+  app.use('/api/github', createGithubRouter({ fetchCommits: async (repo, { limit }) => (seen.push(limit), []) }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  try {
+    const { port } = server.address();
+    for (const limit of ['7.9', '0.5', '999']) {
+      const res = await fetch(`http://127.0.0.1:${port}/api/github/recent-commits?repo=me/repo&limit=${limit}`);
+      assert.equal(res.status, 200);
+    }
+  } finally {
+    server.close();
+  }
+  assert.deepEqual(seen, [7, 30, 50]);
 });

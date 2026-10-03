@@ -7,6 +7,7 @@ import {
   aggregateReviewDecision,
   fetchPullRequestStatus,
   fetchChangedFiles,
+  fetchRecentCommits,
 } from '../server/githubPullStatus.mjs';
 
 test('isRealGithubRepo accepts owner/repo slugs and rejects fixture placeholders', () => {
@@ -264,4 +265,50 @@ test('incomplete CI page never attests passing for open PR or direct commit', as
 test('queued checks are waiting for execution, and unrecognized status is unknown', () => {
  assert.equal(aggregateCiStatus([{status:'queued',conclusion:null}]),'pending');
  assert.equal(aggregateCiStatus([{status:'unexpected',conclusion:null}]),'unknown');
+});
+
+test('fetchRecentCommits flattens the commits list to sha/message/date/url, first line only', async () => {
+  const execFileFn = (command, args, options, callback) => {
+    const path = args[1];
+    if (path.includes('commits?per_page=30')) {
+      callback(
+        null,
+        JSON.stringify([
+          {
+            sha: 'abc123',
+            commit: { message: 'feat: add sync controls\n\nLonger body here', author: { date: '2026-08-01T00:00:00Z' } },
+            html_url: 'https://github.com/me/repo/commit/abc123',
+          },
+          {
+            sha: 'def456',
+            commit: { message: 'fix: bug', committer: { date: '2026-08-02T00:00:00Z' } },
+            html_url: 'https://github.com/me/repo/commit/def456',
+          },
+        ]),
+        '',
+      );
+    } else {
+      callback(new Error(`unexpected path: ${path}`), '', '');
+    }
+  };
+
+  const commits = await fetchRecentCommits('me/repo', { limit: 30 }, { execFileFn });
+  assert.equal(commits.length, 2);
+  assert.deepEqual(commits[0], {
+    sha: 'abc123',
+    message: 'feat: add sync controls',
+    date: '2026-08-01T00:00:00Z',
+    url: 'https://github.com/me/repo/commit/abc123',
+  });
+  assert.equal(commits[1].date, '2026-08-02T00:00:00Z');
+});
+
+test('fetchRecentCommits rejects when repo is not a real owner/repo slug', async () => {
+  const execFileFn = () => {
+    throw new Error('should not be called');
+  };
+  await assert.rejects(
+    fetchRecentCommits('github.com/my-org/fixture-repo', {}, { execFileFn }),
+    /Not a valid owner\/repo slug/,
+  );
 });

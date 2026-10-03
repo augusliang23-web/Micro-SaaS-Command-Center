@@ -113,6 +113,27 @@ export async function fetchPullRequestStatus(repo, { execFileFn = execFile } = {
   };
 }
 
+/**
+ * Read-only list of the repo's most recent commits on its default branch,
+ * for backfilling AI summaries against commits that predate this feature or
+ * were never manually summarized. Never writes to GitHub.
+ */
+export async function fetchRecentCommits(repo, { limit = 30 } = {}, { execFileFn = execFile } = {}) {
+  if (!isRealGithubRepo(repo)) {
+    throw new GithubCliError(`Not a valid owner/repo slug: ${repo}`, 'failed');
+  }
+
+  const commits = await ghApiJson(`repos/${repo}/commits?per_page=${limit}`, { execFileFn });
+  return Array.isArray(commits)
+    ? commits.map((c) => ({
+        sha: c.sha,
+        message: (c.commit?.message || '').split('\n')[0],
+        date: c.commit?.author?.date || c.commit?.committer?.date,
+        url: c.html_url,
+      }))
+    : [];
+}
+
 function normalizeChangedFile(file) {
   return {
     filename: file.filename,

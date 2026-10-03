@@ -1,4 +1,4 @@
-import { ProjectHealth, ProjectStage, GateStatus, WaitingState, CodexModelName, LocalGitStatus } from './types';
+import { ProjectHealth, ProjectStage, GateStatus, WaitingState, CodexModelName, LocalGitStatus, ChangeSummaryRecord } from './types';
 
 export function getHealthBadgeStyle(health: ProjectHealth): { bg: string; text: string; border: string; dot: string } {
   switch (health) {
@@ -163,4 +163,11 @@ export function localStatusToneStyle(tone: 'ok' | 'warn' | 'info'): { bg: string
 export function formatChangeSummaryRef(refKey: string): string {
   if (refKey.startsWith('pr:')) return `PR #${refKey.slice(3)}`;
   return `commit ${refKey.slice(4, 11)}`;
+}
+
+// The date a record should be sorted/displayed by: the underlying commit/PR's
+// own date when known (so a backfilled summary of an old commit shows its
+// real age), falling back to when the AI call itself ran.
+export function summaryDisplayDate(record: ChangeSummaryRecord): string {
+  return record.commitDate || record.generatedAt;
 }
