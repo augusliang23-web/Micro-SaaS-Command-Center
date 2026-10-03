@@ -200,6 +200,20 @@ test('parser: policy violations are recorded once, first wins', () => {
   assert.equal(ok.policyViolation, null);
 });
 
+test('parser: tool_use enforcement does not depend on the init tool inventory', () => {
+  const bare = { type: 'system', subtype: 'init', session_id: 's', permissionMode: 'acceptEdits' };
+  const bash = parser();
+  feed(bash, [bare, assistant([toolUse('Bash')])]);
+  assert.equal(bash.policyViolation.code, 'TOOL_POLICY_VIOLATION');
+  assert.equal(bash.finish().toolPolicyObserved, false);
+  const noInit = parser();
+  feed(noInit, [assistant([toolUse('WebSearch')])]);
+  assert.equal(noInit.policyViolation.code, 'TOOL_POLICY_VIOLATION');
+  const edit = parser();
+  feed(edit, [bare, assistant([toolUse('Edit'), toolUse('Read', 't2')])]);
+  assert.equal(edit.policyViolation, null);
+});
+
 // ---------- adapter contract helpers ----------
 
 test('contract: only agent prose is AGENT_CLAIM; nothing exceeds RUNTIME_OBSERVED', () => {

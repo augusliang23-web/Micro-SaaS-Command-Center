@@ -377,6 +377,33 @@ test('tool policy is observed at runtime: a runtime exposing Bash, bypass mode, 
   });
 });
 
+test('tool policy fails closed per call: a Bash tool_use is stopped even when init reports no tool list', async () => {
+  const bare = { type: 'system', subtype: 'init', session_id: SESSION, model: 'm', permissionMode: 'acceptEdits' }; // no `tools` field
+  for (const bad of [toolUse('Bash'), toolUse('WebFetch'), toolUse('bash'), { type: 'tool_use', id: 'x' }, { type: 'tool_use', id: 'x', name: 5 }]) {
+    await withScratch(async ({ root, binaryPath }) => {
+      const cwd = prepareWorktree(root, {});
+      fs.writeFileSync(path.join(cwd, 'events.ndjson'), [bare, assistant([bad]), result()].map((e) => JSON.stringify(e)).join('\n') + '\n');
+      fs.writeFileSync(path.join(cwd, 'behavior.sh'), `cat "$PWD/events.ndjson"\nsleep 30\n`); // would keep running if not terminated
+      const { events, emit } = collect();
+      const started = Date.now();
+      const res = await adapterFor(binaryPath).start(spec(cwd), emit);
+      assert.deepEqual([res.outcome, res.code], ['failed', 'TOOL_POLICY_VIOLATION'], JSON.stringify(bad));
+      assert.equal(res.toolPolicyObserved, false);
+      assert.ok(Date.now() - started < 10_000, 'process must be terminated, not awaited');
+      assert.ok(!alive(res.processId));
+      assert.ok(events.some((e) => e.type === 'error' && e.code === 'TOOL_POLICY_VIOLATION'));
+    });
+  }
+});
+
+test('missing init tool list does not block an allowed tool; toolPolicyObserved only reports the missing inventory', async () => withScratch(async ({ root, binaryPath }) => {
+  const bare = { type: 'system', subtype: 'init', session_id: SESSION, model: 'm', permissionMode: 'acceptEdits' };
+  const cwd = prepareWorktree(root, { lines: [bare, assistant([toolUse('Edit')]), toolResult(), result()] });
+  const res = await adapterFor(binaryPath).start(spec(cwd), () => {});
+  assert.equal(res.outcome, 'completed');
+  assert.equal(res.toolPolicyObserved, false);
+}));
+
 // ---------- Limits ----------
 
 test('output limits: an oversized line, flood of stdout or stderr terminates the child and fails explicitly', async () => {

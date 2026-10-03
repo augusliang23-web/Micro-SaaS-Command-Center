@@ -103,7 +103,9 @@ export function createClaudeStreamParser({ allowedTools, expectedCwd, allowedPer
       } else if (block.type === 'tool_use') {
         const name = safeName(block.name);
         out.push({ type: 'tool', phase: 'use', name, toolUseId: safeName(block.id) });
-        if (state.initTools && name && !allowedTools.includes(block.name)) violate('TOOL_POLICY_VIOLATION', `Agent invoked a tool outside the allowlist: ${name}`);
+        // Independent of the init tool inventory: every observed call is checked against the allowlist
+        // (the raw name, not the sanitized one). A call whose name cannot be verified fails closed too.
+        if (typeof block.name !== 'string' || !allowedTools.includes(block.name)) violate('TOOL_POLICY_VIOLATION', `Agent invoked a tool outside the allowlist: ${name || '(unnamed)'}`);
       }
     }
   }
@@ -174,6 +176,7 @@ export function createClaudeStreamParser({ allowedTools, expectedCwd, allowedPer
         resultSubtype: state.resultSubtype,
         resultText: state.resultText,
         actualModel: models.length === 0 ? UNKNOWN_MODEL : models.join(','),
+        // Means only "the runtime reported its tool inventory"; it never relaxes the per-call check above.
         toolPolicyObserved: state.initTools !== null,
         permissionMode: state.permissionMode,
         denials: [...state.denials],
