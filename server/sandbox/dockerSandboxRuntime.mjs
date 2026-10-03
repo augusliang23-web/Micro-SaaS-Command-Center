@@ -4,8 +4,9 @@ import path from 'node:path';
 
 import { SandboxBlockedError } from './pathSafety.mjs';
 import { TEST_IMAGES, validateImageAllowlist } from './sandboxImages.mjs';
-import { NETWORK_PROFILES, assertDockerArgs, buildCreateArgs, parseSandboxPolicy, sandboxName, validateCommand } from './sandboxPolicy.mjs';
+import { BASE_ENV, NETWORK_PROFILES, assertDockerArgs, buildCreateArgs, parseSandboxPolicy, sandboxName, validateCommand } from './sandboxPolicy.mjs';
 import { inspectWorkspace } from './workspaceView.mjs';
+import { verifyContainerReadback } from './readbackVerifier.mjs';
 
 /**
  * Provider-neutral Docker sandbox runtime (Phase 3B2).
@@ -16,15 +17,25 @@ import { inspectWorkspace } from './workspaceView.mjs';
  * evidence grades. The container only ever sees one task worktree (plus a masked `.git`), no credentials,
  * no Docker socket, and only server-resolved environment values.
  *
- * Evidence: a sandbox_* record is LOCALLY_VERIFIED only when confirmed by `docker inspect` readback;
- * if only the Docker CLI said so, it is RUNTIME_OBSERVED. Container stdout is output, never evidence.
+ * IDENTITY RULE. Once `docker create` returns a container ID, that immutable ID is the container's identity.
+ * Names are used only for the pre-create collision check. Every state-changing operation (start, stop, kill, rm)
+ * targets the exact tracked ID, and is preceded by an ownership check that requires ALL of:
+ *   Id === tracked ID  +  cc.sandbox=1  +  cc.sandbox.id=<sandboxId>  +  cc.sandbox.role=<role>
+ * If any fact disagrees the operation fails closed and the container is left untouched.
+ *
+ * TRACKING RULE. The record is created the moment Docker returns an ID (state CREATED_UNVERIFIED) and is never
+ * dropped because a later readback fails. DESTROYED is reported only after Docker confirms the exact ID is absent.
+ *
+ * EVIDENCE RULE. A sandbox_* record is LOCALLY_VERIFIED only from authoritative `docker inspect` readback of the
+ * exact tracked ID with every security-relevant field explicitly present and safe. Container stdout is output,
+ * never evidence.
  */
 
 export const SANDBOX_EVIDENCE_KINDS = Object.freeze(['sandbox_created', 'sandbox_started', 'sandbox_stopped', 'sandbox_destroyed', 'sandbox_policy']);
 const SPEC_KEYS = ['sandboxId', 'role', 'worktreePath', 'policy', 'command'];
+const CONTAINER_ID = /^[0-9a-f]{64}$/;
 
 const evidence = (kind, grade, data) => ({ kind, grade, data, observedAt: new Date().toISOString() });
-
 function parseJson(text) { try { return JSON.parse(text); } catch { return undefined; } }
 
 export class DockerSandboxRuntime {
@@ -46,15 +57,27 @@ export class DockerSandboxRuntime {
 
   // ---- Docker readback helpers -------------------------------------------------------------------
 
-  /** Returns { state: 'PRESENT'|'ABSENT'|'UNKNOWN', info?, detail? }. Ambiguity is never treated as absence. */
-  async #readContainer(name) {
-    const r = await this.#docker.run(['inspect', '--type=container', '--format={{json .}}', name]);
+  /** `ref` is a name (pre-create only) or an immutable container ID. Ambiguity is never treated as absence. */
+  async #read(ref) {
+    const r = await this.#docker.run(['inspect', '--type=container', '--format={{json .}}', ref]);
     if (r.spawnError || r.timedOut) return { state: 'UNKNOWN', detail: 'docker did not answer' };
     if (r.exitCode === 0) {
       const info = parseJson(r.stdout);
-      return info && typeof info === 'object' ? { state: 'PRESENT', info } : { state: 'UNKNOWN', detail: 'unparseable inspect output' };
+      return info && typeof info === 'object' && !Array.isArray(info) ? { state: 'PRESENT', info } : { state: 'UNKNOWN', detail: 'unparseable inspect output' };
     }
     return /no such (object|container)/i.test(r.stderr) ? { state: 'ABSENT' } : { state: 'UNKNOWN', detail: r.stderr.trim().slice(0, 200) };
+  }
+
+  /** Authoritative read of the exact tracked container by immutable ID. */
+  #readTracked(record) {
+    return record.containerId ? this.#read(record.containerId) : Promise.resolve({ state: 'UNKNOWN', detail: 'no container id is tracked' });
+  }
+
+  /** The one ownership check: ID + all three labels. A name never establishes ownership. */
+  #owns(info, record) {
+    const labels = info?.Config?.Labels;
+    return !!record.containerId && info?.Id === record.containerId && !!labels && typeof labels === 'object'
+      && labels['cc.sandbox'] === '1' && labels['cc.sandbox.id'] === record.sandboxId && labels['cc.sandbox.role'] === record.role;
   }
 
   async #readImage(alias) {
@@ -69,47 +92,13 @@ export class DockerSandboxRuntime {
     return { present: true, imageId: info.Id, digest: entry.digest, arch: info.Architecture, os: info.Os, variant: info.Variant ?? null, envKeys };
   }
 
-  /** Compare what Docker actually created against what the policy intended. */
-  #verify(info, plan, image) {
-    const hc = info.HostConfig ?? {}; const cfg = info.Config ?? {};
-    const failures = [];
-    const check = (name, ok) => { if (!ok) failures.push(name); return ok; };
-    const none = (v) => v === null || v === undefined || (Array.isArray(v) && v.length === 0) || (typeof v === 'object' && Object.keys(v).length === 0) || v === '';
-    const expectedNet = plan.policy.network === 'NO_NETWORK' ? ['none'] : ['bridge', 'default'];
-    const checks = {
-      networkMode: check('networkMode', expectedNet.includes(hc.NetworkMode)),
-      notPrivileged: check('privileged', hc.Privileged === false),
-      capDropAll: check('capDrop', Array.isArray(hc.CapDrop) && hc.CapDrop.includes('ALL')),
-      noCapAdd: check('capAdd', none(hc.CapAdd)),
-      noNewPrivileges: check('securityOpt', Array.isArray(hc.SecurityOpt) && hc.SecurityOpt.length === 1 && hc.SecurityOpt[0].startsWith('no-new-privileges')),
-      readOnlyRoot: check('readonlyRootfs', hc.ReadonlyRootfs === true),
-      noHostPid: check('pidMode', none(hc.PidMode)),
-      privateIpc: check('ipcMode', hc.IpcMode === 'private'),
-      noHostUserns: check('usernsMode', none(hc.UsernsMode)),
-      noDevices: check('devices', none(hc.Devices) && none(hc.DeviceCgroupRules) && none(hc.DeviceRequests)),
-      noPortsOrLinks: check('ports', none(hc.PortBindings) && none(hc.Links) && !hc.PublishAllPorts),
-      noBindsViaLegacyVolumes: check('binds', none(hc.Binds) && none(hc.VolumesFrom)),
-      memory: check('memory', hc.Memory === plan.policy.memoryMb * 1024 * 1024 && hc.MemorySwap === hc.Memory),
-      cpus: check('nanoCpus', hc.NanoCpus === Math.round(plan.policy.cpus * 1e9)),
-      pids: check('pidsLimit', hc.PidsLimit === plan.policy.pids),
-      user: check('user', cfg.User === this.#user),
-      workdir: check('workingDir', cfg.WorkingDir === '/workspace'),
-      logDriver: check('logDriver', hc.LogConfig?.Type === 'none'),
-      image: check('image', cfg.Image === plan.image.reference && info.Image === image.imageId),
-      labels: check('labels', cfg.Labels?.['cc.sandbox'] === '1' && cfg.Labels?.['cc.sandbox.id'] === plan.sandboxId),
-    };
-    const mounts = [...(info.Mounts ?? [])].map((m) => ({ type: m.Type, source: m.Source, destination: m.Destination, rw: m.RW })).sort((a, b) => a.destination.localeCompare(b.destination));
-    const expectedMounts = plan.mounts.map((m) => ({ type: 'bind', source: m.source, destination: m.destination, rw: m.rw })).sort((a, b) => a.destination.localeCompare(b.destination));
-    checks.mounts = check('mounts', JSON.stringify(mounts) === JSON.stringify(expectedMounts));
-    checks.noDockerSocket = check('dockerSocket', !/docker\.sock/.test(JSON.stringify({ mounts: info.Mounts, hc })));
-    const tmpfs = Object.keys(hc.Tmpfs ?? {}).sort();
-    checks.tmpfs = check('tmpfs', JSON.stringify(tmpfs) === JSON.stringify(plan.tmpfsPaths));
-    const env = Object.fromEntries((cfg.Env ?? []).map((e) => { const i = e.indexOf('='); return [e.slice(0, i), e.slice(i + 1)]; }));
-    const expectedEnv = plan.env;
-    const extra = Object.keys(env).filter((k) => !(k in expectedEnv) && !image.envKeys.includes(k));
-    checks.env = check('env', Object.entries(expectedEnv).every(([k, v]) => env[k] === v) && extra.length === 0);
-    return { ok: failures.length === 0, failures, checks };
+  /** `rm --force` by exact ID, then authoritative readback by that ID. Returns 'ABSENT' | 'PRESENT' | 'UNKNOWN'. */
+  async #removeById(containerId) {
+    await this.#docker.run(['rm', '--force', containerId], { timeoutMs: 20_000 });
+    return (await this.#read(containerId)).state;
   }
+
+  #dropMask(record) { if (record.maskDir) fs.rmSync(record.maskDir, { recursive: true, force: true }); }
 
   // ---- Public API -------------------------------------------------------------------------------
 
@@ -133,15 +122,17 @@ export class DockerSandboxRuntime {
         noNetworkEnforcedByDocker: true,
         providerNetworkRestrictsToProvider: false, // bridge network only; see sandboxPolicy.mjs
         readOnlyRoot: true, capDropAll: true, noNewPrivileges: true, dockerSocket: 'never mounted',
+        hardLinkedFiles: 'blocked (fail closed)', containerIdentity: 'immutable id + ownership labels',
         resourceLimits: ['cpus', 'memory', 'pids', 'timeout', 'output'],
       },
     };
   }
 
-  /** Validate everything, create (not start) the container, and verify it by inspect readback. */
+  /** Validate everything, create (not start) the container, and verify it by strict inspect readback of its ID. */
   async prepare(spec) {
     let maskDir = null;
-    const fail = async (error) => {
+    let record = null;
+    const failBeforeId = (error) => {
       if (maskDir) fs.rmSync(maskDir, { recursive: true, force: true });
       if (error instanceof SandboxBlockedError) return { state: 'BLOCKED', code: error.code, reason: error.message, evidence: [] };
       throw error;
@@ -159,7 +150,7 @@ export class DockerSandboxRuntime {
       const image = await this.#readImage(policy.image);
       if (!image.present) throw new SandboxBlockedError(image.reason, `Image ${policy.image} is not usable (${image.reason}); images are never pulled automatically`);
 
-      const existing = await this.#readContainer(name);
+      const existing = await this.#read(name); // by NAME, only to detect a collision before create
       if (existing.state === 'PRESENT') throw new SandboxBlockedError('CONTAINER_EXISTS', 'A container with this identity already exists; it is not deleted');
       if (existing.state === 'UNKNOWN') throw new SandboxBlockedError('AMBIGUOUS_DOCKER_STATE', `Cannot determine whether the container exists: ${existing.detail}`);
 
@@ -176,37 +167,61 @@ export class DockerSandboxRuntime {
       assertDockerArgs(args, { image: imageEntry, allowedBindSources });
 
       const created = await this.#docker.run(args);
-      if (created.spawnError || created.exitCode !== 0) {
-        const again = await this.#readContainer(name); // a failed create must not leave something behind unnoticed
-        if (again.state === 'PRESENT') await this.#docker.run(['rm', '-f', name]);
-        throw new SandboxBlockedError('CREATE_FAILED', `docker create failed: ${created.stderr.trim().slice(0, 200)}`);
+      const containerId = created.stdout.trim();
+      if (created.spawnError || created.exitCode !== 0 || !CONTAINER_ID.test(containerId)) {
+        // No ID came back. Something may still have appeared under this name, but nothing proves it is ours
+        // (names and labels can be set by anyone), so it is NEVER removed: left in place and reported.
+        const again = await this.#read(name);
+        if (again.state === 'ABSENT') throw new SandboxBlockedError('CREATE_FAILED', `docker create failed: ${created.stderr.trim().slice(0, 200)}`);
+        if (maskDir) fs.rmSync(maskDir, { recursive: true, force: true });
+        this.#records.set(spec.sandboxId, { sandboxId: spec.sandboxId, role: spec.role, name, containerId: null, state: 'UNKNOWN', note: 'CREATE_AMBIGUOUS' });
+        return { state: 'BLOCKED', code: 'CREATE_AMBIGUOUS', reason: 'docker create did not confirm an identity but a container with this name now exists; it was left untouched', evidence: [] };
       }
+
+      // The ID is ours (returned by our own create). Track it immediately, before any further readback can fail.
       const plan = {
-        sandboxId: spec.sandboxId, policy, image: imageEntry, maskDir,
+        sandboxId: spec.sandboxId, policy, image: imageEntry, maskDir, workspaceRoot: workspace.root, gitKind: workspace.gitKind,
         mounts: [{ source: workspace.root, destination: '/workspace', rw: policy.writablePaths.includes('/workspace') }, ...(gitMask?.kind === 'file' ? [{ source: gitMask.emptyFile, destination: '/workspace/.git', rw: false }] : [])],
-        tmpfsPaths: [...(policy.writablePaths.includes('/tmp') ? ['/tmp'] : []), ...(gitMask?.kind === 'dir' ? ['/workspace/.git'] : [])].sort(),
-        env: { ...{ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' }, ...policy.env },
+        tmpfs: { ...(policy.writablePaths.includes('/tmp') ? { '/tmp': 'rw,noexec,nosuid,nodev,size=64m' } : {}), ...(gitMask?.kind === 'dir' ? { '/workspace/.git': 'ro,noexec,nosuid,nodev,size=1k' } : {}) },
+        env: { ...BASE_ENV, ...policy.env },
       };
-      const readback = await this.#readContainer(name);
-      if (readback.state !== 'PRESENT') {
-        throw new SandboxBlockedError('AMBIGUOUS_DOCKER_STATE', 'Created container could not be read back');
-      }
-      const verdict = this.#verify(readback.info, plan, image);
-      if (!verdict.ok) {
-        await this.#destroyOwned(name, spec.sandboxId); // our own just-created container
-        throw new SandboxBlockedError('POLICY_READBACK_MISMATCH', `Docker did not create the intended configuration: ${verdict.failures.join(', ')}`);
-      }
-      const record = { sandboxId: spec.sandboxId, role: spec.role, name, containerId: readback.info.Id, plan, image, maskDir, state: 'PREPARED' };
+      record = { sandboxId: spec.sandboxId, role: spec.role, name, containerId, plan, image, maskDir, state: 'CREATED_UNVERIFIED' };
       this.#records.set(spec.sandboxId, record);
+      maskDir = null; // from here the mask belongs to the record and is removed only by a confirmed destroy
+
+      const readback = await this.#readTracked(record);
+      if (readback.state !== 'PRESENT') {
+        record.state = 'UNKNOWN';
+        return { state: 'UNKNOWN', code: 'READBACK_UNCONFIRMED', reason: `Created container ${containerId.slice(0, 12)} could not be read back; it is tracked and left in place`, sandboxId: spec.sandboxId, containerId, evidence: [] };
+      }
+      if (!this.#owns(readback.info, record)) {
+        record.state = 'UNKNOWN';
+        return { state: 'BLOCKED', code: 'NOT_OWNED', reason: 'Created container identity or ownership labels do not match; left untouched', sandboxId: spec.sandboxId, containerId, evidence: [] };
+      }
+      const verdict = verifyContainerReadback(readback.info, { plan, image, user: this.#user });
+      if (!verdict.ok) {
+        // Identity is proven (id + labels), so this is our own container: remove it by ID and confirm.
+        const gone = await this.#removeById(containerId);
+        if (gone === 'ABSENT') { this.#dropMask(record); record.state = 'DESTROYED'; } else record.state = 'UNKNOWN';
+        const incomplete = verdict.missing.length > 0;
+        return {
+          state: gone === 'ABSENT' ? 'BLOCKED' : 'UNKNOWN',
+          code: incomplete ? 'POLICY_READBACK_INCOMPLETE' : 'POLICY_READBACK_MISMATCH',
+          reason: `${incomplete ? 'Docker did not report' : 'Docker reported an unsafe value for'}: ${[...verdict.missing, ...verdict.failures].join(', ')}${gone === 'ABSENT' ? '' : ' (and removal could not be confirmed)'}`,
+          sandboxId: spec.sandboxId, containerId, evidence: [],
+        };
+      }
+      record.state = 'PREPARED';
       return {
-        state: 'PREPARED', sandboxId: spec.sandboxId, name, containerId: record.containerId, network: policy.network, imageId: image.imageId,
+        state: 'PREPARED', sandboxId: spec.sandboxId, name, containerId, network: policy.network, imageId: image.imageId,
         evidence: [
-          evidence('sandbox_policy', 'LOCALLY_VERIFIED', { checks: verdict.checks, network: policy.network, mounts: plan.mounts, gitMask: gitMask?.kind ?? 'none', limits: { cpus: policy.cpus, memoryMb: policy.memoryMb, pids: policy.pids } }),
-          evidence('sandbox_created', 'LOCALLY_VERIFIED', { name, containerId: record.containerId, imageId: image.imageId, imageDigest: image.digest, arch: image.arch }),
+          evidence('sandbox_policy', 'LOCALLY_VERIFIED', { containerId, checks: verdict.checks, network: policy.network, mounts: plan.mounts, tmpfs: plan.tmpfs, gitMask: gitMask?.kind ?? 'none', limits: { cpus: policy.cpus, memoryMb: policy.memoryMb, pids: policy.pids } }),
+          evidence('sandbox_created', 'LOCALLY_VERIFIED', { name, containerId, imageId: image.imageId, imageDigest: image.digest, arch: image.arch }),
         ],
       };
     } catch (error) {
-      return fail(error);
+      if (record) { record.state = 'UNKNOWN'; throw error; } // never lose a created container because of an exception
+      return failBeforeId(error);
     }
   }
 
@@ -214,30 +229,38 @@ export class DockerSandboxRuntime {
   async start(sandboxId, { onLine } = {}) {
     const record = this.#records.get(sandboxId);
     if (!record || record.state !== 'PREPARED') return { state: 'BLOCKED', code: 'INVALID_STATE', reason: 'Sandbox is not in PREPARED state', evidence: [] };
-    const { name, plan, image } = record;
-    // Re-verify immediately before starting: the container must still be exactly what we created.
-    const before = await this.#readContainer(name);
-    if (before.state !== 'PRESENT' || before.info.Id !== record.containerId || !this.#verify(before.info, plan, image).ok) {
-      return { state: before.state === 'UNKNOWN' ? 'UNKNOWN' : 'BLOCKED', code: 'CONTAINER_CHANGED', reason: 'Container no longer matches the verified configuration', evidence: [] };
+    const { plan, image } = record;
+    // Re-check the host side (a file may have gained a hard link or a symlink since prepare)…
+    try {
+      inspectWorkspace(plan.workspaceRoot, { commandCenterRoot: this.#commandCenterRoot, homeDir: this.#homeDir, stateRoot: this.#stateRoot });
+    } catch (error) {
+      if (error instanceof SandboxBlockedError) return { state: 'BLOCKED', code: error.code, reason: error.message, evidence: [] };
+      throw error;
+    }
+    // …and re-verify the container: the exact tracked ID must still be ours and still match the policy.
+    const before = await this.#readTracked(record);
+    if (before.state === 'UNKNOWN') return { state: 'UNKNOWN', code: 'AMBIGUOUS_DOCKER_STATE', evidence: [] };
+    if (before.state === 'ABSENT' || !this.#owns(before.info, record) || !verifyContainerReadback(before.info, { plan, image, user: this.#user }).ok) {
+      return { state: 'BLOCKED', code: 'CONTAINER_CHANGED', reason: 'Container no longer matches the verified identity and configuration', evidence: [] };
     }
     record.state = 'STARTED';
     const lines = [];
-    const handle = this.#docker.stream(['start', '-a', name], {
+    const handle = this.#docker.stream(['start', '-a', record.containerId], {
       timeoutMs: plan.policy.timeoutMs,
       limits: { maxStdoutBytes: plan.policy.outputBytes },
       onLine: (line) => { lines.push(line); onLine?.(line); },
     });
     const done = await handle.done;
     let outcome = null;
-    let after = await this.#readContainer(name);
+    let after = await this.#readTracked(record);
     if (done.terminateReason === 'timeout') outcome = 'TIMED_OUT';
     else if (done.limit) outcome = 'OUTPUT_LIMIT';
     if (after.state === 'PRESENT' && after.info.State?.Running) {
       const stopped = await this.stop(sandboxId);
-      after = await this.#readContainer(name);
-      if (stopped.state !== 'STOPPED') return { state: 'UNKNOWN', outcome: 'UNKNOWN', code: 'STOP_NOT_CONFIRMED', lines, evidence: [] };
+      after = await this.#readTracked(record);
+      if (stopped.state !== 'STOPPED') return { state: 'UNKNOWN', outcome: 'UNKNOWN', code: stopped.code ?? 'STOP_NOT_CONFIRMED', lines, evidence: [] };
     }
-    if (after.state !== 'PRESENT' || !['exited', 'dead'].includes(after.info.State?.Status)) {
+    if (after.state !== 'PRESENT' || !this.#owns(after.info, record) || !['exited', 'dead'].includes(after.info.State?.Status)) {
       record.state = 'UNKNOWN';
       return { state: 'UNKNOWN', outcome: 'UNKNOWN', code: 'AMBIGUOUS_DOCKER_STATE', lines, evidence: [] };
     }
@@ -249,34 +272,36 @@ export class DockerSandboxRuntime {
     };
   }
 
-  /** Normalized, authoritative view from `docker inspect`; UNKNOWN when Docker's answer is ambiguous. */
+  /** Normalized, authoritative view of the exact tracked ID; UNKNOWN when ambiguous or not provably ours. */
   async inspect(sandboxId) {
     const record = this.#records.get(sandboxId);
     if (!record) return { state: 'ABSENT', reason: 'NOT_TRACKED' };
-    const r = await this.#readContainer(record.name);
+    const r = await this.#readTracked(record);
     if (r.state === 'ABSENT') return { state: 'ABSENT' };
     if (r.state === 'UNKNOWN') return { state: 'UNKNOWN', reason: r.detail };
+    if (!this.#owns(r.info, record)) return { state: 'UNKNOWN', reason: 'NOT_OWNED' };
     const st = r.info.State ?? {};
     return { state: st.Running ? 'RUNNING' : (st.Status ?? 'UNKNOWN').toUpperCase(), exitCode: st.ExitCode, oomKilled: st.OOMKilled === true, networkMode: r.info.HostConfig?.NetworkMode, containerId: r.info.Id };
   }
 
-  /** `docker stop` → bounded wait → `docker kill`. STOPPED only when readback confirms; otherwise UNKNOWN. */
+  /** Verify identity → `docker stop <id>` → bounded wait → `docker kill <id>`. STOPPED only on readback of that ID. */
   async stop(sandboxId) {
     const record = this.#records.get(sandboxId);
     if (!record) return { state: 'STOPPED', already: true, evidence: [] };
-    const read = async () => this.#readContainer(record.name);
-    let r = await read();
+    if (!record.containerId) return { state: 'UNKNOWN', code: 'NO_TRACKED_CONTAINER_ID', evidence: [] };
+    let r = await this.#readTracked(record);
     if (r.state === 'ABSENT') return { state: 'STOPPED', already: true, evidence: [] };
     if (r.state === 'UNKNOWN') return { state: 'UNKNOWN', code: 'AMBIGUOUS_DOCKER_STATE', evidence: [] };
+    if (!this.#owns(r.info, record)) return { state: 'BLOCKED', code: 'NOT_OWNED', reason: 'Container identity does not match; it is left untouched', evidence: [] };
     if (r.info.State?.Running) {
-      await this.#docker.run(['stop', `--time=${this.#stopGraceSec}`, record.name], { timeoutMs: (this.#stopGraceSec + 10) * 1000 });
-      r = await read();
-      if (r.state === 'PRESENT' && r.info.State?.Running) {
-        await this.#docker.run(['kill', record.name], { timeoutMs: 10_000 });
-        r = await read();
+      await this.#docker.run(['stop', `--time=${this.#stopGraceSec}`, record.containerId], { timeoutMs: (this.#stopGraceSec + 10) * 1000 });
+      r = await this.#readTracked(record);
+      if (r.state === 'PRESENT' && this.#owns(r.info, record) && r.info.State?.Running) {
+        await this.#docker.run(['kill', record.containerId], { timeoutMs: 10_000 });
+        r = await this.#readTracked(record);
       }
     }
-    if (r.state === 'PRESENT' && !r.info.State?.Running) {
+    if (r.state === 'PRESENT' && this.#owns(r.info, record) && r.info.State?.Running === false) {
       record.state = 'STOPPED';
       return { state: 'STOPPED', exitCode: r.info.State.ExitCode, evidence: [evidence('sandbox_stopped', 'LOCALLY_VERIFIED', { containerId: record.containerId, status: r.info.State.Status, exitCode: r.info.State.ExitCode })] };
     }
@@ -284,26 +309,23 @@ export class DockerSandboxRuntime {
     return { state: 'UNKNOWN', code: 'STOP_NOT_CONFIRMED', evidence: [] };
   }
 
-  async #destroyOwned(name, sandboxId) {
-    await this.#docker.run(['rm', '--force', name], { timeoutMs: 20_000 });
-    return this.#readContainer(name);
-  }
-
-  /** Idempotent. Only removes a container that carries OUR labels; anything else is BLOCKED and left alone. */
+  /**
+   * Idempotent. Removes only the exact tracked ID after the ownership check, and reports DESTROYED only after
+   * Docker confirms that ID is absent. Anything unprovable is UNKNOWN/BLOCKED and the tracking record is kept.
+   */
   async destroy(sandboxId) {
     const record = this.#records.get(sandboxId);
     if (!record) return { state: 'DESTROYED', already: true, evidence: [] };
-    const r = await this.#readContainer(record.name);
+    if (record.state === 'DESTROYED') return { state: 'DESTROYED', already: true, evidence: [] };
+    if (!record.containerId) return { state: 'UNKNOWN', code: 'CREATE_AMBIGUOUS', reason: 'A container with this name may exist but its identity was never confirmed; it is left untouched', evidence: [] };
+    const r = await this.#readTracked(record);
     if (r.state === 'UNKNOWN') return { state: 'UNKNOWN', code: 'AMBIGUOUS_DOCKER_STATE', evidence: [] };
     if (r.state === 'PRESENT') {
-      const labels = r.info.Config?.Labels ?? {};
-      if (labels['cc.sandbox'] !== '1' || labels['cc.sandbox.id'] !== sandboxId || r.info.Id !== record.containerId) {
-        return { state: 'BLOCKED', code: 'NOT_OWNED', reason: 'Container identity does not match; it is left untouched', evidence: [] };
-      }
-      const after = await this.#destroyOwned(record.name, sandboxId);
-      if (after.state !== 'ABSENT') return { state: 'UNKNOWN', code: 'DESTROY_NOT_CONFIRMED', evidence: [] };
+      if (!this.#owns(r.info, record)) return { state: 'BLOCKED', code: 'NOT_OWNED', reason: 'Container identity does not match; it is left untouched', evidence: [] };
+      const after = await this.#removeById(record.containerId);
+      if (after !== 'ABSENT') { record.state = 'UNKNOWN'; return { state: 'UNKNOWN', code: 'DESTROY_NOT_CONFIRMED', evidence: [] }; }
     }
-    if (record.maskDir) fs.rmSync(record.maskDir, { recursive: true, force: true });
+    this.#dropMask(record);
     record.state = 'DESTROYED';
     return { state: 'DESTROYED', already: r.state === 'ABSENT', evidence: [evidence('sandbox_destroyed', 'LOCALLY_VERIFIED', { name: record.name, containerId: record.containerId })] };
   }

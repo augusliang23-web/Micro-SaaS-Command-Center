@@ -275,7 +275,6 @@ test('readback: any configuration Docker did not honour BLOCKS and removes only 
     extraEnv: (i) => { i.Config.Env.push('GH_TOKEN=leaked'); },
     root: (i) => { i.Config.User = '0:0'; },
     otherImage: (i) => { i.Image = 'sha256:' + 'f'.repeat(64); },
-    noLabels: (i) => { i.Config.Labels = {}; },
     logging: (i) => { i.HostConfig.LogConfig.Type = 'json-file'; },
   };
   for (const [name, mutate] of Object.entries(cases)) {
@@ -314,7 +313,7 @@ test('limits: CPU, memory, PIDs are passed to Docker; timeout and output cap go 
   await runtime.start(r.sandboxId);
   assert.equal(fake.streams[0].timeoutMs, 7000);
   assert.deepEqual(fake.streams[0].limits, { maxStdoutBytes: 8192 });
-  assert.deepEqual(fake.streams[0].args, ['start', '-a', r.name]);
+  assert.deepEqual(fake.streams[0].args, ['start', '-a', r.containerId], 'start targets the immutable id, not the name');
   const defaults = await prepare();
   assert.ok(fake.callsOf('create')[1].some((a) => a.startsWith('--memory=')) && fake.callsOf('create')[1].some((a) => a.startsWith('--pids-limit=')), 'never unlimited by default');
   await runtime.destroy(r.sandboxId); await runtime.destroy(defaults.sandboxId);
@@ -420,7 +419,7 @@ test('destroy: idempotent, ownership-checked, and cleans mask state', async () =
   assert.equal(fake.callsOf('rm').length, 1);
 }));
 
-test('failed start of preparation leaves nothing behind: create failure and partial containers are cleaned', async () => {
+test('create failure: a plain failure leaves nothing; a container that appears under our name is NEVER removed', async () => {
   await withSetup(async ({ fake, prepare, stateRoot }) => {
     fake.failCreate = true;
     const r = await prepare();
@@ -428,23 +427,40 @@ test('failed start of preparation leaves nothing behind: create failure and part
     assert.equal(fake.containers.size, 0);
     assert.deepEqual(fs.readdirSync(stateRoot), []);
   });
-  await withSetup(async ({ fake, prepare, stateRoot }) => {
+  await withSetup(async ({ fake, prepare, runtime, stateRoot }) => {
+    // initial inspect(name) = ABSENT → docker create fails → second inspect(name) = PRESENT (someone else's container)
     fake.failCreate = true; fake.leaveBehindOnFailedCreate = true;
-    const r = await prepare();
-    assert.equal(r.code, 'CREATE_FAILED');
-    assert.equal(fake.containers.size, 0, 'the partial container we caused is removed');
-    assert.equal(fake.callsOf('rm').length, 1);
-    assert.deepEqual(fs.readdirSync(stateRoot), []);
+    const sandboxId = id();
+    const r = await prepare({ sandboxId });
+    assert.deepEqual([r.state, r.code], ['BLOCKED', 'CREATE_AMBIGUOUS']);
+    assert.equal(fake.callsOf('rm').length, 0, 'ownership is unprovable, so nothing is removed');
+    assert.equal(fake.callsOf('stop').length + fake.callsOf('kill').length, 0);
+    assert.equal(fake.containers.size, 1, 'the container under our name is untouched');
+    assert.deepEqual(r.evidence, []);
+    assert.deepEqual(fs.readdirSync(stateRoot), [], 'our own mask state is cleaned');
+    const d = await runtime.destroy(sandboxId);
+    assert.deepEqual([d.state, d.code], ['UNKNOWN', 'CREATE_AMBIGUOUS'], 'cleanup refuses to guess');
+    assert.equal(fake.callsOf('rm').length, 0);
+    assert.deepEqual((await runtime.stop(sandboxId)).code, 'NO_TRACKED_CONTAINER_ID');
   });
 });
 
-test('start re-verifies the container just before running and refuses a swapped or modified one', async () => withSetup(async ({ fake, prepare, runtime }) => {
-  const r = await prepare();
-  fake.containers.get(r.name).id = 'd'.repeat(64);
-  const res = await runtime.start(r.sandboxId);
-  assert.deepEqual([res.state, res.code], ['BLOCKED', 'CONTAINER_CHANGED']);
-  assert.equal(fake.streams.length, 0, 'the container was never started');
-}));
+test('start re-verifies identity and policy just before running and refuses a swapped or modified container', async () => {
+  await withSetup(async ({ fake, prepare, runtime }) => {
+    const r = await prepare();
+    const replacement = fake.replace(r.name);
+    const res = await runtime.start(r.sandboxId);
+    assert.deepEqual([res.state, res.code], ['BLOCKED', 'CONTAINER_CHANGED']);
+    assert.equal(fake.streams.length, 0, 'nothing was started');
+    assert.equal(fake.containers.get(r.name), replacement, 'the replacement is untouched');
+  });
+  await withSetup(async ({ fake, prepare, runtime }) => {
+    const r = await prepare();
+    fake.mutateInspect = (i) => { i.HostConfig.Privileged = true; };
+    assert.equal((await runtime.start(r.sandboxId)).code, 'CONTAINER_CHANGED');
+    assert.equal(fake.streams.length, 0);
+  });
+});
 
 test('docker unavailable is BLOCKED with no host fallback; images are never pulled and platform/digest are checked', async () => {
   await withSetup(async ({ fake, runtime, prepare }) => {

@@ -18,17 +18,24 @@ Host Command Center → Task / PolicyGate → Orchestrator → [Agent Sandbox | 
 | `workspaceView.mjs` | symlink gate + `.git` metadata handling |
 | `dockerClient.mjs` | absolute-binary, `shell:false` Docker CLI wrapper (injectable) |
 | `dockerSandboxRuntime.mjs` | `probe / prepare / start / inspect / stop / destroy` |
+| `readbackVerifier.mjs` | strict `docker inspect` verification (explicit-presence rule) |
 
 ## 2. Contract
 
-- **`probe()`** — engine reachable, linux engine, and each allowlisted image present with the pinned digest and platform. Never throws; unavailable ⇒ BLOCKED upstream, no host fallback.
-- **`prepare({sandboxId, role, worktreePath, policy, command})`** — validates everything, refuses unknown fields, checks the name is free, runs `docker create` (never `run`), then **reads the container back with `docker inspect` and verifies 24 properties** (network mode, privileged, caps, security opt, read-only root, pid/ipc/userns, devices, ports, memory/swap, CPUs, PIDs, user, workdir, log driver, image id, labels, exact mounts, tmpfs, exact environment, no Docker socket). Any mismatch removes *our own* container and returns BLOCKED.
-- **`start(id)`** — re-verifies the container is unchanged, `docker start -a` with timeout and output cap, then reports from inspect readback (exit code, OOM). Ambiguity ⇒ UNKNOWN.
-- **`inspect(id)`** — normalized authoritative state (`UNKNOWN` when Docker's answer is ambiguous).
-- **`stop(id)`** — `docker stop` → bounded wait → `docker kill`; `STOPPED` only when readback confirms; otherwise `UNKNOWN`.
-- **`destroy(id)`** — idempotent; removes only a container carrying our labels and matching container id; anything else is BLOCKED and left alone.
+**Identity rule.** Once `docker create` returns a container ID, that immutable ID is the container's identity. Names are used only for the pre-create collision check. Every state-changing operation (`start`, `stop`, `kill`, `rm`) targets the exact tracked ID, preceded by one ownership check that requires **all** of: `Id` equals the tracked ID, `cc.sandbox=1`, `cc.sandbox.id=<sandboxId>`, `cc.sandbox.role=<role>`. If any fact disagrees the operation fails closed and the container is left untouched. A container that appears under our name after a failed `create` is never removed (ownership is unprovable); it is reported `CREATE_AMBIGUOUS`.
 
-Evidence (`sandbox_policy / created / started / stopped / destroyed`) is `LOCALLY_VERIFIED` only from inspect readback. Container stdout is output, not evidence.
+**Tracking rule.** The record is created the moment Docker returns an ID (`CREATED_UNVERIFIED`) and is never dropped because a later readback fails: the result is `UNKNOWN / READBACK_UNCONFIRMED` and `inspect/stop/destroy` keep working on that exact ID. `DESTROYED` is reported only after Docker confirms the exact ID is absent; otherwise `UNKNOWN` and the record (and mask state) are kept.
+
+- **`probe()`** — engine reachable and linux, and each allowlisted image present with the pinned digest and platform. Never throws; unavailable ⇒ BLOCKED upstream, no host fallback.
+- **`prepare({sandboxId, role, worktreePath, policy, command})`** — validates everything, refuses unknown fields, checks the name is free, runs `docker create` (never `run`), then reads the container back **by ID** and verifies it (strict rule below). A verified-identity container that fails the policy is removed by ID and confirmed absent; anything unprovable is left in place.
+- **`start(id)`** — re-scans the workspace (symlinks, hard links, nested `.git`), re-verifies identity and policy, `docker start -a <id>` with timeout and output cap, then reports from inspect readback. Ambiguity ⇒ UNKNOWN.
+- **`inspect(id)`** — authoritative state of the tracked ID (`UNKNOWN` when ambiguous or not provably ours).
+- **`stop(id)`** — ownership check → `docker stop <id>` → bounded wait → `docker kill <id>`; `STOPPED` (with evidence) only when readback of that ID confirms.
+- **`destroy(id)`** — idempotent; ownership check → `docker rm --force <id>` → readback must show the ID absent.
+
+**Strict readback rule.** A property supports `LOCALLY_VERIFIED` only if Docker *explicitly* reports the expected safe value. A missing field is never equivalent to `false`/`[]`/`{}`/`""`: it yields `POLICY_READBACK_INCOMPLETE`; a present-but-unsafe value yields `POLICY_READBACK_MISMATCH`; unparseable output is `UNKNOWN`. Verified fields include `Privileged===false`, `CapDrop==['ALL']` and an explicitly empty `CapAdd`, `SecurityOpt` exactly `no-new-privileges` (so `=false`, extra options or prefixes fail), explicit `PidMode/UsernsMode/UTSMode===''`, `IpcMode==='private'`, explicitly empty `Devices/DeviceCgroupRules/DeviceRequests/PortBindings/Links/Binds/VolumesFrom`, `ReadonlyRootfs===true`, exact network mode, limits, user, mounts (each with a boolean `RW`) and the **complete tmpfs options** (`/tmp`: `rw,noexec,nosuid,nodev,size=64m`; `.git`: `ro,noexec,nosuid,nodev,size=1k`; order and equivalent size spellings normalized, anything weaker fails).
+
+Evidence (`sandbox_policy / created / started / stopped / destroyed`) is `LOCALLY_VERIFIED` only from authoritative readback of the exact tracked ID. Container stdout is output, not evidence.
 
 ## 3. Exact Docker configuration
 
@@ -53,7 +60,9 @@ A `git worktree` contains a `.git` **file** pointing by absolute path to the sha
 
 Workspace gate (shared helper): absolute, canonical, existing directory; not `/`, system dirs, home, an ancestor of home, the Command Center checkout (or inside/ancestor of it), `~/.docker`, `~/.ssh`, `~/.aws`, `~/.config`, `~/.claude`, `~/.codex`, …; no commas, quotes or control characters (they could alter Docker's `--mount` syntax); no overlap with the runtime's state directory.
 
-Symlink gate: the Phase 3A detector runs first; escaping, dangling or chained symlinks, a symlinked `.git`, any nested `.git`, or a tree too large to scan **block** activation. This is a preflight signal, not full confinement: hard links and links created later by the agent are not covered (host-side checks after the run remain required).
+Symlink gate: the Phase 3A detector runs first; escaping, dangling or chained symlinks, a symlinked `.git`, any nested `.git`, or a tree too large to scan **block** activation.
+
+Hard-link gate (closed in this phase): a bind-mounted workspace can contain a regular file whose inode is also referenced outside it (`workspace/leak` ↔ `outside/secret`), which would expose or let the container modify the outside file. We cannot robustly tell which other path owns an inode, so V1 **fails closed**: any regular file with link count > 1 → `HARDLINK_UNSAFE` → BLOCKED, before Docker is contacted, and again immediately before `start`. This is conservative (it also blocks workspaces that hard-link files among themselves, e.g. pnpm stores); a staged-copy design can replace it later. A container cannot create a link to a path outside its mount, so links added during a run cannot reach host files. This is still a preflight gate, not a sandbox: host-side integrity checks after a run remain required.
 
 ## 5. Networks
 

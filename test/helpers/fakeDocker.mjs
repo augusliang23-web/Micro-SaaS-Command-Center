@@ -11,6 +11,9 @@ export class FakeDocker {
   calls = [];
   containers = new Map();
   streams = [];
+  idCounter = 1;
+  ambiguousAfterCreate = false; // after a SUCCESSFUL create, inspect becomes ambiguous
+  absentAfterCreate = false; // after a successful create, inspect (by anything) reports absent once
   unavailable = false;
   imagePresent = true;
   imagePlatform = { Os: 'linux', Architecture: 'arm64' };
@@ -37,7 +40,7 @@ export class FakeDocker {
     if (verb === 'create') return this.#create(args);
     if (verb === 'stop') { const c = this.#find(args.at(-1)); if (c && this.stopStopsContainer) c.running = false; return ok(); }
     if (verb === 'kill') { const c = this.#find(args.at(-1)); if (c && this.killKillsContainer) c.running = false; return ok(); }
-    if (verb === 'rm') { this.containers.delete(args.at(-1)); return ok(); }
+    if (verb === 'rm') { const c = this.#find(args.at(-1)); if (c) this.containers.delete(c.name); return ok(); }
     return err(`unexpected docker verb in fake: ${verb}`);
   }
 
@@ -61,7 +64,9 @@ export class FakeDocker {
     return { pid: undefined, cancel: () => {}, done };
   }
 
-  #find(name) { return this.containers.get(name); }
+  #find(ref) { for (const c of this.containers.values()) if (c.name === ref || c.id === ref) return c; return undefined; }
+  find(ref) { return this.#find(ref); }
+  newId() { return (this.idCounter++).toString(16).padStart(64, '0'); }
 
   #imageInspect() {
     if (!this.imagePresent) return err('Error response from daemon: No such image: x');
@@ -74,7 +79,7 @@ export class FakeDocker {
 
   #create(args) {
     if (this.failCreate) {
-      if (this.leaveBehindOnFailedCreate) this.containers.set(this.#flag(args, '--name'), { name: this.#flag(args, '--name'), labels: {}, foreign: false, partial: true, args, mounts: [], env: {}, tmpfs: {} });
+      if (this.leaveBehindOnFailedCreate) this.containers.set(this.#flag(args, '--name'), { name: this.#flag(args, '--name'), id: this.newId(), labels: {}, foreign: false, partial: true, args, mounts: [], env: {}, tmpfs: {} });
       return err('Error response from daemon: simulated create failure');
     }
     const flags = (n) => args.filter((a) => a.startsWith(`${n}=`)).map((a) => a.slice(n.length + 1));
@@ -84,22 +89,28 @@ export class FakeDocker {
     const tmpfs = Object.fromEntries(flags('--tmpfs').map((t) => { const [p, ...o] = t.split(':'); return [p, o.join(':')]; }));
     const mb = (v) => Number(v.replace('m', '')) * 1024 * 1024;
     this.containers.set(name, {
-      name, id: `${'c'.repeat(63)}${this.containers.size}`, labels: Object.fromEntries(flags('--label').map((l) => l.split('=', 2))), args, mounts, tmpfs,
+      name, id: this.newId(), labels: Object.fromEntries(flags('--label').map((l) => l.split('=', 2))), args, mounts, tmpfs,
       network: this.#flag(args, '--network'), memory: mb(this.#flag(args, '--memory')), memorySwap: mb(this.#flag(args, '--memory-swap')), cpus: Number(this.#flag(args, '--cpus')),
       pids: Number(this.#flag(args, '--pids-limit')), user: this.#flag(args, '--user'), workdir: this.#flag(args, '--workdir'), image: args[imageIndex], command: args.slice(imageIndex + 1),
       env: Object.fromEntries(flags('--env').map((e) => { const i = e.indexOf('='); return [e.slice(0, i), e.slice(i + 1)]; })),
       readOnly: args.includes('--read-only'), capDrop: flags('--cap-drop'), secOpt: flags('--security-opt'), ipc: this.#flag(args, '--ipc'), log: this.#flag(args, '--log-driver'),
       running: false, exitCode: 0, oom: false, foreign: false,
     });
-    return ok(this.containers.get(name).id);
+    const created = this.containers.get(name);
+    if (this.ambiguousAfterCreate) this.ambiguousInspect = true;
+    if (this.absentAfterCreate) this.pendingAbsent = true;
+    return ok(created.id);
   }
 
   #flag(args, n) { const v = args.find((a) => a.startsWith(`${n}=`)); return v ? v.slice(n.length + 1) : undefined; }
 
-  addForeign(name) { this.containers.set(name, { name, id: 'f'.repeat(64), labels: {}, foreign: true, mounts: [], env: {}, tmpfs: {}, args: [] }); }
+  addForeign(name) { this.containers.set(name, { name, id: this.newId(), labels: {}, foreign: true, running: false, mounts: [], env: {}, tmpfs: {}, args: [] }); }
+  /** Another container takes over the name; the original keeps living under its own immutable id only if kept. */
+  replace(name, { keepOriginal = false } = {}) { const old = this.containers.get(name); if (keepOriginal && old) this.containers.set(`${name}#orig`, { ...old, name: `${name}#orig` }); this.addForeign(name); return this.containers.get(name); }
 
   #inspect(name) {
     if (this.ambiguousInspect) return err('permission denied while trying to connect to the Docker daemon socket');
+    if (this.pendingAbsent) { this.pendingAbsent = false; return err(`Error response from daemon: No such object: ${name}`); }
     const c = this.#find(name);
     if (!c) return err(`Error response from daemon: No such object: ${name}`);
     if (c.foreign || c.partial) return ok(JSON.stringify({ Id: c.id ?? 'x', Config: { Labels: {}, Env: [] }, HostConfig: {}, Mounts: [], State: { Status: 'created', Running: false, ExitCode: 0 } }));
@@ -108,7 +119,7 @@ export class FakeDocker {
       State: { Status: c.running ? 'running' : (c.started ? 'exited' : 'created'), Running: c.running, ExitCode: c.exitCode, OOMKilled: c.oom, StartedAt: '2026-10-04T00:00:00Z', FinishedAt: '2026-10-04T00:00:01Z' },
       Config: { Image: c.image, User: c.user, WorkingDir: c.workdir, Labels: c.labels, Env: [...Object.entries(c.env).map(([k, v]) => `${k}=${v}`)] },
       HostConfig: {
-        NetworkMode: c.network, Privileged: false, CapDrop: c.capDrop.length ? c.capDrop : null, CapAdd: null, SecurityOpt: c.secOpt, ReadonlyRootfs: c.readOnly, PidMode: '', IpcMode: c.ipc, UsernsMode: '',
+        NetworkMode: c.network, Privileged: false, CapDrop: c.capDrop.length ? c.capDrop : null, CapAdd: null, SecurityOpt: c.secOpt, ReadonlyRootfs: c.readOnly, PidMode: '', IpcMode: c.ipc, UsernsMode: '', UTSMode: '',
         Devices: [], DeviceCgroupRules: null, DeviceRequests: null, PortBindings: {}, Links: null, PublishAllPorts: false, Binds: null, VolumesFrom: null,
         Memory: c.memory, MemorySwap: c.memorySwap, NanoCpus: Math.round(c.cpus * 1e9), PidsLimit: c.pids, LogConfig: { Type: c.log }, Tmpfs: c.tmpfs,
       },

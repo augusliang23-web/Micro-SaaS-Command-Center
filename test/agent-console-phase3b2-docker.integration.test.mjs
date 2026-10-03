@@ -303,6 +303,62 @@ test('real docker: blocked workspaces never reach Docker (home, ~/.docker, comma
   } finally { runtime.dispose(); }
 });
 
+test('real docker: a hard link to a file outside the workspace BLOCKS before any container exists', { skip }, async () => {
+  const scratch = makeScratch();
+  const { runtime, docker } = realRuntime();
+  const before = (await docker.run(['ps', '-a', '--format={{.Names}}'])).stdout;
+  try {
+    fs.linkSync(scratch.secret, path.join(scratch.wt, 'leak')); // synthetic outside/secret.txt and workspace/leak share an inode
+    const r = await runtime.prepare({ sandboxId: nextId('hl'), role: 'scratch', worktreePath: scratch.wt, policy: POLICY(), command: run('cat /workspace/leak') });
+    assert.deepEqual([r.state, r.code], ['BLOCKED', 'HARDLINK_UNSAFE']);
+    assert.equal((await docker.run(['ps', '-a', '--format={{.Names}}'])).stdout, before, 'no container was created');
+    fs.rmSync(path.join(scratch.wt, 'leak'));
+    const ok = await runtime.prepare({ sandboxId: nextId('hl'), role: 'scratch', worktreePath: scratch.wt, policy: POLICY(), command: run('true') });
+    assert.equal(ok.state, 'PREPARED', 'the same workspace without the link is allowed');
+    await runtime.destroy(ok.sandboxId);
+  } finally { runtime.dispose(); scratch.cleanup(); }
+});
+
+test('real docker: stop and destroy act on the exact container ID even if another container takes the name', { skip }, async () => {
+  const scratch = makeScratch();
+  const { runtime, docker } = realRuntime();
+  const sandboxId = nextId('own');
+  const ref = TEST_IMAGES['busybox-test'].reference;
+  let foreignName;
+  try {
+    const prepared = await runtime.prepare({ sandboxId, role: 'scratch', worktreePath: scratch.wt, policy: POLICY({ timeoutMs: 60_000 }), command: ['sleep', '120'] });
+    assert.equal(prepared.state, 'PREPARED');
+    const running = runtime.start(sandboxId);
+    for (let i = 0; i < 100 && (await runtime.inspect(sandboxId)).state !== 'RUNNING'; i += 1) await new Promise((r) => setTimeout(r, 100));
+    assert.equal((await runtime.inspect(sandboxId)).state, 'RUNNING');
+
+    // Race: our container is renamed away and a FOREIGN running container (no labels) takes the original name.
+    foreignName = prepared.name;
+    assert.equal((await docker.run(['rename', prepared.containerId, `${prepared.name}-moved`])).exitCode, 0);
+    const foreign = await docker.run(['run', '-d', `--name=${foreignName}`, '--pull=never', '--network=none', ref, 'sleep', '120']);
+    assert.equal(foreign.exitCode, 0, foreign.stderr);
+    const foreignId = foreign.stdout.trim();
+
+    const stopped = await runtime.stop(sandboxId);
+    assert.equal(stopped.state, 'STOPPED');
+    assert.equal(stopped.evidence[0].data.containerId, prepared.containerId, 'evidence is for OUR id');
+    assert.equal((await docker.run(['inspect', '--format={{.State.Running}}', foreignId])).stdout.trim(), 'true', 'the foreign container was NOT stopped');
+    assert.equal((await docker.run(['inspect', '--format={{.State.Running}}', prepared.containerId])).stdout.trim(), 'false');
+    await running;
+
+    const destroyed = await runtime.destroy(sandboxId);
+    assert.equal(destroyed.state, 'DESTROYED');
+    assert.equal((await docker.run(['inspect', '--format={{.Id}}', prepared.containerId])).exitCode, 1, 'our container is gone');
+    assert.equal((await docker.run(['inspect', '--format={{.State.Running}}', foreignId])).stdout.trim(), 'true', 'the foreign container still runs and still has the name');
+    assert.equal((await docker.run(['inspect', '--format={{.Name}}', foreignId])).stdout.trim(), `/${foreignName}`);
+  } finally {
+    if (foreignName) await docker.run(['rm', '-f', foreignName]);
+    await runtime.destroy(sandboxId);
+    runtime.dispose();
+    scratch.cleanup();
+  }
+});
+
 test('real docker: an image that is not present locally is BLOCKED and nothing is pulled', { skip }, async () => {
   const scratch = makeScratch();
   const ghost = { 'ghost-test': { reference: `busybox@sha256:${'a'.repeat(64)}`, digest: `sha256:${'a'.repeat(64)}`, os: 'linux', arch: 'arm64' } };
