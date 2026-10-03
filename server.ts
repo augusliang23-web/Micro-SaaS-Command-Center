@@ -13,6 +13,9 @@ import {
 } from './server/codexHandoffRoutes.mjs';
 import { createStateRouter } from './server/stateRoutes.mjs';
 import { createGithubRouter } from './server/githubRoutes.mjs';
+import { createTaskRouter } from './server/tasks/taskRoutes.mjs';
+import { TaskStore } from './server/tasks/taskStore.mjs';
+import { loadProjectRegistry } from './server/tasks/projectRegistry.mjs';
 import { createLocalGitRouter } from './server/localGitRoutes.mjs';
 import { fetchChangedFiles, isRealGithubRepo } from './server/githubPullStatus.mjs';
 import { fetchLocalDiff } from './server/localGitStatus.mjs';
@@ -80,6 +83,25 @@ function getGeminiClient(): GoogleGenAI | null {
 
 // Local single-file persistence for the dashboard's own state
 app.use('/api/state', createStateRouter());
+
+// Agent Console Phase 1: DRAFT tasks only. No agent, git or worktree execution.
+// A missing/invalid registry leaves task creation disabled (fail closed).
+let projectRegistry: ReturnType<typeof loadProjectRegistry> | null = null;
+try {
+  projectRegistry = loadProjectRegistry(
+    process.env.COMMAND_CENTER_PROJECTS_CONFIG || path.join(process.cwd(), 'projects.local.json'),
+  );
+} catch (error) {
+  console.warn('Agent Console task creation is disabled:', error instanceof Error ? error.message : String(error));
+}
+app.use(
+  '/api/tasks',
+  createTaskRouter({
+    store: new TaskStore({ dir: path.join(process.cwd(), 'data', 'tasks') }),
+    registry: projectRegistry,
+    expectedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN,
+  }),
+);
 
 // Server-side proxy over the local `gh` CLI session; the GitHub token never reaches the browser
 app.use('/api/github', createGithubRouter());

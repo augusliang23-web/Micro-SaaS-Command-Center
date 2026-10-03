@@ -1,0 +1,34 @@
+{
+  "projects": [
+    {
+      "projectId": "command-center",
+      "repository": "augusliang23-web/Micro-SaaS-Command-Center",
+      "localPath": "/absolute/path/to/Micro-SaaS-Command-Center",
+      "defaultBranch": "main",
+      "worktreeRoot": "/absolute/path/to/worktrees/cc/command-center",
+      "allowedAgents": ["claude-code", "codex"],
+      "allowedActions": [
+        "READ_REPO",
+        "CREATE_WORKTREE",
+        "EDIT_WORKTREE",
+        "RUN_TESTS",
+        "RUN_LINT",
+        "RUN_BUILD",
+        "COMMIT",
+        "PUSH_BRANCH",
+        "CREATE_PR"
+      ],
+      "verifyCommands": {
+        "test": "npm test",
+        "lint": "npm run lint",
+        "build": "npm run build"
+      },
+      "setupCommand": "npm ci",
+      "protectedPaths": ["CLAUDE.md", "AGENTS.md", ".bridge", ".github/workflows", "server.ts", ".env"],
+      "agentBinaries": {
+        "claude": "/opt/homebrew/bin/claude",
+        "codex": "/opt/homebrew/bin/codex"
+      }
+    }
+  ]
+}
