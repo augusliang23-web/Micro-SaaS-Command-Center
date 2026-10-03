@@ -4,6 +4,8 @@
 // concepts: a COMPLETED task can have failing tests, and a PASS badge may only
 // ever come from evidence graded LOCALLY_VERIFIED or higher.
 
+import { classifyAction } from './actionPolicy.mjs';
+
 export const AGENTS = Object.freeze(['claude-code', 'codex']);
 export const EXECUTION_PROFILES = Object.freeze(['FAST', 'STANDARD', 'DEEP', 'CRITICAL']);
 export const DEFAULT_EXECUTION_PROFILE = 'STANDARD';
@@ -112,6 +114,13 @@ export function validateDevelopmentTask(task) {
   if (!RISK_LEVELS.includes(task.risk)) fail(errors, 'risk is invalid');
   if (!Array.isArray(task.allowedActions) || !task.allowedActions.every(isNonEmptyString)) {
     fail(errors, 'allowedActions must be an array of strings');
+  } else {
+    for (const action of task.allowedActions) {
+      const category = classifyAction(action);
+      if (category === null || category === 'FORBIDDEN_IN_V1') {
+        fail(errors, `allowedActions contains an unknown or forbidden action: ${action}`);
+      }
+    }
   }
   if (task.baseSha !== null && !(typeof task.baseSha === 'string' && /^[0-9a-f]{40}$/i.test(task.baseSha))) {
     fail(errors, 'baseSha must be null or a 40-hex SHA');

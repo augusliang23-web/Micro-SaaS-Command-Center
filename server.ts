@@ -96,7 +96,11 @@ try {
 }
 app.use(
   '/api/tasks',
-  createTaskRouter({ store: new TaskStore({ dir: path.join(process.cwd(), 'data', 'tasks') }), registry: projectRegistry }),
+  createTaskRouter({
+    store: new TaskStore({ dir: path.join(process.cwd(), 'data', 'tasks') }),
+    registry: projectRegistry,
+    expectedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN,
+  }),
 );
 
 // Server-side proxy over the local `gh` CLI session; the GitHub token never reaches the browser

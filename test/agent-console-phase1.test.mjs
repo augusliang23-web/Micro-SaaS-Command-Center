@@ -385,11 +385,11 @@ test('evidence: only LOCALLY_VERIFIED or stronger can support a PASS badge', () 
 
 // ---------- /api/tasks ----------
 
-async function withApp({ registry: reg = registry, dir = tmp() } = {}, run) {
+async function withApp({ registry: reg = registry, dir = tmp(), expectedOrigin = 'http://127.0.0.1:3000' } = {}, run) {
   const store = new TaskStore({ dir });
   const app = express();
   app.use(express.json());
-  app.use('/api/tasks', createTaskRouter({ store, registry: reg, idFactory: () => `CC-20260102-${Math.random().toString(16).slice(2, 10).padEnd(8, '0')}` }));
+  app.use('/api/tasks', createTaskRouter({ store, registry: reg, expectedOrigin, idFactory: () => `CC-20260102-${Math.random().toString(16).slice(2, 10).padEnd(8, '0')}` }));
   const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const base = `http://127.0.0.1:${server.address().port}/api/tasks`;
   try {
@@ -488,4 +488,203 @@ test('no execution: the new modules never import process, git or network APIs', 
     const source = readFileSync(new URL(name, dir), 'utf8');
     assert.ok(!/child_process|execFile|spawn\(|(?<!\.)\bexec\(|node:net|node:http|fetch\(/.test(source), `${name} must not execute anything`);
   }
+});
+
+// ---------- Three foundation blockers: persisted authority, origin, durability ----------
+
+test('persisted actions: forbidden actions are rejected by get and reported unreadable by list', () => {
+  const dir = tmp();
+  try {
+    const store = new TaskStore({ dir });
+    for (const action of ['AGENT_NETWORK', 'MERGE', 'DEPLOY', 'PRODUCTION_CONFIG', 'IAM', 'SECRETS', 'DELETE_RESOURCE', 'BILLING_CHANGE']) {
+      const task = { ...draft(), allowedActions: ['READ_REPO', action] };
+      const file = path.join(dir, `${task.taskId}.json`);
+      const bytes = JSON.stringify(task);
+      writeFileSync(file, bytes);
+      assert.ok(validateDevelopmentTask(task).length > 0, action);
+      assert.throws(() => store.get(task.taskId), /invalid/, action);
+      assert.deepEqual(store.list(), { tasks: [], unreadable: [`${task.taskId}.json`] }, action);
+      assert.equal(readFileSync(file, 'utf8'), bytes, 'invalid actions must not be silently stripped');
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('persisted actions: unknown and prototype names cannot become valid task authority', () => {
+  const dir = tmp();
+  try {
+    const store = new TaskStore({ dir });
+    for (const action of ['SOMETHING_NEW', 'NO_SUCH_ACTION', 'constructor', '__proto__']) {
+      const task = { ...draft(), allowedActions: ['READ_REPO', action] };
+      writeFileSync(path.join(dir, `${task.taskId}.json`), JSON.stringify(task));
+      assert.throws(() => store.get(task.taskId), /invalid/, action);
+      assert.deepEqual(store.list(), { tasks: [], unreadable: [`${task.taskId}.json`] }, action);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('persisted actions: known auto and approval actions remain valid data', () => {
+  const dir = tmp();
+  try {
+    const task = { ...draft(), allowedActions: ['READ_REPO', 'EDIT_PROTECTED_PATHS', 'REVIEW_DECISION', 'INSTALL_DEPENDENCIES', 'CHANGE_ALLOWLIST', 'CHANGE_POLICY'] };
+    const store = new TaskStore({ dir });
+    assert.deepEqual(validateDevelopmentTask(task), []);
+    store.create(task);
+    assert.deepEqual(store.get(task.taskId).allowedActions, task.allowedActions);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('api exact origin: foreign loopback ports, localhost alias and internet origins are rejected', async () => {
+  await withApp(undefined, async ({ base, dir }) => {
+    for (const origin of ['http://127.0.0.1:4999', 'http://localhost:3000', 'http://localhost:5173', 'https://evil.example', 'null']) {
+      assert.equal((await post(base, validBody(), { origin })).status, 403, origin);
+      assert.equal((await fetch(base, { headers: { origin } })).status, 403, origin);
+    }
+    assert.deepEqual(readdirSync(dir), []);
+    assert.equal((await post(base, validBody(), { origin: 'http://127.0.0.1:3000' })).status, 201);
+  });
+});
+
+test('api exact origin: Referer-derived origins follow the same rule and malformed Referers fail closed', async () => {
+  await withApp(undefined, async ({ base, dir }) => {
+    for (const referer of ['http://127.0.0.1:4999/page', 'http://localhost:3000/page', 'https://evil.example/page', 'not-a-url']) {
+      assert.equal((await post(base, validBody(), { referer })).status, 403, referer);
+      assert.equal((await fetch(base, { headers: { referer } })).status, 403, referer);
+    }
+    assert.deepEqual(readdirSync(dir), []);
+    const created = await post(base, validBody(), { referer: 'http://127.0.0.1:3000/tasks' });
+    assert.equal(created.status, 201);
+    const { task } = await created.json();
+    assert.equal((await fetch(`${base}/${task.taskId}`, { headers: { referer: 'http://localhost:3000/tasks' } })).status, 403);
+    assert.equal((await fetch(`${base}/${task.taskId}`, { headers: { referer: 'http://127.0.0.1:3000/tasks' } })).status, 200);
+  });
+});
+
+test('api exact origin: no Origin and no Referer intentionally supports local non-browser callers', async () => {
+  await withApp(undefined, async ({ base }) => {
+    const res = await post(base, validBody());
+    assert.equal(res.status, 201);
+    const { task } = await res.json();
+    assert.equal((await fetch(base)).status, 200);
+    assert.equal((await fetch(`${base}/${task.taskId}`)).status, 200);
+  });
+});
+
+test('api exact origin: the injected expected origin is used and invalid configuration fails closed', async () => {
+  await withApp({ expectedOrigin: 'http://localhost:4321' }, async ({ base }) => {
+    assert.equal((await post(base, validBody(), { origin: 'http://127.0.0.1:3000' })).status, 403);
+    assert.equal((await post(base, validBody(), { origin: 'http://localhost:4321' })).status, 201);
+  });
+  for (const expectedOrigin of ['https://evil.example', 'not-a-url', null]) {
+    await withApp({ expectedOrigin }, async ({ base, dir }) => {
+      assert.equal((await post(base, validBody())).status, 403);
+      assert.equal((await fetch(base)).status, 403);
+      assert.deepEqual(readdirSync(dir), []);
+    });
+  }
+});
+
+// Real filesystem writes with only writeSync fault-injected; persistence and
+// cleanup assertions exercise TaskStore rather than the fake's call counts.
+function limitedWrites(limit) {
+  return { ...fs, writeSync(fd, payload, offset = 0, length = payload.length - offset) {
+    const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+    return fs.writeSync(fd, bytes, offset, Math.min(limit, length));
+  } };
+}
+
+test('durability: legitimate short writes persist complete JSON with no temporary file', () => {
+  const dir = tmp();
+  try {
+    const task = draft();
+    const store = new TaskStore({ dir, fsImpl: limitedWrites(16) });
+    store.create(task);
+    assert.deepEqual(new TaskStore({ dir }).get(task.taskId), task);
+    assert.deepEqual(readdirSync(dir), [`${task.taskId}.json`]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('durability: partial writes preserve multi-byte UTF-8 text across byte boundaries', () => {
+  const dir = tmp();
+  try {
+    const task = { ...draft(), title: '修正 Agent Console 權限邊界', goal: '保留繁體中文與 emoji 🛡️' };
+    new TaskStore({ dir, fsImpl: limitedWrites(1) }).create(task);
+    const actual = readFileSync(path.join(dir, `${task.taskId}.json`));
+    assert.deepEqual(actual, Buffer.from(JSON.stringify(task, null, 2), 'utf8'));
+    assert.deepEqual(new TaskStore({ dir }).get(task.taskId), task);
+    assert.deepEqual(readdirSync(dir), [`${task.taskId}.json`]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+function partialThenFail(failure) {
+  let first = true;
+  return { ...fs, writeSync(fd, payload, offset = 0, length = payload.length - offset) {
+    if (!first) {
+      if (failure === 'throw') throw new Error('simulated partial-write failure');
+      return failure;
+    }
+    first = false;
+    const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+    return fs.writeSync(fd, bytes, offset, Math.min(16, length));
+  } };
+}
+
+test('durability: partial write then exception preserves existing tasks and removes temporary files', () => {
+  const dir = tmp();
+  try {
+    const original = draft();
+    new TaskStore({ dir }).create(original);
+    const file = path.join(dir, `${original.taskId}.json`);
+    const before = readFileSync(file);
+    const store = new TaskStore({ dir, fsImpl: partialThenFail('throw') });
+    assert.throws(() => store.create(draft('CC-20260102-0000000b')), /partial-write failure/);
+    assert.deepEqual(readFileSync(file), before);
+    assert.deepEqual(store.get(original.taskId), original);
+    assert.deepEqual(readdirSync(dir), [`${original.taskId}.json`]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('durability: restart recovery failure surfaces and preserves the original RUNNING task byte-for-byte', () => {
+  const dir = tmp();
+  try {
+    const original = { ...draft(), status: 'RUNNING', startedAt: '2026-01-02T01:00:00.000Z' };
+    const live = new TaskStore({ dir });
+    live.create(original);
+    const file = path.join(dir, `${original.taskId}.json`);
+    const before = readFileSync(file);
+    let reopened;
+    assert.throws(() => { reopened = new TaskStore({ dir, fsImpl: partialThenFail('throw') }); }, /partial-write failure/);
+    assert.equal(reopened, undefined, 'failed construction must not expose a successful recoveredTaskIds result');
+    assert.deepEqual(readFileSync(file), before);
+    assert.deepEqual(live.get(original.taskId), original);
+    assert.deepEqual(readdirSync(dir), [`${original.taskId}.json`]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('durability: zero or invalid progress fails recovery without replacing the original task', () => {
+  const dir = tmp();
+  try {
+    const original = { ...draft(), status: 'RUNNING' };
+    const live = new TaskStore({ dir });
+    live.create(original);
+    const file = path.join(dir, `${original.taskId}.json`);
+    const before = readFileSync(file);
+    for (const failure of [0, -1, NaN, undefined]) {
+      assert.throws(() => new TaskStore({ dir, fsImpl: partialThenFail(failure) }), /write/i);
+      assert.deepEqual(readFileSync(file), before);
+      assert.deepEqual(live.get(original.taskId), original);
+      assert.deepEqual(readdirSync(dir), [`${original.taskId}.json`]);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('durability: successful partial-write recovery persists UNKNOWN before reporting recovery', () => {
+  const dir = tmp();
+  try {
+    const original = { ...draft(), status: 'RUNNING' };
+    new TaskStore({ dir }).create(original);
+    const recovered = new TaskStore({ dir, fsImpl: limitedWrites(16), now: () => '2026-01-03T00:00:00.000Z' });
+    assert.deepEqual(recovered.recoveredTaskIds, [original.taskId]);
+    assert.deepEqual(recovered.get(original.taskId), { ...original, status: 'UNKNOWN', updatedAt: '2026-01-03T00:00:00.000Z' });
+    assert.deepEqual(readdirSync(dir), [`${original.taskId}.json`]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

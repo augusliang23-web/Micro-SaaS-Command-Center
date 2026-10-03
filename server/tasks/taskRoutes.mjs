@@ -7,18 +7,21 @@ import { PolicyGate } from './policyGate.mjs';
 
 function requestOrigin(req) {
   const origin = req.get('origin');
-  if (origin) return origin;
+  if (origin !== undefined) return origin;
   const referer = req.get('referer');
-  if (!referer) return null;
+  if (referer === undefined) return null;
   try {
     return new URL(referer).origin;
   } catch {
-    return null;
+    return 'null'; // A malformed browser header is not a no-origin local caller.
   }
 }
 
-export function evaluateTaskRequest({ origin, method, contentType }) {
-  if (origin && !isLoopbackOrigin(origin)) return { ok: false, status: 403, error: 'Unexpected browser origin.' };
+export function evaluateTaskRequest({ origin, expectedOrigin, method, contentType }) {
+  if (!isLoopbackOrigin(expectedOrigin)) return { ok: false, status: 403, error: 'Command Center origin is not configured as loopback.' };
+  // The server is loopback-bound. Headerless local non-browser callers remain
+  // supported; any supplied Origin or Referer must match the configured origin.
+  if (origin !== null && origin !== undefined && origin !== expectedOrigin) return { ok: false, status: 403, error: 'Unexpected browser origin.' };
   if (method === 'POST' && !/^application\/json(?:\s*;|$)/i.test(contentType || '')) {
     return { ok: false, status: 415, error: 'Creating a task requires application/json.' };
   }
@@ -38,6 +41,7 @@ function defaultTaskId(now) {
 export function createTaskRouter({
   store,
   registry,
+  expectedOrigin,
   gate = new PolicyGate(),
   now = () => new Date().toISOString(),
   idFactory = defaultTaskId,
@@ -45,7 +49,7 @@ export function createTaskRouter({
   const router = express.Router();
 
   router.use((req, res, next) => {
-    const decision = evaluateTaskRequest({ origin: requestOrigin(req), method: req.method, contentType: req.get('content-type') });
+    const decision = evaluateTaskRequest({ origin: requestOrigin(req), expectedOrigin, method: req.method, contentType: req.get('content-type') });
     if (!decision.ok) {
       res.status(decision.status).json({ error: decision.error });
       return;

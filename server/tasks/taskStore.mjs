@@ -39,7 +39,16 @@ export class TaskStore {
     let fd;
     try {
       fd = this.#fs.openSync(temp, 'wx', 0o600);
-      this.#fs.writeSync(fd, JSON.stringify(task, null, 2));
+      const payload = Buffer.from(JSON.stringify(task, null, 2), 'utf8');
+      let offset = 0;
+      while (offset < payload.length) {
+        const remaining = payload.length - offset;
+        const written = this.#fs.writeSync(fd, payload, offset, remaining);
+        if (!Number.isInteger(written) || written <= 0 || written > remaining) {
+          throw new Error('Task write did not make valid progress');
+        }
+        offset += written;
+      }
       this.#fs.fsyncSync(fd);
       this.#fs.closeSync(fd);
       fd = undefined;
