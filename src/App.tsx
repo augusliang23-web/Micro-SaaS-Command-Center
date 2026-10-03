@@ -670,6 +670,7 @@ export default function App() {
         onUpdateFeatures={handleUpdateFeatures}
         onConfirmSelectiveRelease={handleConfirmSelectiveRelease}
         onShowToast={showToast}
+        onSaveChangeSummary={handleSaveChangeSummary}
       />
 
       {/* Model Routing Guide Modal */}

@@ -1,7 +1,7 @@
 import express from 'express';
 import { isLoopbackOrigin } from './codexHandoffRoutes.mjs';
 import { fetchGithubRepos, GithubCliError } from './githubRepos.mjs';
-import { fetchPullRequestStatus, fetchChangedFiles, isRealGithubRepo } from './githubPullStatus.mjs';
+import { fetchPullRequestStatus, fetchChangedFiles, fetchRecentCommits, isRealGithubRepo } from './githubPullStatus.mjs';
 
 function requestOrigin(req) {
   const origin = req.get('origin');
@@ -26,6 +26,7 @@ export function createGithubRouter({
   fetchRepos = fetchGithubRepos,
   fetchPullStatus = fetchPullRequestStatus,
   fetchFiles = fetchChangedFiles,
+  fetchCommits = fetchRecentCommits,
 } = {}) {
   const router = express.Router();
 
@@ -96,6 +97,28 @@ export function createGithubRouter({
       }
       console.error('Error fetching GitHub changed files:', error);
       res.status(500).json({ error: 'Failed to fetch changed files.' });
+    }
+  });
+
+  router.get('/recent-commits', async (req, res) => {
+    const repo = typeof req.query.repo === 'string' ? req.query.repo : '';
+    const rawLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : NaN;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 50) : 30;
+    if (!isRealGithubRepo(repo)) {
+      res.status(400).json({ error: 'Query param "repo" must be an owner/name GitHub slug.' });
+      return;
+    }
+    try {
+      const commits = await fetchCommits(repo, { limit });
+      res.json({ commits });
+    } catch (error) {
+      if (error instanceof GithubCliError) {
+        const status = error.kind === 'not_authenticated' ? 401 : error.kind === 'not_found' ? 503 : 502;
+        res.status(status).json({ error: error.message });
+        return;
+      }
+      console.error('Error fetching recent GitHub commits:', error);
+      res.status(500).json({ error: 'Failed to fetch recent commits.' });
     }
   });
 

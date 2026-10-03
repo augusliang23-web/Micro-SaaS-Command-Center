@@ -9,6 +9,7 @@ import {
   describeLocalStatus,
   localStatusToneStyle,
   formatChangeSummaryRef,
+  summaryDisplayDate,
 } from '../utils';
 import { getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
 import { useProjectStatus } from '../hooks/useProjectVerdicts';
@@ -68,7 +69,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
 
   const refKey = changeRef ? (changeRef.pr ? `pr:${changeRef.pr}` : `sha:${changeRef.sha}`) : null;
   const allSummaries = [...(project.changeSummaries || [])].sort(
-    (a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime(),
+    (a, b) => new Date(summaryDisplayDate(b)).getTime() - new Date(summaryDisplayDate(a)).getTime(),
   );
   const latestSummaryForRef = refKey ? allSummaries.find((r) => r.refKey === refKey) ?? null : null;
 
@@ -111,11 +112,17 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
           fileCount: data.fileCount ?? 0,
           includedLocalDiff: !!data.includedLocalDiff,
           generatedAt: new Date().toISOString(),
+          commitDate:
+            githubState?.state === 'active'
+              ? githubState.lastCommitAt
+              : githubState?.state === 'merged'
+              ? githubState.mergedAt
+              : undefined,
         });
       })
       .catch((err) => setSummaryError(err instanceof Error ? err.message : '摘要失敗'))
       .finally(() => setIsSummarizing(false));
-  }, [changeRef, refKey, project.repository, project.id, project.localPath, onSaveChangeSummary]);
+  }, [changeRef, refKey, project.repository, project.id, project.localPath, githubState, onSaveChangeSummary]);
 
   useEffect(() => {
     if (!expanded || !project.localPath || isEditingLocalPath) return;
@@ -427,7 +434,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                     <p className="text-xs text-stone-500 mb-2">AI 歷史摘要（非檢查或部署結果）</p>
                     {latestSummaryForRef.summary}
                     <div className="mt-2 text-[10px] text-stone-400 not-italic">
-                      {formatRelativeTime(latestSummaryForRef.generatedAt)}產生
+                      更新於 {formatRelativeTime(summaryDisplayDate(latestSummaryForRef))}
                       {latestSummaryForRef.includedLocalDiff ? '，已包含本機差異' : ''}
                     </div>
                   </div>
@@ -452,7 +459,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                               <div className="text-[10px] text-stone-400 mb-1">
                                 {formatChangeSummaryRef(r.refKey)}
                                 {' · '}
-                                {formatRelativeTime(r.generatedAt)}產生
+                                {formatRelativeTime(summaryDisplayDate(r))}
                                 {r.includedLocalDiff ? '，已包含本機差異' : ''}
                               </div>
                               {r.summary}

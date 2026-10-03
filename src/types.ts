@@ -192,7 +192,18 @@ export interface ChangeSummaryRecord {
   provider: string;
   fileCount: number;
   includedLocalDiff: boolean;
+  /** When the AI call that produced this summary actually ran. */
   generatedAt: string;
+  /** When the underlying commit/PR itself happened, if known — used for display/sort instead of generatedAt so a backfilled summary of an old commit doesn't show as "just now". */
+  commitDate?: string;
+}
+
+// Shape returned by GET /api/github/recent-commits (server/githubPullStatus.mjs)
+export interface RecentCommit {
+  sha: string;
+  message: string;
+  date: string;
+  url: string;
 }
 
 // Shape returned by GET /api/github/pull-status (server/githubPullStatus.mjs)

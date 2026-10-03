@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   X,
   ExternalLink,
@@ -29,7 +29,15 @@ import {
   MessageSquare,
   History,
 } from 'lucide-react';
-import { MicroSaaSProject, GateStepInfo, TestOutcome, ReviewOutcome, FeatureItem } from '../types';
+import {
+  MicroSaaSProject,
+  GateStepInfo,
+  TestOutcome,
+  ReviewOutcome,
+  FeatureItem,
+  ChangeSummaryRecord,
+  RecentCommit,
+} from '../types';
 import { BridgeWorkflowRail } from './BridgeWorkflowRail';
 import { ChatGPTBridgeModal } from './ChatGPTBridgeModal';
 import { CiCdWorkflowModal } from './CiCdWorkflowModal';
@@ -39,6 +47,7 @@ import {
   getModelBadgeStyle,
   isRealGithubRepo,
   formatChangeSummaryRef,
+  summaryDisplayDate,
 } from '../utils';
 import { provenanceLabel } from '../statusProvenance.mjs';
 import { getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
@@ -77,6 +86,7 @@ interface ProjectDetailDrawerProps {
     releaseNotes: string
   ) => void;
   onShowToast?: (msg: string) => void;
+  onSaveChangeSummary?: (projectId: string, record: ChangeSummaryRecord) => void;
 }
 
 export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
@@ -89,6 +99,7 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   onUpdateFeatures,
   onConfirmSelectiveRelease,
   onShowToast,
+  onSaveChangeSummary,
 }) => {
   const [selectedGateId, setSelectedGateId] = useState<string | null>(null);
   const [decisionOption, setDecisionOption] = useState<string>('option1');
@@ -98,7 +109,104 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   const [iterationPromptOpen, setIterationPromptOpen] = useState(false);
   const [showTechDetail, setShowTechDetail] = useState(false);
   const { verdict, githubState, isLoadingGithub, loadGithubState } = useProjectStatus(project);
-  useEffect(() => { setShowTechDetail(false); }, [project?.id]);
+  const [backfillCandidates, setBackfillCandidates] = useState<RecentCommit[] | null>(null);
+  const [isLoadingBackfillCandidates, setIsLoadingBackfillCandidates] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{ done: number; total: number } | null>(null);
+  const [backfillError, setBackfillError] = useState<string | null>(null);
+  // Backfill requests can outlive a project switch; only the project that
+  // started them may update this drawer's backfill UI.
+  const backfillProjectIdRef = useRef(project?.id);
+
+  useEffect(() => {
+    backfillProjectIdRef.current = project?.id;
+    setShowTechDetail(false);
+    setBackfillCandidates(null);
+    setIsLoadingBackfillCandidates(false);
+    setIsBackfilling(false);
+    setBackfillProgress(null);
+    setBackfillError(null);
+  }, [project?.id]);
+
+  const handleFindBackfillCandidates = useCallback(() => {
+    if (!project) return;
+    const projectId = project.id;
+    const isCurrent = () => backfillProjectIdRef.current === projectId;
+    setIsLoadingBackfillCandidates(true);
+    setBackfillError(null);
+    fetch(`/api/github/recent-commits?repo=${encodeURIComponent(project.repository)}&limit=30`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('讀取失敗'))))
+      .then((data) => {
+        if (!isCurrent()) return;
+        const existingShas = new Set(
+          (project.changeSummaries || [])
+            .filter((r) => r.refKey.startsWith('sha:'))
+            .map((r) => r.refKey.slice(4)),
+        );
+        const candidates: RecentCommit[] = (data.commits || []).filter((c: RecentCommit) => !existingShas.has(c.sha));
+        setBackfillCandidates(candidates);
+      })
+      .catch(() => {
+        if (isCurrent()) setBackfillError('讀取候選紀錄失敗，請稍後再試。');
+      })
+      .finally(() => {
+        if (isCurrent()) setIsLoadingBackfillCandidates(false);
+      });
+  }, [project]);
+
+  const handleRunBackfill = useCallback(async () => {
+    if (!project || !backfillCandidates || backfillCandidates.length === 0) return;
+    const projectId = project.id;
+    const isCurrent = () => backfillProjectIdRef.current === projectId;
+    setIsBackfilling(true);
+    setBackfillError(null);
+    const total = backfillCandidates.length;
+    let done = 0;
+    let quotaExhausted = false;
+
+    for (const commit of backfillCandidates) {
+      try {
+        const res = await fetch('/api/bridge/summarize-changes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: project.repository, sha: commit.sha }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          // The route always answers errors with HTTP 500 and puts Gemini's
+          // real status in the message text — see server.ts's friendlyError.
+          if (typeof data?.error === 'string' && (data.error.includes('429') || data.error.includes('額度已經用完'))) {
+            quotaExhausted = true;
+            break;
+          }
+          continue;
+        }
+        onSaveChangeSummary?.(project.id, {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          refKey: `sha:${commit.sha}`,
+          summary: data.summary,
+          provider: data.provider,
+          fileCount: data.fileCount ?? 0,
+          includedLocalDiff: false,
+          generatedAt: new Date().toISOString(),
+          commitDate: commit.date,
+        });
+        done += 1;
+        if (isCurrent()) setBackfillProgress({ done, total });
+      } catch {
+        // network error on this one commit — skip it, keep going
+      }
+    }
+
+    if (!isCurrent()) return;
+    setIsBackfilling(false);
+    setBackfillCandidates(null);
+    if (quotaExhausted) {
+      setBackfillError(`已經補了 ${done}／${total} 筆，AI 今日額度已用完，剩下的等額度重置後再繼續。`);
+    } else if (done < total) {
+      setBackfillError(`已經補了 ${done}／${total} 筆，其餘 ${total - done} 筆摘要失敗，可以稍後再按一次「回溯摘要」重試。`);
+    }
+  }, [project, backfillCandidates, onSaveChangeSummary]);
 
   if (!project) return null;
 
@@ -338,27 +446,92 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
                   <History className="h-4 w-4 text-stone-700" />
                   <h3 className="text-sm font-bold text-stone-900">更新歷史</h3>
                 </div>
-                {(project.changeSummaries?.length ?? 0) > 0 && (
-                  <span className="text-xs text-stone-400">{project.changeSummaries!.length} 筆記錄</span>
-                )}
+                <div className="flex items-center gap-3">
+                  {(project.changeSummaries?.length ?? 0) > 0 && (
+                    <span className="text-xs text-stone-400">{project.changeSummaries!.length} 筆記錄</span>
+                  )}
+                  {!backfillCandidates && !isBackfilling && (
+                    <button
+                      onClick={handleFindBackfillCandidates}
+                      disabled={isLoadingBackfillCandidates}
+                      className="text-[11px] text-stone-400 hover:text-stone-700 underline cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {isLoadingBackfillCandidates ? '尋找中…' : '回溯摘要更早的紀錄'}
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {backfillCandidates && !isBackfilling && (
+                <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-3.5 space-y-2">
+                  {backfillCandidates.length === 0 ? (
+                    <p className="text-xs text-amber-900">目前沒有遺漏的舊紀錄了，每一筆都已經摘要過。</p>
+                  ) : (
+                    <>
+                      <p className="text-xs text-amber-900">
+                        找到 <strong>{backfillCandidates.length}</strong> 筆還沒摘要過的舊紀錄，摘要會用掉{' '}
+                        {backfillCandidates.length} 次 AI 額度，確定要繼續嗎？
+                      </p>
+                      <ul className="text-[11px] text-amber-800 space-y-0.5">
+                        {backfillCandidates.slice(0, 5).map((c) => (
+                          <li key={c.sha} className="truncate">
+                            · {c.message}（{formatRelativeTime(c.date)}）
+                          </li>
+                        ))}
+                        {backfillCandidates.length > 5 && <li>...還有 {backfillCandidates.length - 5} 筆</li>}
+                      </ul>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={handleRunBackfill}
+                          className="px-3 py-1.5 text-xs font-bold bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-md transition-colors cursor-pointer"
+                        >
+                          開始摘要
+                        </button>
+                        <button
+                          onClick={() => setBackfillCandidates(null)}
+                          className="px-3 py-1.5 text-xs text-stone-600 hover:text-stone-900 cursor-pointer"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {backfillCandidates.length === 0 && (
+                    <button
+                      onClick={() => setBackfillCandidates(null)}
+                      className="text-[11px] text-amber-700 underline cursor-pointer"
+                    >
+                      關閉
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {isBackfilling && (
+                <div className="bg-sky-50 border border-sky-200 rounded-lg p-3 text-xs text-sky-900 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-600 animate-pulse" />
+                  回溯摘要中… {backfillProgress ? `${backfillProgress.done} / ${backfillProgress.total}` : ''}
+                </div>
+              )}
+
+              {backfillError && <p className="text-xs text-rose-700">{backfillError}</p>}
 
               <p className="text-xs text-stone-500">AI 歷史摘要（非檢查或部署結果）</p>
               {!project.changeSummaries || project.changeSummaries.length === 0 ? (
                 <p className="text-xs text-stone-400 leading-relaxed">
                   目前還沒有摘要記錄。到上面「在 GitHub 上查看」旁邊的專案卡片展開「與前一版本相比的改動」，按「請 AI
-                  摘要這次修改」即可開始累積這個專案的更新歷史。
+                  摘要這次修改」即可開始累積這個專案的更新歷史，或按上面的「回溯摘要更早的紀錄」補齊過去的。
                 </p>
               ) : (
                 <ul className="space-y-2.5">
                   {[...project.changeSummaries]
-                    .sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime())
+                    .sort((a, b) => new Date(summaryDisplayDate(b)).getTime() - new Date(summaryDisplayDate(a)).getTime())
                     .map((record) => (
                       <li key={record.id} className="bg-stone-50 border border-stone-200 rounded-lg p-3.5">
                         <div className="flex items-center gap-2 flex-wrap text-[11px] text-stone-500 mb-1.5">
                           <span className="font-mono font-semibold text-stone-700">{formatChangeSummaryRef(record.refKey)}</span>
                           <span>·</span>
-                          <span>{formatRelativeTime(record.generatedAt)}</span>
+                          <span>{formatRelativeTime(summaryDisplayDate(record))}</span>
                           {record.includedLocalDiff && (
                             <span className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-200">含本機差異</span>
                           )}
