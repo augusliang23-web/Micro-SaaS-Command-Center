@@ -29,7 +29,10 @@ const validProject = (overrides = {}) => ({
   worktreeRoot: '/srv/worktrees/demo',
   allowedAgents: ['claude-code', 'codex'],
   allowedActions: ['READ_REPO', 'CREATE_WORKTREE', 'EDIT_WORKTREE', 'RUN_TESTS', 'COMMIT', 'EDIT_PROTECTED_PATHS'],
-  verifyCommands: { test: 'npm test', lint: 'npm run lint' },
+  verifyCommands: {
+    test: { command: 'npm', args: ['test'] },
+    lint: { command: 'npm', args: ['run', 'lint'] },
+  },
   protectedPaths: ['CLAUDE.md', '.github/workflows'],
   agentBinaries: { claude: '/opt/bin/claude' },
   ...overrides,
@@ -687,4 +690,14 @@ test('durability: successful partial-write recovery persists UNKNOWN before repo
     assert.deepEqual(recovered.get(original.taskId), { ...original, status: 'UNKNOWN', updatedAt: '2026-01-03T00:00:00.000Z' });
     assert.deepEqual(readdirSync(dir), [`${original.taskId}.json`]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('api: no browser execution endpoint; run POST remains 404 and task stays DRAFT',async()=>{
+  await withApp(undefined,async({base,store,dir})=>{
+    const response=await post(base,validBody());const {task}=await response.json();
+    assert.equal((await post(`${base}/${task.taskId}/run`,{})).status,404);
+    assert.equal(store.get(task.taskId).status,'DRAFT');
+    assert.deepEqual(readdirSync(dir),[`${task.taskId}.json`]);
+  });
 });

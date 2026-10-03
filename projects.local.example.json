@@ -19,9 +19,9 @@
         "CREATE_PR"
       ],
       "verifyCommands": {
-        "test": "npm test",
-        "lint": "npm run lint",
-        "build": "npm run build"
+        "test": { "command": "npm", "args": ["test"] },
+        "lint": { "command": "npm", "args": ["run", "lint"] },
+        "build": { "command": "npm", "args": ["run", "build"] }
       },
       "setupCommand": "npm ci",
       "protectedPaths": ["CLAUDE.md", "AGENTS.md", ".bridge", ".github/workflows", "server.ts", ".env"],

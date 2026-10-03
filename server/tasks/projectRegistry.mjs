@@ -16,19 +16,19 @@ const BINARY_KEYS = ['claude', 'codex'];
 const isRecord = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim() !== '';
 const isCleanAbsolutePath = (value) =>
-  isNonEmptyString(value) && path.isAbsolute(value) && path.normalize(value) === value &&!value.includes('\0');
+  isNonEmptyString(value) && path.isAbsolute(value) && path.normalize(value) === value && !value.includes('\0');
 const isSafeRelativePath = (value) =>
   isNonEmptyString(value) && !path.isAbsolute(value) && !value.split('/').includes('..') && !value.includes('\0');
 
 function validateProject(project, index) {
   const label = `projects[${index}]`;
   if (!isRecord(project)) throw new Error(`${label} must be an object`);
-  if (!PROJECT_ID.test(project.projectId ?? '')) throw new Error(`${label}.projectId is invalid`);
+  if (typeof project.projectId !== 'string' || !PROJECT_ID.test(project.projectId)) throw new Error(`${label}.projectId is invalid`);
   const where = `${label} (${project.projectId})`;
-  if (!REPOSITORY.test(project.repository ?? '')) throw new Error(`${where}.repository must be owner/name`);
+  if (typeof project.repository !== 'string' || !REPOSITORY.test(project.repository)) throw new Error(`${where}.repository must be owner/name`);
   if (!isCleanAbsolutePath(project.localPath)) throw new Error(`${where}.localPath must be a clean absolute path`);
   if (!isCleanAbsolutePath(project.worktreeRoot)) throw new Error(`${where}.worktreeRoot must be a clean absolute path`);
-  if (!BRANCH.test(project.defaultBranch ?? '') || project.defaultBranch.includes('..') || project.defaultBranch.endsWith('/') || project.defaultBranch.endsWith('.lock')) {
+  if (typeof project.defaultBranch !== 'string' || !BRANCH.test(project.defaultBranch) || project.defaultBranch.includes('..') || project.defaultBranch.endsWith('/') || project.defaultBranch.endsWith('.lock')) {
     throw new Error(`${where}.defaultBranch is invalid`);
   }
   if (!Array.isArray(project.allowedAgents) || project.allowedAgents.length === 0 || !project.allowedAgents.every((a) => AGENTS.includes(a))) {
@@ -40,8 +40,17 @@ function validateProject(project, index) {
   // A project file can narrow the policy but never widen it past the V1 rules.
   const forbidden = project.allowedActions.find((a) => classifyAction(a, ACTION_POLICY) === 'FORBIDDEN_IN_V1');
   if (forbidden) throw new Error(`${where}.allowedActions may not include ${forbidden} (FORBIDDEN_IN_V1)`);
-  if (!isRecord(project.verifyCommands) || !Object.keys(project.verifyCommands).every((k) => VERIFY_COMMAND_KEYS.includes(k)) || !Object.values(project.verifyCommands).every(isNonEmptyString)) {
-    throw new Error(`${where}.verifyCommands must map test/lint/build to command strings`);
+  const verifyCommands = project.verifyCommands;
+  if (!isRecord(verifyCommands) || !Object.keys(verifyCommands).every((key) => VERIFY_COMMAND_KEYS.includes(key)) || !Object.values(verifyCommands).every((spec) =>
+    isRecord(spec) && Object.keys(spec).length === 2 && Object.keys(spec).every((key) => key === 'command' || key === 'args') &&
+    isNonEmptyString(spec.command) && !spec.command.includes('\0') && Array.isArray(spec.args) &&
+    spec.args.every((arg) => typeof arg === 'string' && !arg.includes('\0')))) {
+    throw new Error(`${where}.verifyCommands must map test/lint/build to { command, args }`);
+  }
+  for (const [action, key] of [['RUN_TESTS', 'test'], ['RUN_LINT', 'lint'], ['RUN_BUILD', 'build']]) {
+    if (project.allowedActions.includes(action) && !Object.hasOwn(verifyCommands, key)) {
+      throw new Error(`${where}.allowedActions includes ${action} but verifyCommands.${key} is missing`);
+    }
   }
   if (project.setupCommand !== undefined && !isNonEmptyString(project.setupCommand)) {
     throw new Error(`${where}.setupCommand must be a non-empty string when present`);
@@ -58,12 +67,13 @@ function validateProject(project, index) {
     localPath: project.localPath,
     defaultBranch: project.defaultBranch,
     worktreeRoot: project.worktreeRoot,
-    allowedAgents: [...project.allowedAgents],
-    allowedActions: [...project.allowedActions],
-    verifyCommands: { ...project.verifyCommands },
+    allowedAgents: Object.freeze([...project.allowedAgents]),
+    allowedActions: Object.freeze([...project.allowedActions]),
+    verifyCommands: Object.freeze(Object.fromEntries(Object.entries(project.verifyCommands).map(([key, spec]) =>
+      [key, Object.freeze({ command: spec.command, args: Object.freeze([...spec.args]) })]))),
     ...(project.setupCommand !== undefined ? { setupCommand: project.setupCommand } : {}),
-    protectedPaths: [...project.protectedPaths],
-    agentBinaries: { ...project.agentBinaries },
+    protectedPaths: Object.freeze([...project.protectedPaths]),
+    agentBinaries: Object.freeze({ ...project.agentBinaries }),
   };
 }
 
