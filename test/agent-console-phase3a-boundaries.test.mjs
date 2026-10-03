@@ -39,14 +39,17 @@ test('unwired: the Orchestrator still fails closed on a claude-code adapter and 
 }));
 
 test('unwired: nothing but the adapter modules and tests references the Claude adapter; no run route or UI exists', () => {
-  const importers = walk(REPO)
+  const nonTestFilesMatching = (pattern) => walk(REPO)
     .filter((f) => /\.(mjs|ts|tsx|js|jsx|cjs)$/.test(f))
-    .filter((f) => /claudeCliAdapter|claudeStreamParser|streamingProcess/.test(fs.readFileSync(f, 'utf8')))
+    .filter((f) => pattern.test(fs.readFileSync(f, 'utf8')))
     .map((f) => path.relative(REPO, f))
     .filter((f) => !f.startsWith('test/'))
     .sort();
-  // The adapter is the only non-test file that names the Claude modules (it imports the parser and process layer).
-  assert.deepEqual(importers, ['server/execution/claudeCliAdapter.mjs']);
+  // The Claude adapter and its parser are named only by the adapter itself (it imports the parser).
+  assert.deepEqual(nonTestFilesMatching(/claudeCliAdapter|claudeStreamParser/), ['server/execution/claudeCliAdapter.mjs']);
+  // streamingProcess is a generic, provider-neutral, shell-free process runner. Phase 3B2's Docker client reuses it;
+  // nothing else may (in particular no route, task or orchestrator code).
+  assert.deepEqual(nonTestFilesMatching(/streamingProcess/), ['server/execution/claudeCliAdapter.mjs', 'server/sandbox/dockerClient.mjs']);
   assert.ok(!/execution\//.test(read('server.ts')), 'server.ts must not import the execution layer');
   const routes = read('server/tasks/taskRoutes.mjs');
   assert.deepEqual([...routes.matchAll(/router\.(get|post|put|patch|delete)\('([^']*)'/g)].map((m) => `${m[1]} ${m[2]}`), ['post /', 'get /', 'get /:taskId']);
