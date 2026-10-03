@@ -1,197 +1,89 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { getVerdict, pickMostUrgent } from '../src/verdict.mjs';
+import { githubSnapshot } from '../src/test/githubSnapshots.mjs';
+const now = Date.parse('2026-10-03T02:00:00Z');
+const fresh = { checkedAt: '2026-10-03T01:59:00Z', availability: 'AVAILABLE', now };
+const project = { repository: 'owner/repo', waitingState: 'AI_RUNNING', health: 'Healthy' };
+const derive = (data, options = fresh) => getVerdict(project, githubSnapshot(data), options);
 
-import { getVerdict, getVerdictStyle, pickMostUrgent } from '../src/verdict.mjs';
-
-test('BLOCKED projects get the danger verdict using the blocker text', () => {
-  const verdict = getVerdict({ waitingState: 'BLOCKED', blocker: 'Missing STRIPE_WEBHOOK_SECRET' });
-  assert.equal(verdict.level, 'danger');
-  assert.equal(verdict.explanation, 'Missing STRIPE_WEBHOOK_SECRET');
-  assert.equal(verdict.hasAction, true);
-  assert.equal(verdict.isWaiting, false);
-  assert.equal(verdict.source, 'manual');
+test('observed idle never implies AI execution despite saved AI_RUNNING', () => {
+ const v = derive({ state:'none' });
+ assert.equal(v.status,'IDLE'); assert.equal(v.isWaiting,false); assert.doesNotMatch(v.headline,/AI/);
+});
+test('no checks cannot be presented as passing or merge-ready', () => {
+ const v = derive({state:'open',ciStatus:'none',reviewDecision:'review_required'});
+ assert.equal(v.status,'NEEDS_CONFIRMATION'); assert.equal(v.checksPassed,false);
+ assert.match(v.explanation,/尚未取得自動檢查結果/); assert.doesNotMatch(v.headline,/通過|可以繼續/);
+});
+test('open PR still needs review when checks pass', () => {
+ const v = derive({state:'open',ciStatus:'passing',reviewDecision:'review_required'});
+ assert.equal(v.status,'NEEDS_CONFIRMATION'); assert.match(v.explanation,/等待審查/);
+});
+test('explicit CI execution is in progress without claiming an AI agent is running', () => {
+ const v = derive({state:'open',ciStatus:'running'});
+ assert.equal(v.status,'IN_PROGRESS'); assert.match(v.headline,/自動檢查/); assert.doesNotMatch(v.headline,/AI/);
+});
+test('failing checks and requested changes block even draft work', () => {
+ for (const data of [{state:'open',isDraft:true,ciStatus:'failing'},{state:'open',reviewDecision:'changes_requested'}])
+ assert.equal(derive(data).status,'BLOCKED');
+});
+test('missing, stale, failed and invalid evidence are UNKNOWN without manual fallback', () => {
+ for (const options of [{now},{...fresh,checkedAt:'2026-10-02T01:00:00Z'},{...fresh,availability:'UNAVAILABLE'},{...fresh,checkedAt:'bad'},{...fresh,checkedAt:'2026-10-04T01:00:00Z'}]) {
+ const v=derive({state:'none'},options); assert.equal(v.status,'UNKNOWN'); assert.equal(v.checksPassed,false);
+ }
+ assert.equal(derive(null).status,'UNKNOWN'); assert.equal(derive({state:'nonsense'}).status,'UNKNOWN');
+});
+test('merged PR is idle and proves neither checks nor deployment', () => {
+ const v=derive({state:'merged',prNumber:9,mergedAt:'2026-10-02T00:00:00Z'});
+ assert.equal(v.status,'IDLE'); assert.equal(v.checksPassed,false); assert.equal(v.deployed,false);
+ assert.match(v.explanation,/部署狀態尚未確認/);
+});
+test('draft and direct commits do not imply ongoing AI execution', () => {
+ assert.equal(derive({state:'open',isDraft:true,ciStatus:'none'}).status,'NEEDS_CONFIRMATION');
+ assert.equal(derive({state:'active',ciStatus:'passing'}).status,'IDLE');
+ assert.equal(derive({state:'active',ciStatus:'none'}).status,'NEEDS_CONFIRMATION');
+});
+test('raw idle or running without observed provenance is unknown', () => {
+ for(const waitingState of ['AI_RUNNING','AUTOMATION_IDLE'])
+ assert.equal(getVerdict({waitingState}).status,'UNKNOWN');
+});
+test('recommendations ignore idle/in-progress and rank blocked before confirmation/unknown', () => {
+ assert.equal(pickMostUrgent([{status:'IDLE'},{status:'IN_PROGRESS'}]),-1);
+ assert.equal(pickMostUrgent([{status:'UNKNOWN'},{status:'NEEDS_CONFIRMATION'},{status:'BLOCKED'}]),2);
 });
 
-test('BLOCKED without blocker text falls back to a generic explanation', () => {
-  const verdict = getVerdict({ waitingState: 'BLOCKED', blocker: null });
-  assert.equal(verdict.level, 'danger');
-  assert.match(verdict.explanation, /卡住/);
+test('all demo and explicit demo-marked repositories are excluded from real selection', async () => {
+ const {isRealProject} = await import('../src/verdict.mjs');
+ const projects=[{repository:'owner/real'},{repository:'github.com/my-org/demo'},{repository:'owner/example',dataMode:'demo'},{repository:''}];
+ assert.deepEqual(projects.filter(isRealProject),[{repository:'owner/real'}]);
+});
+test('unknown is attention and every canonical filter uses the same status', async () => {
+ const {needsAttention,matchesStatusFilter}=await import('../src/verdict.mjs');
+ for(const [status,attention,running] of [['IDLE',false,false],['IN_PROGRESS',false,true],['NEEDS_CONFIRMATION',true,false],['BLOCKED',true,false],['UNKNOWN',true,false]]) {
+  const v={status}; assert.equal(needsAttention(v),attention); assert.equal(matchesStatusFilter(v,'attention'),attention);
+  assert.equal(matchesStatusFilter(v,'running'),running); assert.equal(matchesStatusFilter(v,status),true);
+ }
+});
+test('checked-time ordering puts newest verified observation first and unknown times last', async () => {
+ const {compareCheckedAt}=await import('../src/verdict.mjs');
+ const values=[{id:'missing'}, {id:'older',checkedAt:'2026-10-03T01:00:00Z',sourceState:'AVAILABLE'}, {id:'failed',checkedAt:'2026-10-03T03:00:00Z',sourceState:'UNAVAILABLE'}, {id:'newer',checkedAt:'2026-10-03T02:00:00Z',sourceState:'AVAILABLE'}];
+ assert.deepEqual(values.sort(compareCheckedAt).map(v=>v.id),['newer','older','missing','failed']);
 });
 
-test('WAITING_FOR_HUMAN with a blocker is a decision verdict', () => {
-  const verdict = getVerdict({ waitingState: 'WAITING_FOR_HUMAN', blocker: 'Pick a policy' });
-  assert.equal(verdict.level, 'decision');
-  assert.equal(verdict.explanation, 'Pick a policy');
-  assert.equal(verdict.hasAction, true);
+test('homepage unknown filter includes UNKNOWN and excludes observed idle', async () => {
+ const {matchesStatusFilter}=await import('../src/verdict.mjs');
+ assert.equal(matchesStatusFilter({status:'UNKNOWN'},'unknown'),true);
+ assert.equal(matchesStatusFilter({status:'IDLE'},'unknown'),false);
 });
 
-test('WAITING_FOR_HUMAN with no blocker is a ready verdict using nextAction', () => {
-  const verdict = getVerdict({ waitingState: 'WAITING_FOR_HUMAN', blocker: null, nextAction: 'Ready to merge PR #89' });
-  assert.equal(verdict.level, 'ready');
-  assert.equal(verdict.explanation, 'Ready to merge PR #89');
+test('malformed fields and inconsistent states never fabricate checks, idle or execution', () => {
+ for(const data of [{state:'merged'}, {state:'merged',prNumber:9,mergedAt:'bad'}, {state:'merged',ciStatus:'running'}, {state:'none',ciStatus:'running'}, {state:'none',reviewDecision:'changes_requested'}, {state:'open',isDraft:'false',ciStatus:'passing'}, {state:'active',lastCommitSha:null,ciStatus:'passing'}]) {
+  const v=getVerdict(project,data,fresh);assert.equal(v.status,'UNKNOWN');assert.equal(v.checksPassed,false);assert.equal(v.sourceState,'UNAVAILABLE');
+ }
 });
 
-test('AI_RUNNING and AUTOMATION_IDLE both get the waiting verdict with no action', () => {
-  const running = getVerdict({ waitingState: 'AI_RUNNING', blocker: null, nextAction: 'Running tests' });
-  const idle = getVerdict({ waitingState: 'AUTOMATION_IDLE', blocker: null });
-  assert.equal(running.level, 'waiting');
-  assert.equal(running.explanation, 'Running tests');
-  assert.equal(running.hasAction, false);
-  assert.equal(running.isWaiting, true);
-  assert.equal(idle.level, 'waiting');
-});
-
-test('getVerdictStyle returns a color set per level and falls back for unknown levels', () => {
-  assert.equal(getVerdictStyle('danger').headlineColor, '#e11d48');
-  assert.equal(getVerdictStyle('ready').headlineColor, '#059669');
-  assert.deepEqual(getVerdictStyle('nonsense'), getVerdictStyle('waiting'));
-});
-
-// --- Real GitHub-state-driven path (a githubState argument overrides manual fields) ---
-
-const manualProject = { waitingState: 'WAITING_FOR_HUMAN', blocker: 'stale manual blocker text' };
-
-test('a githubState argument takes priority over the project manual fields', () => {
-  const verdict = getVerdict(manualProject, { state: 'none' });
-  assert.equal(verdict.source, 'github');
-  assert.notEqual(verdict.explanation, manualProject.blocker);
-});
-
-test('github state "none" is a waiting verdict (no code observed yet)', () => {
-  const verdict = getVerdict(manualProject, { state: 'none' });
-  assert.equal(verdict.level, 'waiting');
-});
-
-test('github state "merged" is a ready verdict that is honest about not implying deployment', () => {
-  const verdict = getVerdict(manualProject, { state: 'merged', prNumber: 9 });
-  assert.equal(verdict.level, 'ready');
-  assert.match(verdict.explanation, /PR #9/);
-  assert.match(verdict.explanation, /上線流程/);
-});
-
-test('a mergedAt / lastCommitAt timestamp surfaces as real relative time, proving the data is live', () => {
-  const recentlyMerged = getVerdict(manualProject, {
-    state: 'merged',
-    prNumber: 1,
-    mergedAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-  });
-  assert.match(recentlyMerged.explanation, /45 分鐘前/);
-
-  const recentPush = getVerdict(manualProject, {
-    state: 'active',
-    ciStatus: 'none',
-    lastCommitMessage: 'chore: x',
-    lastCommitAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-  });
-  assert.match(recentPush.explanation, /3 小時前/);
-});
-
-test('an open draft PR is waiting regardless of CI/review state', () => {
-  const verdict = getVerdict(manualProject, {
-    state: 'open',
-    isDraft: true,
-    ciStatus: 'passing',
-    reviewDecision: 'approved',
-  });
-  assert.equal(verdict.level, 'waiting');
-});
-
-test('open PR with failing CI is danger', () => {
-  const verdict = getVerdict(manualProject, {
-    state: 'open',
-    isDraft: false,
-    ciStatus: 'failing',
-    reviewDecision: 'review_required',
-  });
-  assert.equal(verdict.level, 'danger');
-});
-
-test('open PR with changes requested is danger even if CI passed', () => {
-  const verdict = getVerdict(manualProject, {
-    state: 'open',
-    isDraft: false,
-    ciStatus: 'passing',
-    reviewDecision: 'changes_requested',
-  });
-  assert.equal(verdict.level, 'danger');
-});
-
-test('open PR with CI running (and no changes requested) is waiting', () => {
-  const verdict = getVerdict(manualProject, {
-    state: 'open',
-    isDraft: false,
-    ciStatus: 'running',
-    reviewDecision: 'review_required',
-  });
-  assert.equal(verdict.level, 'waiting');
-});
-
-test('open PR with passing CI and no blocking review is ready', () => {
-  const verdict = getVerdict(manualProject, {
-    state: 'open',
-    isDraft: false,
-    ciStatus: 'passing',
-    reviewDecision: 'approved',
-  });
-  assert.equal(verdict.level, 'ready');
-});
-
-test('the github path never returns the decision level (no product-decision signal exists in GitHub)', () => {
-  const scenarios = [
-    { state: 'none' },
-    { state: 'merged', prNumber: 1 },
-    { state: 'open', isDraft: true },
-    { state: 'open', isDraft: false, ciStatus: 'failing' },
-    { state: 'open', isDraft: false, ciStatus: 'passing', reviewDecision: 'changes_requested' },
-    { state: 'open', isDraft: false, ciStatus: 'running' },
-    { state: 'open', isDraft: false, ciStatus: 'passing', reviewDecision: 'approved' },
-    { state: 'active', ciStatus: 'none', lastCommitMessage: 'x' },
-  ];
-  for (const githubState of scenarios) {
-    assert.notEqual(getVerdict(manualProject, githubState).level, 'decision');
-  }
-});
-
-// --- "active" state: direct pushes to the default branch past any known PR ---
-
-test('active state with passing/no CI is waiting, and names the real commit message', () => {
-  const verdict = getVerdict(manualProject, {
-    state: 'active',
-    ciStatus: 'none',
-    lastCommitMessage: 'chore: isolate local UAT emulator tooling',
-  });
-  assert.equal(verdict.level, 'waiting');
-  assert.match(verdict.explanation, /chore: isolate local UAT emulator tooling/);
-  assert.equal(verdict.source, 'github');
-});
-
-test('active state with failing CI is danger', () => {
-  const verdict = getVerdict(manualProject, {
-    state: 'active',
-    ciStatus: 'failing',
-    lastCommitMessage: 'fix: something broke',
-  });
-  assert.equal(verdict.level, 'danger');
-  assert.match(verdict.explanation, /fix: something broke/);
-});
-
-// --- pickMostUrgent ---
-
-test('pickMostUrgent ranks decision above danger above ready above waiting', () => {
-  const verdicts = [{ level: 'waiting' }, { level: 'ready' }, { level: 'danger' }, { level: 'decision' }];
-  assert.equal(pickMostUrgent(verdicts), 3);
-});
-
-test('pickMostUrgent picks danger over ready and waiting when there is no decision', () => {
-  const verdicts = [{ level: 'waiting' }, { level: 'danger' }, { level: 'ready' }];
-  assert.equal(pickMostUrgent(verdicts), 1);
-});
-
-test('pickMostUrgent keeps the first occurrence on a tie', () => {
-  const verdicts = [{ level: 'danger' }, { level: 'danger' }, { level: 'waiting' }];
-  assert.equal(pickMostUrgent(verdicts), 0);
-});
-
-test('pickMostUrgent returns -1 for an empty list', () => {
-  assert.equal(pickMostUrgent([]), -1);
+test('queued CI is confirmation work rather than execution evidence', () => {
+ const v=derive({state:'open',ciStatus:'pending'});
+ assert.equal(v.status,'NEEDS_CONFIRMATION');assert.equal(v.isWaiting,false);assert.match(v.explanation,/等待執行/);
 });

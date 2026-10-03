@@ -1,184 +1,101 @@
-const VERDICT_COPY = {
-  danger: {
-    headline: 'AI 遇到問題，卡住了',
-    fallbackExplanation: 'AI 目前卡住了，需要你看一下發生了什麼事。',
-    actionLabel: '查看問題',
-  },
-  decision: {
-    headline: 'AI 做完了，但有一個問題要問你',
-    fallbackExplanation: 'AI 遇到一個只有你能回答的問題，需要你做個決定。',
-    actionLabel: '查看並回答',
-  },
-  ready: {
-    headline: '都檢查過了，可以繼續了',
-    fallbackExplanation: 'AI 已經完成這個階段，等你確認就能繼續下一步。',
-    actionLabel: '查看並確認',
-  },
-  waiting: {
-    headline: 'AI 正在處理，請稍等',
-    fallbackExplanation: 'AI 正在自動執行下一步，還沒輪到你。',
-    actionLabel: 'AI 處理中…',
-  },
+// One evidence-based status for every homepage consumer. Saved fixture fields
+// remain available for inspection, but never attest to execution or health.
+export const STATUS_MAX_AGE_MS = 5 * 60 * 1000;
+export const STATUS_LABELS = {
+  IDLE: '目前沒有進行中的工作',
+  IN_PROGRESS: '自動檢查正在執行',
+  NEEDS_CONFIRMATION: '修改正在等待確認',
+  BLOCKED: '有已知問題需要處理',
+  UNKNOWN: '目前無法確認最新狀態',
 };
-
-const VERDICT_STYLE = {
-  danger: { headlineColor: '#e11d48', borderColor: '#fda4af', iconBg: '#fff1f2', iconColor: '#e11d48' },
-  decision: { headlineColor: '#b45309', borderColor: '#fcd34d', iconBg: '#fffbeb', iconColor: '#b45309' },
-  ready: { headlineColor: '#059669', borderColor: '#a7f3d0', iconBg: '#ecfdf5', iconColor: '#059669' },
-  waiting: { headlineColor: '#0369a1', borderColor: '#bae6fd', iconBg: '#f0f9ff', iconColor: '#0369a1' },
+const LEVEL = { IDLE: 'idle', IN_PROGRESS: 'waiting', NEEDS_CONFIRMATION: 'decision', BLOCKED: 'danger', UNKNOWN: 'unknown' };
+const STYLES = {
+ danger: { headlineColor:'#e11d48',borderColor:'#fda4af',iconBg:'#fff1f2',iconColor:'#e11d48' },
+ decision: { headlineColor:'#b45309',borderColor:'#fcd34d',iconBg:'#fffbeb',iconColor:'#b45309' },
+ waiting: { headlineColor:'#0369a1',borderColor:'#bae6fd',iconBg:'#f0f9ff',iconColor:'#0369a1' },
+ idle: { headlineColor:'#57534e',borderColor:'#d6d3d1',iconBg:'#fafaf9',iconColor:'#57534e' },
+ unknown: { headlineColor:'#57534e',borderColor:'#d6d3d1',iconBg:'#fafaf9',iconColor:'#78716c' },
 };
-
-// Small, dependency-free relative-time formatter (deliberately not imported
-// from server/githubRepos.mjs, which pulls in node:child_process and can't
-// be bundled into the browser build).
-export function formatRelativeTime(dateInput, now = new Date()) {
-  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
-  const diffSec = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-  if (diffSec < 60) return '剛剛';
-  if (diffMin < 60) return `${diffMin} 分鐘前`;
-  if (diffHour < 24) return `${diffHour} 小時前`;
-  if (diffDay === 1) return '昨天';
-  return `${diffDay} 天前`;
+export function formatRelativeTime(input, now = new Date()) {
+ const timestamp = typeof input === 'string' ? Date.parse(input) : input?.getTime();
+ if (!Number.isFinite(timestamp) || timestamp > now.getTime()) return '時間未知';
+ const sec=Math.floor((now.getTime()-timestamp)/1000);
+ if(sec<60) return '剛剛'; if(sec<3600) return `${Math.floor(sec/60)} 分鐘前`;
+ if(sec<86400) return `${Math.floor(sec/3600)} 小時前`;
+ return Math.floor(sec/86400)===1 ? '昨天' : `${Math.floor(sec/86400)} 天前`;
 }
-
-function buildVerdict(level, explanation, source) {
-  const copy = VERDICT_COPY[level];
-  return {
-    level,
-    headline: copy.headline,
-    explanation,
-    actionLabel: copy.actionLabel,
-    hasAction: level !== 'waiting',
-    isWaiting: level === 'waiting',
-    source,
+export function isRealProject(project) {
+ return project?.dataMode !== 'demo' && /^[\w.-]+\/[\w.-]+$/.test(project?.repository || '');
+}
+// Check the per-state contract before interpreting evidence. A recognized
+// state alone cannot prove that the returned PR/commit/check data is coherent.
+export function isValidGithubState(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  const ci = ['passing', 'failing', 'running', 'none', 'unknown', 'pending'];
+  const review = ['approved', 'changes_requested', 'review_required'];
+  const date = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
+  const url = value => {
+    try { return typeof value === 'string' && new URL(value).protocol === 'https:'; }
+    catch { return false; }
   };
+  const pr = Number.isInteger(data.prNumber) && data.prNumber > 0 && url(data.prUrl);
+  if (data.state === 'open') return pr && typeof data.isDraft === 'boolean' && ci.includes(data.ciStatus) && review.includes(data.reviewDecision);
+  if (data.state === 'merged') return pr && date(data.mergedAt) && data.ciStatus === undefined && data.reviewDecision === undefined;
+  if (data.state === 'active') return typeof data.lastCommitSha === 'string' && /^[a-f0-9]{40}$/i.test(data.lastCommitSha) && date(data.lastCommitAt) && typeof data.lastCommitMessage === 'string' && url(data.lastCommitUrl) && ci.includes(data.ciStatus) && data.prNumber === undefined && data.reviewDecision === undefined;
+  if (data.state === 'none') return ['ciStatus','reviewDecision','prNumber','prUrl','mergedAt','lastCommitSha','isDraft'].every(key => data[key] === undefined);
+  return false;
 }
-
-/**
- * Fallback path: translate a project's manually-set `waitingState`/`blocker`/
- * `nextAction` fields (the only signal available before/without a real
- * GitHub repo link) into a verdict.
- *
- * Known limitation: `explanation` reuses that free text as-is, which may
- * still contain technical wording — a pure rule table cannot rewrite
- * arbitrary free text into plain language without an AI call, which this
- * phase intentionally avoids (see docs/superpowers/plans, 2026-09-06).
- */
-function getVerdictFromManualFields(project) {
-  if (project.waitingState === 'BLOCKED') {
-    return buildVerdict('danger', project.blocker || VERDICT_COPY.danger.fallbackExplanation, 'manual');
+export function getVerdict(project, githubState, { checkedAt, availability = 'UNAVAILABLE', now = Date.now() } = {}) {
+ const checked = Date.parse(checkedAt);
+ const fresh = Number.isFinite(checked) && checked <= now && now-checked <= STATUS_MAX_AGE_MS;
+ const validState = isValidGithubState(githubState);
+ const source = isRealProject(project) ? 'github' : 'manual';
+ let status='UNKNOWN', explanation='尚未取得可驗證的資料。', checksPassed=false;
+ let sourceState = availability;
+ if(availability==='AVAILABLE' && !fresh) sourceState='STALE';
+ if(availability==='AVAILABLE' && !validState) sourceState='UNAVAILABLE';
+ if (isRealProject(project) && availability==='AVAILABLE' && fresh && validState) {
+  checksPassed = ['open','active'].includes(githubState.state) && githubState.ciStatus==='passing';
+  if(githubState.ciStatus==='failing' || githubState.reviewDecision==='changes_requested') {
+   status='BLOCKED'; explanation=githubState.ciStatus==='failing' ? '最新修改沒有通過自動檢查。' : '審查提出了需要修正的意見。';
+  } else if(githubState.ciStatus==='running') {
+   status='IN_PROGRESS'; explanation='GitHub 回報自動檢查正在執行；尚未取得最終結果。';
+  } else if(githubState.state==='open') {
+   status='NEEDS_CONFIRMATION';
+   explanation = githubState.isDraft ? '修改仍是草稿，需要確認下一步；沒有 AI 正在執行的證據。' : githubState.reviewDecision==='approved' ? '修改已有審查紀錄，仍需要人工確認下一步。' : '修改正在等待審查。';
+   explanation += checksPassed ? ' 已取得自動檢查通過的結果。' : githubState.ciStatus === 'pending' ? ' 自動檢查正在等待執行。' : ' 尚未取得自動檢查結果。';
+  } else if(githubState.state==='active' && !checksPassed) {
+   status='NEEDS_CONFIRMATION'; explanation='主分支有直接提交的修改，尚未取得自動檢查結果。';
+  } else {
+   status='IDLE'; explanation=githubState.state==='merged' ? `PR #${githubState.prNumber ?? '?'} 已合併；部署狀態尚未確認。` : githubState.state==='active' ? '主分支有已保存的修改；沒有目前正在執行工作的證據。' : '本次查詢沒有找到進行中的修改。';
   }
-  if (project.waitingState === 'WAITING_FOR_HUMAN' && project.blocker) {
-    return buildVerdict('decision', project.blocker, 'manual');
-  }
-  if (project.waitingState === 'WAITING_FOR_HUMAN') {
-    return buildVerdict('ready', project.nextAction || VERDICT_COPY.ready.fallbackExplanation, 'manual');
-  }
-  return buildVerdict('waiting', project.nextAction || VERDICT_COPY.waiting.fallbackExplanation, 'manual');
+ } else if(sourceState==='STALE') explanation='上次查詢已過期，請重新查詢。';
+ else if(sourceState==='CHECKING') explanation='正在查詢 GitHub，完成前無法確認狀態。';
+ else if(source==='manual') explanation='示範或手動資料，不能用來確認真實專案狀態。';
+ else explanation='資料來源無法使用（UNAVAILABLE），請重試；保存的狀態不能代表現在。';
+ return {status, level:LEVEL[status], headline:STATUS_LABELS[status], explanation,
+  actionLabel:status==='UNKNOWN'?'查看資料來源':status==='BLOCKED'?'查看問題':status==='NEEDS_CONFIRMATION'?'查看並確認':status==='IN_PROGRESS'?'自動檢查執行中':'查看專案',
+  hasAction:status!=='IN_PROGRESS', isWaiting:status==='IN_PROGRESS', source, sourceState,
+  checkedAt: Number.isFinite(checked) ? checkedAt : null, checksPassed, deployed:false,
+  activityAt: validState ? githubState.updatedAt || githubState.lastCommitAt || githubState.mergedAt || null : null,
+ };
 }
-
-/**
- * Real path: translate a `fetchPullRequestStatus()` snapshot (server/
- * githubPullStatus.mjs) into a verdict. No manual click drives this — it is
- * a pure function of the PR's actual CI/review/merge state.
- *
- * Known limitation: GitHub has no equivalent of a "needs a product decision"
- * signal, so this path never returns the 'decision' level — only projects
- * still using getVerdictFromManualFields() (no real repo link) can surface
- * one. Also, 'merged' means the code landed on the default branch, not that
- * it was deployed anywhere — the explanation says so explicitly rather than
- * implying production is updated.
- */
-function getVerdictFromGithub(githubState) {
-  if (githubState.state === 'none') {
-    return buildVerdict('waiting', '還沒有看到任何程式碼變更，AI 可能還在準備中。', 'github');
-  }
-
-  if (githubState.state === 'merged') {
-    const when = githubState.mergedAt ? `（${formatRelativeTime(githubState.mergedAt)}）` : '';
-    return buildVerdict(
-      'ready',
-      `最新的修改（PR #${githubState.prNumber}）${when}已經合併進主分支了。如果你有另外的上線流程，記得手動更新正式環境。`,
-      'github',
-    );
-  }
-
-  if (githubState.state === 'active') {
-    // The repo has commits past the last known merged PR — likely direct
-    // pushes to the default branch rather than a PR-reviewed change. There
-    // is no PR/review signal to inspect here, only the commit itself.
-    const when = githubState.lastCommitAt ? `（${formatRelativeTime(githubState.lastCommitAt)}）` : '';
-    if (githubState.ciStatus === 'failing') {
-      return buildVerdict(
-        'danger',
-        `主分支${when}直接更新的內容沒有通過自動檢查（「${githubState.lastCommitMessage}」），需要請 AI 修好。`,
-        'github',
-      );
-    }
-    return buildVerdict(
-      'waiting',
-      `主分支${when}有新的更新（不是透過 PR）：「${githubState.lastCommitMessage}」，看起來還在調整中，暫時不需要你做什麼。`,
-      'github',
-    );
-  }
-
-  // githubState.state === 'open'
-  if (githubState.isDraft) {
-    return buildVerdict('waiting', 'AI 還在準備這次的修改，還沒有標記完成，先不用管它。', 'github');
-  }
-  if (githubState.ciStatus === 'failing') {
-    return buildVerdict('danger', 'AI 最新的修改沒有通過自動檢查，需要請 AI 修好再繼續。', 'github');
-  }
-  if (githubState.reviewDecision === 'changes_requested') {
-    return buildVerdict('danger', '有人對這次修改提出了需要修正的意見，需要請 AI 處理。', 'github');
-  }
-  if (githubState.ciStatus === 'running') {
-    return buildVerdict('waiting', 'AI 剛提交了新的修改，自動檢查正在執行中。', 'github');
-  }
-  return buildVerdict('ready', '自動檢查都通過了，可以把這次的修改合併進去了。', 'github');
+export function getVerdictStyle(level) { return STYLES[level] || STYLES.unknown; }
+export function needsAttention(verdict) { return ['BLOCKED','NEEDS_CONFIRMATION','UNKNOWN'].includes(verdict?.status); }
+export function matchesStatusFilter(verdict, filter) {
+ if(filter==='all'||filter==='ALL') return true;
+ if(filter==='attention') return needsAttention(verdict);
+ if(filter==='running') return verdict?.status==='IN_PROGRESS';
+ if(filter==='unknown') return verdict?.status==='UNKNOWN';
+ return verdict?.status===filter;
 }
-
-/**
- * Deterministic, rule-based plain-language verdict for a project. Pass a
- * `githubState` (from `fetchPullRequestStatus()`) when the project is
- * linked to a real repo to drive the verdict from real PR/CI/review signals
- * instead of the manually-set fields — see docs/superpowers/issue-drafts
- * (2026-09-05 live GitHub state) for why manual clicking isn't the source
- * of truth once a project is really connected.
- */
-export function getVerdict(project, githubState) {
-  if (githubState) {
-    return getVerdictFromGithub(githubState);
-  }
-  return getVerdictFromManualFields(project);
-}
-
-export function getVerdictStyle(level) {
-  return VERDICT_STYLE[level] || VERDICT_STYLE.waiting;
-}
-
-// decision (only you can decide) > danger (needs attention, may self-resolve
-// on retry) > ready (low-urgency positive action) > waiting (nothing to do)
-const URGENCY_RANK = { decision: 0, danger: 1, ready: 2, waiting: 3 };
-
-/**
- * Given a list of verdicts (one per project, from getVerdict()), returns the
- * index of the single most urgent one — for a "next best action" summary
- * that should point at real project state, not a separately hand-authored
- * recommendation. Ties keep the first occurrence. Returns -1 for an empty list.
- */
+export function statusRank(verdict) { return ({BLOCKED:0,NEEDS_CONFIRMATION:1,UNKNOWN:2,IN_PROGRESS:3,IDLE:4})[verdict?.status] ?? 2; }
 export function pickMostUrgent(verdicts) {
-  let bestIndex = -1;
-  let bestRank = Infinity;
-  verdicts.forEach((verdict, index) => {
-    const rank = URGENCY_RANK[verdict.level] ?? URGENCY_RANK.waiting;
-    if (rank < bestRank) {
-      bestRank = rank;
-      bestIndex = index;
-    }
-  });
-  return bestIndex;
+ let best=-1;
+ verdicts.forEach((v,i)=>{if(needsAttention(v) && (best<0 || statusRank(v)<statusRank(verdicts[best]))) best=i;});
+ return best;
+}
+export function compareCheckedAt(a,b) {
+ const time=v=>v?.sourceState==='AVAILABLE' && Number.isFinite(Date.parse(v?.checkedAt)) ? Date.parse(v.checkedAt) : -Infinity;
+ const at=time(a), bt=time(b); return at===bt ? 0 : at>bt ? -1 : 1;
 }

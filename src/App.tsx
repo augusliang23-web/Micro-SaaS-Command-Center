@@ -23,7 +23,9 @@ import { ProjectDetailDrawer } from './components/ProjectDetailDrawer';
 import { ModelRoutingGuide } from './components/ModelRoutingGuide';
 import { ConnectRepoModal } from './components/ConnectRepoModal';
 import { CiCdWorkflowModal } from './components/CiCdWorkflowModal';
-import { useProjectVerdicts } from './hooks/useProjectVerdicts';
+import { useProjectVerdicts, ProjectStatusesContext } from './hooks/useProjectVerdicts';
+import { isUsableSavedState } from './savedState.mjs';
+import { isRealProject, needsAttention, matchesStatusFilter } from './verdict.mjs';
 import {
   Layers,
   ShieldAlert,
@@ -46,27 +48,25 @@ export default function App() {
   // project verdicts (useProjectVerdicts below) instead of this fixture.
   const [snapshot, setSnapshot] = useState<AIExecutionSnapshotData>(initialExecutionSnapshot);
 
-  const { verdicts } = useProjectVerdicts(projects);
-  const attentionProjects = projects.filter((_, i) => {
-    const level = verdicts[i]?.level;
-    return level === 'decision' || level === 'danger';
-  });
+  const realProjects = projects.filter(isRealProject);
+  const statuses = useProjectVerdicts(realProjects);
+  const verdicts = realProjects.map(p => statuses.byId[p.id]);
+  const attentionProjects = realProjects.filter(p => needsAttention(statuses.byId[p.id]));
   const attentionCount = attentionProjects.length;
-  const aiRunningCount = verdicts.filter((v) => v.level === 'waiting').length;
-  const countByModel = (model: CodexModelName) => projects.filter((p) => p.model === model).length;
+  const aiRunningCount = verdicts.filter(v => v.status === 'IN_PROGRESS').length;
+  // Saved model assignments are not execution telemetry.
+  const countByModel = (model: CodexModelName) => realProjects.filter(p => p.model === model).length;
   const liveSnapshot: AIExecutionSnapshotData = {
-    lunaTasks: countByModel('Luna'),
-    terraTasks: countByModel('Terra'),
-    solTasks: countByModel('Sol'),
-    waitingForReview: verdicts.filter((v) => v.level === 'ready').length,
-    waitingForHuman: verdicts.filter((v) => v.level === 'decision').length,
-    blocked: verdicts.filter((v) => v.level === 'danger').length,
+    lunaTasks: countByModel('Luna'), terraTasks: countByModel('Terra'), solTasks: countByModel('Sol'),
+    waitingForReview: verdicts.filter(v => v.status === 'NEEDS_CONFIRMATION').length,
+    waitingForHuman: verdicts.filter(v => v.status === 'UNKNOWN').length,
+    blocked: verdicts.filter(v => v.status === 'BLOCKED').length,
     aiRunning: aiRunningCount,
   };
 
   const [selectedProject, setSelectedProject] = useState<MicroSaaSProject | null>(null);
   const [activeTab, setActiveTab] = useState<'projects' | 'attention' | 'telemetry'>('projects');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'attention' | 'running' | 'production'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'attention' | 'running' | 'unknown'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isModelGuideOpen, setIsModelGuideOpen] = useState<boolean>(false);
   const [isConnectRepoOpen, setIsConnectRepoOpen] = useState<boolean>(false);
@@ -74,12 +74,22 @@ export default function App() {
   const [notificationToast, setNotificationToast] = useState<string | null>(null);
 
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   // Load persisted state on first mount, falling back to mock data
   useEffect(() => {
     fetch('/api/state')
-      .then((res) => (res.ok ? res.json() : null))
+      .then(async (res) => {
+        const saved = await res.json();
+        // This route explicitly distinguishes a fresh install from a failed read.
+        if (res.status === 404 && saved?.error === 'No saved state yet.') {
+          return { projects: initialProjects, attentionItems: initialAttentionItems, nba: initialNextBestAction, snapshot: initialExecutionSnapshot };
+        }
+        if (!res.ok) throw new Error('State unavailable');
+        return saved;
+      })
       .then((saved) => {
+        if (!isUsableSavedState(saved)) throw new Error('Invalid saved state');
         if (saved) {
           // Backfill provenance on state saved before this field existed, so older
           // persisted projects don't crash the drawer on a missing `provenance` object.
@@ -91,9 +101,9 @@ export default function App() {
           setNba(saved.nba ?? initialNextBestAction);
           setSnapshot(saved.snapshot ?? initialExecutionSnapshot);
         }
+        setHasLoaded(true);
       })
-      .catch((err) => console.warn('Failed to load saved state, using defaults:', err))
-      .finally(() => setHasLoaded(true));
+      .catch((err) => { setLoadError(true); console.warn('Saved state unavailable; automatic saving disabled:', err); });
   }, []);
 
   // Persist state to the local server whenever it changes (debounced)
@@ -117,7 +127,7 @@ export default function App() {
   };
 
   // Filter projects based on search and top-level filter
-  const displayedProjects = projects.filter((p) => {
+  const displayedProjects = realProjects.filter((p) => {
     // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -128,26 +138,7 @@ export default function App() {
       if (!matchName && !matchTask && !matchModel && !matchTag) return false;
     }
 
-    // Top-level pill filter
-    if (activeFilter === 'attention') {
-      return (
-        p.health === 'Attention' ||
-        p.health === 'Blocked' ||
-        p.health === 'At Risk' ||
-        p.waitingState === 'WAITING_FOR_HUMAN'
-      );
-    }
-    if (activeFilter === 'running') {
-      return p.waitingState === 'AI_RUNNING';
-    }
-    if (activeFilter === 'production') {
-      return (
-        p.stage === 'Production' ||
-        p.environment.production.status === 'Live' ||
-        p.environment.production.status === 'Healthy'
-      );
-    }
-    return true;
+    return matchesStatusFilter(statuses.byId[p.id], activeFilter);
   });
 
   // Open detail drawer for a project
@@ -505,7 +496,8 @@ export default function App() {
   };
 
   const handleRefreshSim = () => {
-    showToast('[模擬] 已重新整理本地 Prototype 快照；未查詢任何真實 Bridge 或倉庫狀態。');
+    if (!hasLoaded) { window.location.reload(); return; }
+    statuses.refresh();
   };
 
   const handleConnectRepo = (newProject: MicroSaaSProject) => {
@@ -532,13 +524,14 @@ export default function App() {
   };
 
   return (
+    <ProjectStatusesContext.Provider value={statuses}>
     <div className="min-h-screen bg-[#F7F6F2] text-stone-800 font-sans antialiased selection:bg-stone-300 selection:text-stone-900 flex flex-col">
       {/* Persistent Prototype Boundary */}
       <div
         role="status"
         className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-950 text-center"
       >
-        Simulated / Prototype — 除了「接入倉庫」的 GitHub 清單外，本介面不會變更任何真實的 GitHub、Bridge、CI/CD、feature flag、staging、UAT 或 Production 狀態。
+        GitHub 查詢快照 — 不代表部署或 AI 執行狀態。Simulated / Prototype 資料預設排除（{projects.length - realProjects.length} 個示範專案）。
       </div>
 
       {/* Toast Notification */}
@@ -556,19 +549,22 @@ export default function App() {
         onSelectFilter={setActiveFilter}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        totalProjects={projects.length}
-        attentionCount={attentionCount}
+        totalProjects={hasLoaded ? realProjects.length : null}
+        attentionCount={hasLoaded ? attentionCount : null}
         onOpenModelGuide={() => setIsModelGuideOpen(true)}
         onOpenConnectRepo={() => setIsConnectRepoOpen(true)}
         onOpenCiCdMap={() => setIsCiCdModalOpen(true)}
-        onRefreshSim={handleRefreshSim}
+        onRefresh={handleRefreshSim}
+        sourceSummary={loadError ? "專案清單：UNAVAILABLE；無法確認已保存的專案" : !hasLoaded ? "專案清單：查詢中" : realProjects.length === 0 ? "尚未連結真實專案，未查詢 GitHub" : statuses.isLoading ? "GitHub：查詢中" : verdicts.some(v => v.sourceState !== "AVAILABLE") ? "GitHub：部分資料 UNKNOWN / UNAVAILABLE 或過期" : "GitHub：本次查詢可用"}
+        isRefreshing={statuses.isLoading}
       />
 
       {/* Main Cockpit Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-4">
+        {loadError && <p role="alert" className="text-sm text-amber-900">無法讀取保存的專案清單。請重新查詢；目前不會自動覆寫保存資料。</p>}
         {/* Next Best Action: scans every project's real verdict, not a fixed fixture */}
         <NextBestActionCard
-          projects={projects}
+          projects={realProjects}
           onSelectProject={handleSelectProject}
           onDeleteProject={handleDeleteProject}
           onUpdateLocalPath={handleUpdateLocalPath}
@@ -587,7 +583,7 @@ export default function App() {
               }`}
             >
               <Layers className="h-3.5 w-3.5" />
-              <span>專案總覽 ({projects.length})</span>
+              <span>專案總覽 ({hasLoaded ? realProjects.length : "—"})</span>
             </button>
 
             <button
@@ -599,7 +595,7 @@ export default function App() {
               }`}
             >
               <ShieldAlert className="h-3.5 w-3.5 text-amber-700" />
-              <span>待人決策 ({attentionCount})</span>
+              <span>待你關注 ({hasLoaded ? attentionCount : "—"})</span>
             </button>
 
             <button
@@ -611,7 +607,7 @@ export default function App() {
               }`}
             >
               <Cpu className="h-3.5 w-3.5" />
-              <span>AI 執行與模型遙測 ({aiRunningCount} 執行中)</span>
+              <span>工作狀態與模型設定 ({hasLoaded ? aiRunningCount : "—"} 檢查執行中)</span>
             </button>
           </div>
 
@@ -649,7 +645,7 @@ export default function App() {
         )}
 
         {/* Tab 3: AI Execution Snapshot (Telemetry & Model Breakdown) */}
-        {activeTab === 'telemetry' && (
+        {activeTab === 'telemetry' && hasLoaded && (
           <div className="animate-fadeIn space-y-4">
             <AIExecutionSnapshot
               snapshot={liveSnapshot}
@@ -665,7 +661,7 @@ export default function App() {
 
       {/* Slide-over Project Detail Drawer */}
       <ProjectDetailDrawer
-        project={selectedProject}
+        project={projects.find(p => p.id === selectedProject?.id) || null}
         onClose={() => setSelectedProject(null)}
         onResolveBlocker={handleResolveBlocker}
         onApproveCurrentGate={handleApproveCurrentGate}
@@ -697,5 +693,6 @@ export default function App() {
         currentProject={selectedProject}
       />
     </div>
+    </ProjectStatusesContext.Provider>
   );
 }

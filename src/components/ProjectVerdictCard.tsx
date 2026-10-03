@@ -10,7 +10,8 @@ import {
   localStatusToneStyle,
   formatChangeSummaryRef,
 } from '../utils';
-import { getVerdict, getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
+import { getVerdictStyle, formatRelativeTime } from '../verdict.mjs';
+import { useProjectStatus } from '../hooks/useProjectVerdicts';
 import { DeleteProjectModal } from './DeleteProjectModal';
 
 const VERDICT_ICON: Record<string, React.ElementType> = {
@@ -18,6 +19,8 @@ const VERDICT_ICON: Record<string, React.ElementType> = {
   decision: HelpCircle,
   ready: CheckCircle2,
   waiting: Clock,
+  idle: Clock,
+  unknown: HelpCircle,
 };
 
 interface ProjectVerdictCardProps {
@@ -42,8 +45,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [githubState, setGithubState] = useState<GithubPullStatus | null>(null);
-  const [isLoadingGithub, setIsLoadingGithub] = useState(false);
+  const { verdict, githubState, isLoadingGithub, loadGithubState } = useProjectStatus(project);
   const [changedFiles, setChangedFiles] = useState<GithubChangedFile[] | null>(null);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
@@ -56,20 +58,6 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
   const [isFindingLocalPath, setIsFindingLocalPath] = useState(false);
   const [localPathInput, setLocalPathInput] = useState(project.localPath || '');
   const isLinkedToRealRepo = isRealGithubRepo(project.repository);
-
-  const loadGithubState = useCallback(() => {
-    if (!isLinkedToRealRepo) return;
-    setIsLoadingGithub(true);
-    fetch(`/api/github/pull-status?repo=${encodeURIComponent(project.repository)}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setGithubState(data))
-      .catch(() => setGithubState(null))
-      .finally(() => setIsLoadingGithub(false));
-  }, [isLinkedToRealRepo, project.repository]);
-
-  useEffect(() => {
-    loadGithubState();
-  }, [loadGithubState]);
 
   const changeRef =
     githubState?.state === 'open' || githubState?.state === 'merged'
@@ -164,7 +152,6 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
       .finally(() => setIsFindingLocalPath(false));
   };
 
-  const verdict = getVerdict(project, githubState ?? undefined);
   const style = getVerdictStyle(verdict.level);
   const Icon = VERDICT_ICON[verdict.level];
   const modelStyle = getModelBadgeStyle(project.model);
@@ -186,7 +173,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
   );
 
   return (
-    <div>
+    <article aria-label={project.name} data-status={verdict.status}>
       {eyebrow && (
         <div className="flex items-center gap-1.5 mb-2 text-xs font-bold text-stone-500">{eyebrow}</div>
       )}
@@ -218,6 +205,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
             {verdict.headline}
           </div>
           <p className="text-sm text-stone-700 leading-relaxed mt-1.5">{verdict.explanation}</p>
+          <p className="text-xs text-stone-500 mt-2">GitHub · {verdict.sourceState} · Last checked: {verdict.checkedAt ? new Date(verdict.checkedAt).toLocaleString() : '尚未查詢'}</p>
         </div>
 
         {/* Action row */}
@@ -273,7 +261,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
             <div className="flex items-center gap-1.5 mb-2">
               <span className="text-[10px] text-stone-400 uppercase tracking-wider">技術細節</span>
               <span className="text-[9px] text-stone-300">
-                {verdict.source === 'github' ? '— 即時查詢 GitHub 得到的真實狀態' : '— 底層工程狀態，一般不用看'}
+                {verdict.source === 'github' ? `— GitHub 查詢快照：${verdict.sourceState}` : '— 底層工程狀態，一般不用看'}
               </span>
             </div>
 
@@ -436,6 +424,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                 {summaryError && <div className="mt-1.5 text-[11px] text-rose-700">{summaryError}</div>}
                 {latestSummaryForRef && (
                   <div className="mt-2.5 text-[12px] text-stone-700 leading-relaxed bg-stone-50 border border-stone-200 rounded-lg p-3 whitespace-pre-wrap">
+                    <p className="text-xs text-stone-500 mb-2">AI 歷史摘要（非檢查或部署結果）</p>
                     {latestSummaryForRef.summary}
                     <div className="mt-2 text-[10px] text-stone-400 not-italic">
                       {formatRelativeTime(latestSummaryForRef.generatedAt)}產生
@@ -480,7 +469,7 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
                 <span
                   className={`text-[11px] px-2 py-0.5 rounded border ${gateStyle.bg} ${gateStyle.text} ${gateStyle.border}`}
                 >
-                  Gate: {project.currentGate}
+                  保存資料（非最新證據） Gate: {project.currentGate}
                 </span>
                 {prRef && (
                   <span className="text-[11px] px-2 py-0.5 rounded border bg-sky-50 text-sky-900 border-sky-200 flex items-center gap-1">
@@ -523,6 +512,6 @@ export const ProjectVerdictCard: React.FC<ProjectVerdictCardProps> = ({
           onConfirmDelete={onDelete}
         />
       )}
-    </div>
+    </article>
   );
 };
