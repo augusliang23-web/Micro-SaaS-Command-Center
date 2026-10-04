@@ -549,7 +549,7 @@ test('scope: the sandbox layer is provider-neutral and unwired; the Orchestrator
     assert.ok(!/claudeCliAdapter|CodexAppServerClient|codexHandoff|\bcodex\b.*spawn/i.test(text), `${f} must not depend on a provider adapter`);
   }
   const importers = walk(REPO).filter((f) => /\.(mjs|ts|tsx|js)$/.test(f) && /sandbox\/(dockerSandboxRuntime|dockerClient|sandboxPolicy|workspaceView)/.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(REPO, f)).filter((f) => !f.startsWith('test/') && !f.startsWith('server/sandbox/'));
-  assert.deepEqual(importers, [], 'nothing outside tests and server/sandbox uses the runtime');
+  assert.deepEqual(importers, ['server/verifier/foundation.mjs'], 'only the internal verifier snapshot foundation reuses workspace gates; execution remains unwired');
   assert.ok(!/sandbox/.test(src('server.ts')) && !/sandbox/.test(src('server/tasks/taskRoutes.mjs')) && !/sandbox/i.test(src('server/execution/orchestrator.mjs')));
   assert.match(src('server/execution/orchestrator.mjs'), /this\.#adapter\.id !== 'fake'/);
   assert.ok(!/claude|codex/i.test(src('server/execution/orchestrator.mjs')));

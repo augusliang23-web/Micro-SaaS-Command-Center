@@ -73,7 +73,7 @@ export class FakeDocker {
     return ok(JSON.stringify({
       Id: this.imageDigestOk ? IMAGE.digest : `sha256:${'0'.repeat(64)}`, ...this.imagePlatform,
       RepoDigests: this.imageDigestOk ? [IMAGE.reference] : [`busybox@sha256:${'0'.repeat(64)}`],
-      Config: { Env: ['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'] },
+      Config: { Entrypoint: null, Env: ['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'] },
     }));
   }
 
@@ -117,7 +117,7 @@ export class FakeDocker {
     const info = {
       Id: c.id, Image: IMAGE.digest,
       State: { Status: c.running ? 'running' : (c.started ? 'exited' : 'created'), Running: c.running, ExitCode: c.exitCode, OOMKilled: c.oom, StartedAt: '2026-10-04T00:00:00Z', FinishedAt: '2026-10-04T00:00:01Z' },
-      Config: { Image: c.image, User: c.user, WorkingDir: c.workdir, Labels: c.labels, Env: [...Object.entries(c.env).map(([k, v]) => `${k}=${v}`)] },
+      Config: { Image: c.image, User: c.user, WorkingDir: c.workdir, Labels: c.labels, Cmd: c.command, Entrypoint: null, Env: [...Object.entries(c.env).map(([k, v]) => `${k}=${v}`)] },
       HostConfig: {
         NetworkMode: c.network, Privileged: false, CapDrop: c.capDrop.length ? c.capDrop : null, CapAdd: null, SecurityOpt: c.secOpt, ReadonlyRootfs: c.readOnly, PidMode: '', IpcMode: c.ipc, UsernsMode: '', UTSMode: '',
         Devices: [], DeviceCgroupRules: null, DeviceRequests: null, PortBindings: {}, Links: null, PublishAllPorts: false, Binds: null, VolumesFrom: null,

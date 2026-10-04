@@ -22,6 +22,9 @@ export function validateImageAllowlist(images) {
     if (!/^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$/.test(entry?.reference ?? '')) throw new Error(`Image ${alias} must be pinned by digest (no tags)`);
     if (entry.reference.split('@')[1] !== entry.digest) throw new Error(`Image ${alias} digest does not match its reference`);
     if (entry.os !== 'linux' || !['arm64', 'amd64'].includes(entry.arch)) throw new Error(`Image ${alias} has an unsupported platform`);
+    if(entry.expectedEnv && (typeof entry.expectedEnv!=='object' || Array.isArray(entry.expectedEnv) || !Object.hasOwn(entry.expectedEnv,'PATH') || !Object.entries(entry.expectedEnv).every(([k,v])=>['PATH','NODE_VERSION','YARN_VERSION'].includes(k) && typeof v==='string' && !/[\0\r\n]/.test(v)))) throw new Error(`Image ${alias} has an invalid baked environment allowlist`);
+    if(entry.expectedEnv && !Object.hasOwn(entry,'expectedEntrypoint')) throw new Error(`Image ${alias} needs an explicit entrypoint identity`);
+    if(entry.roles && (!Array.isArray(entry.roles)||!entry.roles.every(r=>['agent','verifier','scratch'].includes(r)))) throw new Error(`Image ${alias} has invalid roles`);
   }
   return images;
 }

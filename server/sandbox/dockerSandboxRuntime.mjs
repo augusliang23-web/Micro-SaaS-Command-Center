@@ -4,9 +4,9 @@ import path from 'node:path';
 
 import { SandboxBlockedError } from './pathSafety.mjs';
 import { TEST_IMAGES, validateImageAllowlist } from './sandboxImages.mjs';
-import { BASE_ENV, NETWORK_PROFILES, assertDockerArgs, buildCreateArgs, parseSandboxPolicy, sandboxName, validateCommand } from './sandboxPolicy.mjs';
+import { BASE_ENV, NETWORK_PROFILES, VERIFIER_TMPFS, assertDockerArgs, buildCreateArgs, parseSandboxPolicy, sandboxName, validateCommand } from './sandboxPolicy.mjs';
 import { inspectWorkspace } from './workspaceView.mjs';
-import { verifyContainerReadback } from './readbackVerifier.mjs';
+import { verifyContainerReadback, verifyExecutionReadback } from './readbackVerifier.mjs';
 
 /**
  * Provider-neutral Docker sandbox runtime (Phase 3B2).
@@ -90,6 +90,11 @@ export class DockerSandboxRuntime {
     if (info.Os !== entry.os || info.Architecture !== entry.arch) return { present: false, reason: 'IMAGE_PLATFORM_MISMATCH', detail: `${info.Os}/${info.Architecture}` };
     if (!(Array.isArray(info.RepoDigests) && info.RepoDigests.includes(entry.reference)) && info.Id !== entry.digest) return { present: false, reason: 'IMAGE_DIGEST_MISMATCH' };
     const envKeys = (info.Config?.Env ?? []).map((e) => e.split('=')[0]);
+    if (entry.expectedEnv) {
+      const actual=info.Config?.Env;
+      const expected=Object.entries(entry.expectedEnv).map(([k,v])=>`${k}=${v}`).sort();
+      if(!Array.isArray(actual)||JSON.stringify([...actual].sort())!==JSON.stringify(expected)||!Object.hasOwn(info.Config,'Entrypoint')||JSON.stringify(info.Config.Entrypoint)!==JSON.stringify(entry.expectedEntrypoint)) return {present:false,reason:'IMAGE_ENV_MISMATCH'};
+    }
     return { present: true, imageId: info.Id, digest: entry.digest, arch: info.Architecture, os: info.Os, variant: info.Variant ?? null, envKeys };
   }
 
@@ -142,7 +147,9 @@ export class DockerSandboxRuntime {
       if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new SandboxBlockedError('INVALID_SPEC', 'Spec must be an object');
       const unknown = Object.keys(spec).filter((k) => !SPEC_KEYS.includes(k));
       if (unknown.length > 0) throw new SandboxBlockedError('INVALID_SPEC', `Unknown spec field(s): ${unknown.join(', ')}`);
-      const policy = parseSandboxPolicy(spec.policy, { images: this.#images });
+      const policy = parseSandboxPolicy(spec.policy, { images: this.#images, role: spec.role });
+      if(this.#images[policy.image].roles && !this.#images[policy.image].roles.includes(spec.role)) throw new SandboxBlockedError('IMAGE_NOT_ALLOWED','Image is not approved for this role');
+      if(spec.role==='verifier' && !this.#images[policy.image].expectedEnv) throw new SandboxBlockedError('IMAGE_NOT_ALLOWED','Verifier image requires an explicit baked environment allowlist');
       const name = sandboxName(spec.role, spec.sandboxId);
       const command = validateCommand(spec.command);
       if (this.#records.has(spec.sandboxId) && this.#records.get(spec.sandboxId).state !== 'DESTROYED') throw new SandboxBlockedError('DUPLICATE_SANDBOX', 'A sandbox with this id already exists');
@@ -181,9 +188,9 @@ export class DockerSandboxRuntime {
 
       // The ID is ours (returned by our own create). Track it immediately, before any further readback can fail.
       const plan = {
-        sandboxId: spec.sandboxId, policy, image: imageEntry, maskDir, workspaceRoot: workspace.root, gitKind: workspace.gitKind,
+        sandboxId: spec.sandboxId, role: spec.role, command, policy, image: imageEntry, maskDir, workspaceRoot: workspace.root, gitKind: workspace.gitKind,
         mounts: [{ source: workspace.root, destination: '/workspace', rw: policy.writablePaths.includes('/workspace') }, ...(gitMask?.kind === 'file' ? [{ source: gitMask.emptyFile, destination: '/workspace/.git', rw: false }] : [])],
-        tmpfs: { ...(policy.writablePaths.includes('/tmp') ? { '/tmp': 'rw,noexec,nosuid,nodev,size=64m' } : {}), ...(gitMask?.kind === 'dir' ? { '/workspace/.git': 'ro,noexec,nosuid,nodev,size=1k' } : {}) },
+        tmpfs: { ...(policy.writablePaths.includes('/tmp') ? { '/tmp': 'rw,noexec,nosuid,nodev,size=64m' } : {}), ...(spec.role==='verifier' ? {'/verify':VERIFIER_TMPFS}:{}), ...(gitMask?.kind === 'dir' ? { '/workspace/.git': 'ro,noexec,nosuid,nodev,size=1k' } : {}) },
         env: { ...BASE_ENV, ...policy.env },
       };
       record = { sandboxId: spec.sandboxId, role: spec.role, name, containerId, plan, image, maskDir, state: 'CREATED_UNVERIFIED' };
@@ -266,6 +273,9 @@ export class DockerSandboxRuntime {
       return { state: 'UNKNOWN', outcome: 'UNKNOWN', code: 'AMBIGUOUS_DOCKER_STATE', lines, evidence: [] };
     }
     const st = after.info.State;
+    if(plan.role==='verifier' && (!verifyContainerReadback(after.info,{plan,image,user:this.#user}).ok || !verifyExecutionReadback(after.info,{containerId:record.containerId}).ok)) {
+      record.state='UNKNOWN';return {state:'UNKNOWN',outcome:'UNKNOWN',code:'EXECUTION_READBACK_INCOMPLETE',lines,evidence:[]};
+    }
     record.state = 'EXITED';
     return {
       state: 'EXITED', outcome: outcome ?? 'FINISHED', exitCode: st.ExitCode, oomKilled: st.OOMKilled === true, lines,
@@ -282,6 +292,13 @@ export class DockerSandboxRuntime {
     if (r.state === 'UNKNOWN') return { state: 'UNKNOWN', reason: r.detail };
     if (!this.#owns(r.info, record)) return { state: 'UNKNOWN', reason: 'NOT_OWNED' };
     const st = r.info.State ?? {};
+    if(record.plan?.role==='verifier') {
+      const keys=['ExitCode','Running','Status','OOMKilled','StartedAt','FinishedAt'];
+      const present=keys.every(k=>Object.hasOwn(st,k));
+      const typed=Number.isInteger(st.ExitCode)&&typeof st.Running==='boolean'&&typeof st.OOMKilled==='boolean'&&typeof st.Status==='string'&&typeof st.StartedAt==='string'&&typeof st.FinishedAt==='string';
+      if(!present || !typed || !verifyContainerReadback(r.info,{plan:record.plan,image:record.image,user:this.#user}).ok) return {state:'UNKNOWN',reason:'POLICY_OR_STATE_READBACK_INCOMPLETE'};
+      if(st.Status==='exited' && !verifyExecutionReadback(r.info,{containerId:record.containerId}).ok) return {state:'UNKNOWN',reason:'EXECUTION_READBACK_INCOMPLETE'};
+    }
     return { state: st.Running ? 'RUNNING' : (st.Status ?? 'UNKNOWN').toUpperCase(), exitCode: st.ExitCode, oomKilled: st.OOMKilled === true, networkMode: r.info.HostConfig?.NetworkMode, containerId: r.info.Id };
   }
 
