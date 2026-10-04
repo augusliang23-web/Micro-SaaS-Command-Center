@@ -245,6 +245,31 @@ test('strict readback: option ORDER and equivalent size spellings are normalized
   }
 });
 
+test('strict readback: no tmpfs expected — missing HostConfig.Tmpfs is INCOMPLETE, explicit {} is PREPARED', async () => {
+  const noTmpfs = { policy: policyOf({ writablePaths: [] }) };
+  await withSetup(async ({ fake, prepare }) => {
+    fake.mutateInspect = (info) => { if (fake.callsOf('create').length) delete info.HostConfig.Tmpfs; };
+    const r = await prepare(noTmpfs);
+    assert.notEqual(r.state, 'PREPARED');
+    assert.equal(r.code, 'POLICY_READBACK_INCOMPLETE');
+    assert.deepEqual(r.evidence, []);
+    assert.ok(!JSON.stringify(r).includes('LOCALLY_VERIFIED'));
+    assert.equal(fake.containers.size, 0);
+  });
+  await withSetup(async ({ fake, prepare, runtime }) => {
+    fake.mutateInspect = (info) => { if (fake.callsOf('create').length) info.HostConfig.Tmpfs = {}; };
+    const r = await prepare(noTmpfs);
+    assert.equal(r.state, 'PREPARED');
+    assert.equal(r.evidence.find((e) => e.kind === 'sandbox_policy').data.checks.tmpfs, true);
+    await runtime.destroy(r.sandboxId);
+  });
+  // tmpfs entries present although none were requested stay a mismatch
+  await withSetup(async ({ fake, prepare }) => {
+    fake.mutateInspect = (info) => { if (fake.callsOf('create').length) info.HostConfig.Tmpfs = { '/tmp': 'rw,size=1g' }; };
+    assert.equal((await prepare(noTmpfs)).code, 'POLICY_READBACK_MISMATCH');
+  });
+});
+
 test('strict readback: malformed or empty inspect output is UNKNOWN / INCOMPLETE, never verified', async () => {
   const verdict = (info) => verifyContainerReadback(info, { plan: { policy: { network: 'NO_NETWORK', memoryMb: 512, cpus: 1, pids: 128 }, tmpfs: {}, mounts: [], env: {}, image: { reference: 'x' }, sandboxId: 's' }, image: { imageId: 'i', envKeys: [] }, user: '501:20' });
   for (const bad of [null, undefined, [], 'x', 5, {}, { HostConfig: {} }, { HostConfig: {}, Config: {} }, { HostConfig: [], Config: {} }]) {

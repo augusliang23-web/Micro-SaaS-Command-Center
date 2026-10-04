@@ -75,7 +75,9 @@ export function verifyContainerReadback(info, { plan, image, user }) {
   // tmpfs: the COMPLETE intended options, not just the destination path. If none are intended, none may exist.
   const expectedTmpfs = plan.tmpfs;
   if (Object.keys(expectedTmpfs).length === 0) {
-    record('tmpfs', true, !has(hc, 'Tmpfs') || emptyMap(hc.Tmpfs));
+    // Missing is not "none": Docker must explicitly report an empty map. (Real Docker 29.x OMITS the field when no tmpfs
+    // exists, so such a configuration cannot be verified and fails closed as INCOMPLETE rather than being assumed safe.)
+    record('tmpfs', has(hc, 'Tmpfs'), isRecord(hc.Tmpfs) && Object.keys(hc.Tmpfs).length === 0);
   } else {
     const actual = hc.Tmpfs;
     const present = has(hc, 'Tmpfs') && isRecord(actual);
