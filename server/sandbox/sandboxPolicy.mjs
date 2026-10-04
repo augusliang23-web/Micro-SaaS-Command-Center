@@ -29,6 +29,7 @@ const RANGE = {
 
 // Fixed, minimal base environment. Host process.env is never consulted.
 export const BASE_ENV = Object.freeze({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' });
+export const VERIFIER_TMPFS = 'rw,exec,nosuid,nodev,size=1g';
 const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 const ENV_RESERVED = new Set(Object.keys(BASE_ENV));
 // Secrets and routing variables can never be passed through the generic runtime. Provider auth is a
@@ -46,7 +47,7 @@ function number(policy, key) {
   return value;
 }
 
-export function parseSandboxPolicy(raw, { images }) {
+export function parseSandboxPolicy(raw, { images, role = 'scratch' }) {
   if (!isRecord(raw)) throw blocked('INVALID_POLICY', 'Policy must be an object');
   const unknown = Object.keys(raw).filter((k) => !POLICY_KEYS.includes(k));
   if (unknown.length > 0) throw blocked('UNKNOWN_POLICY_FIELD', `Unknown policy field(s): ${unknown.join(', ')}`);
@@ -56,12 +57,16 @@ export function parseSandboxPolicy(raw, { images }) {
   // Phase 3B2 allows no extra mounts: the workspace is the only (server-derived) mount.
   if (raw.mounts !== undefined && !(Array.isArray(raw.mounts) && raw.mounts.length === 0)) throw blocked('MOUNT_NOT_ALLOWED', 'Policies may not request mounts');
 
-  const writable = raw.writablePaths === undefined ? ['/workspace', '/tmp'] : raw.writablePaths;
-  if (!Array.isArray(writable) || !writable.every((p) => WRITABLE_PATHS.includes(p))) throw blocked('INVALID_POLICY', `writablePaths may only contain: ${WRITABLE_PATHS.join(', ')}`);
+  const verifier = role === 'verifier';
+  if (verifier && raw.network !== 'NO_NETWORK') throw blocked('INVALID_POLICY', 'Verifier requires NO_NETWORK');
+  const writable = raw.writablePaths === undefined ? (verifier ? ['/tmp', '/verify'] : ['/workspace', '/tmp']) : raw.writablePaths;
+  const allowedWritable = verifier ? ['/tmp', '/verify'] : WRITABLE_PATHS;
+  if (!Array.isArray(writable) || !writable.every((p) => allowedWritable.includes(p)) || (verifier && (!writable.includes('/tmp') || !writable.includes('/verify')))) throw blocked('INVALID_POLICY', 'Invalid writable paths for sandbox role');
 
   const env = raw.env === undefined ? {} : raw.env;
   if (!isRecord(env)) throw blocked('INVALID_POLICY', 'env must be an object');
   for (const [name, value] of Object.entries(env)) {
+    if (verifier && !((name === 'CI' && value === '1') || (name === 'TMPDIR' && value === '/verify/tmp') || (name === 'NODE_ENV' && ['test','production'].includes(value)))) throw blocked('INVALID_ENV', 'Verifier environment is restricted to exact CI, TMPDIR and NODE_ENV values');
     if (!ENV_NAME.test(name)) throw blocked('INVALID_ENV', `Invalid environment variable name: ${name.slice(0, 40)}`);
     if (ENV_RESERVED.has(name)) throw blocked('INVALID_ENV', `${name} is set by the runtime`);
     if (ENV_FORBIDDEN.test(name)) throw blocked('INVALID_ENV', `${name} may not be passed to a sandbox`);
@@ -125,6 +130,10 @@ export function buildCreateArgs({ name, sandboxId, role, policy, image, workspac
     '--log-driver=none',
   ];
   if (policy.writablePaths.includes('/tmp')) args.push('--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m');
+  if (role === 'verifier') {
+    if (policy.network !== 'NO_NETWORK' || policy.writablePaths.includes('/workspace') || !policy.writablePaths.includes('/verify')) throw blocked('INVALID_POLICY', 'Verifier requires read-only source and private /verify');
+    args.push(`--tmpfs=/verify:${VERIFIER_TMPFS}`);
+  } else if (policy.writablePaths.includes('/verify')) throw blocked('INVALID_POLICY', '/verify is verifier-only');
   args.push(mountSrc(workspacePath, '/workspace', !policy.writablePaths.includes('/workspace'), true));
   if (gitMask?.kind === 'file') args.push(mountSrc(gitMask.emptyFile, '/workspace/.git', true));
   if (gitMask?.kind === 'dir') args.push('--tmpfs=/workspace/.git:ro,noexec,nosuid,nodev,size=1k');
@@ -138,6 +147,7 @@ const ALLOWED_FLAG = [
   /^--cap-drop=ALL$/, /^--security-opt=no-new-privileges$/, /^--read-only$/, /^--memory=\d+m$/, /^--memory-swap=\d+m$/, /^--cpus=[\d.]+$/, /^--pids-limit=\d+$/,
   /^--user=[1-9]\d*:\d+$/, /^--workdir=\/workspace$/, /^--log-driver=none$/, /^--tmpfs=\/tmp:rw,noexec,nosuid,nodev,size=64m$/, /^--tmpfs=\/workspace\/\.git:ro,noexec,nosuid,nodev,size=1k$/,
   /^--env=[A-Z][A-Z0-9_]*=[^\0\n\r]*$/,
+  /^--tmpfs=\/verify:rw,exec,nosuid,nodev,size=1g$/,
 ];
 
 /**
@@ -151,6 +161,9 @@ export function assertDockerArgs(args, { image, allowedBindSources }) {
   if (!Array.isArray(args) || args[0] !== 'create') throw bad('Only `docker create` is built by the runtime');
   let i = 1;
   let workspaceBinds = 0;
+  const verifier = args.includes('--label=cc.sandbox.role=verifier');
+  if (verifier && (!args.includes('--network=none') || args.some(a=>a.startsWith('--network=') && a!=='--network=none') || !args.includes(`--tmpfs=/verify:${VERIFIER_TMPFS}`))) throw bad('Verifier requires NO_NETWORK and exact /verify tmpfs');
+  if (!verifier && args.some(a=>a.startsWith('--tmpfs=/verify:'))) throw bad('/verify is verifier-only');
   while (i < args.length && args[i].startsWith('-')) {
     const arg = args[i];
     if (arg.startsWith('--mount=')) {
@@ -159,6 +172,7 @@ export function assertDockerArgs(args, { image, allowedBindSources }) {
       if (m[2] === '/workspace/.git' && !m[3]) throw bad('.git mask must be read-only');
       if (m[2] === '/workspace/.git' && m[4]) throw bad('.git mask must not carry bind options');
       if (m[2] === '/workspace' && !m[4]) throw bad('The workspace bind must be non-recursive (bind-recursive=disabled)');
+      if (m[2] === '/workspace' && verifier && !m[3]) throw bad('Verifier source must be read-only');
       workspaceBinds += m[2] === '/workspace' ? 1 : 0;
     } else if (!ALLOWED_FLAG.some((re) => re.test(arg))) {
       throw bad(`Option not allowed: ${arg.slice(0, 40)}`);

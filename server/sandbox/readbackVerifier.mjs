@@ -90,6 +90,10 @@ export function verifyContainerReadback(info, { plan, image, user }) {
   record('workingDir', has(cfg, 'WorkingDir'), cfg.WorkingDir === '/workspace');
   record('image', has(cfg, 'Image') && has(info, 'Image'), cfg.Image === plan.image.reference && info.Image === image.imageId);
   record('labels', has(cfg, 'Labels') && isRecord(cfg.Labels), isRecord(cfg.Labels) && cfg.Labels['cc.sandbox'] === '1' && cfg.Labels['cc.sandbox.id'] === plan.sandboxId);
+  if(plan.role==='verifier') {
+    record('command',has(cfg,'Cmd'),JSON.stringify(cfg.Cmd)===JSON.stringify(plan.command));
+    record('entrypoint',has(cfg,'Entrypoint'),JSON.stringify(cfg.Entrypoint)===JSON.stringify(plan.image.expectedEntrypoint));
+  }
 
   const mountsPresent = Array.isArray(info.Mounts) && info.Mounts.every((m) => isRecord(m) && typeof m.Type === 'string' && typeof m.Source === 'string' && typeof m.Destination === 'string' && typeof m.RW === 'boolean');
   const mounts = mountsPresent ? info.Mounts.map((m) => ({ type: m.Type, source: m.Source, destination: m.Destination, rw: m.RW })).sort((a, b) => a.destination.localeCompare(b.destination)) : [];
@@ -107,7 +111,26 @@ export function verifyContainerReadback(info, { plan, image, user }) {
   else {
     const env = Object.fromEntries(cfg.Env.map((e) => { const i = e.indexOf('='); return [e.slice(0, i), e.slice(i + 1)]; }));
     const extra = Object.keys(env).filter((k) => !(k in plan.env) && !image.envKeys.includes(k));
-    record('env', true, Object.entries(plan.env).every(([k, v]) => env[k] === v) && extra.length === 0);
+    const bakedSafe=plan.role!=='verifier' || (plan.image.expectedEnv && Object.entries(plan.image.expectedEnv).every(([k,v])=>Object.hasOwn(plan.env,k)||env[k]===v));
+    record('env', true, Object.entries(plan.env).every(([k, v]) => env[k] === v) && extra.length === 0 && bakedSafe && (plan.role!=='verifier'||Object.keys(env).length===cfg.Env.length));
   }
   return { ok: failures.length === 0 && missing.length === 0, failures, missing, checks };
+}
+
+/** Raw execution facts only. Missing OOMKilled is never normalized into false. */
+export function verifyExecutionReadback(info, { containerId }) {
+  const missing=[], failures=[];
+  if (!has(info,'Id')) missing.push('Id');
+  else if (info.Id !== containerId) failures.push('Id');
+  const s=info?.State;
+  for(const key of ['ExitCode','Running','Status','OOMKilled','StartedAt','FinishedAt']) if(!has(s,key)) missing.push(`State.${key}`);
+  if (missing.length===0) {
+    if (!Number.isInteger(s.ExitCode)) failures.push('State.ExitCode');
+    if (s.Running !== false) failures.push('State.Running');
+    if (s.Status !== 'exited') failures.push('State.Status');
+    if (typeof s.OOMKilled !== 'boolean') failures.push('State.OOMKilled');
+    for (const k of ['StartedAt','FinishedAt']) if(typeof s[k]!=='string'||!Number.isFinite(Date.parse(s[k]))||Date.parse(s[k])<=0) failures.push(`State.${k}`);
+    if(Date.parse(s.FinishedAt)<Date.parse(s.StartedAt)) failures.push('State.timestamps');
+  }
+  return {ok:missing.length===0&&failures.length===0,missing,failures};
 }

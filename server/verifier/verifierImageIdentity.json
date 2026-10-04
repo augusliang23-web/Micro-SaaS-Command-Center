@@ -1,0 +1,51 @@
+{
+  "baseline": "19c23961af9b0f24b22d23a883def6c060db09e9",
+  "baseReference": "node@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c",
+  "platform": "linux/arm64",
+  "node": "v22.23.3",
+  "npm": "10.9.9",
+  "packageJsonHash": "3acbf96890701808944b0cc5a3688eab3b2611ccfa029b756c7e05280fdd5414",
+  "packageLockHash": "59a0736ce3f1b4f5690a074ec7c6a9b1719db1560c75ce882fdee24bbd0cce6c",
+  "provisioningPolicy": "npm-ci-ignore-scripts-v1",
+  "bootstrapVersion": "snapshot-copy-v1",
+  "baseImageId": "sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c",
+  "baseVariant": "v8",
+  "digest": "sha256:619d2835a4ae8c361b7a64a17c3cd528b0d8b22d756545db288ece1f1e9374c8",
+  "reference": "cc-verifier@sha256:619d2835a4ae8c361b7a64a17c3cd528b0d8b22d756545db288ece1f1e9374c8",
+  "imageId": "sha256:619d2835a4ae8c361b7a64a17c3cd528b0d8b22d756545db288ece1f1e9374c8",
+  "sizeBytes": 638194199,
+  "expectedEnv": {
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "NODE_VERSION": "22.23.3",
+    "YARN_VERSION": "1.22.22"
+  },
+  "expectedEntrypoint": [
+    "/usr/bin/env",
+    "--"
+  ],
+  "inputHashes": {
+    "Dockerfile": "10a573fa88e3be96a35401f24a26db568eb96157165f467fad2de85a15a4e60e",
+    "approvedIdentity.mjs": "ffcd3925ba31656cb716202c6886f77e7fd1be4d5cc2659c0c5cfa807fdb129a",
+    "bootstrap.mjs": "bd1e46f18048a25886c378e19568e407bb3341acfaafa64c69437adf77ba2854",
+    "capabilities.mjs": "b4fac7043a9a00032efef0b121746435c0606f5a539f64ca14256afda01261cc",
+    "empty-global.npmrc": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "empty-user.npmrc": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "package-lock.json": "59a0736ce3f1b4f5690a074ec7c6a9b1719db1560c75ce882fdee24bbd0cce6c",
+    "package.json": "3acbf96890701808944b0cc5a3688eab3b2611ccfa029b756c7e05280fdd5414",
+    "snapshotInventory.mjs": "20e38aca4f7e7e0cca76dffadeaf3ef5c01b2033e713cc7b444a214ef1605af5"
+  },
+  "capabilities": {
+    "node": "v22.23.3",
+    "npm": "10.9.9",
+    "platform": "linux",
+    "arch": "arm64",
+    "entrypoints": true,
+    "esbuild": "0.25.12",
+    "rollupNative": true,
+    "tailwindOxide": true,
+    "lightningCss": true,
+    "lifecycleScripts": "ignored",
+    "projectCommandsRun": false
+  },
+  "observedAt": "2026-10-04T01:15:04.732Z"
+}

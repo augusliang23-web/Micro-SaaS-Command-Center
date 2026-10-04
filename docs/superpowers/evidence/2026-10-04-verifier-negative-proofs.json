@@ -1,0 +1,61 @@
+{
+  "results": [
+    {
+      "name": "accept changed lock",
+      "detected": true,
+      "failedTests": 1
+    },
+    {
+      "name": "accept changed manifest",
+      "detected": true,
+      "failedTests": 1
+    },
+    {
+      "name": "mount host node_modules",
+      "detected": true,
+      "failedTests": 4
+    },
+    {
+      "name": "writable verifier source",
+      "detected": true,
+      "failedTests": 5
+    },
+    {
+      "name": "task controlled args",
+      "detected": true,
+      "failedTests": 1
+    },
+    {
+      "name": "inherit process.env",
+      "detected": true,
+      "failedTests": 1
+    },
+    {
+      "name": "remove NO_NETWORK",
+      "detected": true,
+      "failedTests": 1
+    },
+    {
+      "name": "weaken /verify",
+      "detected": true,
+      "failedTests": 5
+    },
+    {
+      "name": "accept missing OOMKilled",
+      "detected": true,
+      "failedTests": 2
+    }
+  ],
+  "restored": true,
+  "sourceHashes": {
+    "server/verifier/foundation.mjs": "012ed6d88751a588f20392ec68df3776350b9aae8110c46aa958002e31b22706",
+    "server/sandbox/sandboxPolicy.mjs": "b57e3ed79e0bec268170dcbb543a8432e929added8d24e871e22a010d471fc9f",
+    "server/sandbox/readbackVerifier.mjs": "2dc83a31b0f6f5401c8ef2275f7535a506a10563a6b362483569dcdafb118407"
+  },
+  "observedAt": "2026-10-04T03:57:02.386993+00:00",
+  "method": "One temporary implementation mutation at a time; foundation/runtime behavioral tests failed, not syntax checks. Safe source restored after each.",
+  "commands": [
+    "node --test test/agent-console-phase3b3b1-foundation.test.mjs test/agent-console-phase3b3b1-runtime.test.mjs"
+  ],
+  "scope": "Synthetic unit fixtures only; no real Docker container was created under weakened policies."
+}
