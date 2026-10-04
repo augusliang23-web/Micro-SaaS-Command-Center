@@ -95,6 +95,11 @@ export function verifyContainerReadback(info, { plan, image, user }) {
   const mounts = mountsPresent ? info.Mounts.map((m) => ({ type: m.Type, source: m.Source, destination: m.Destination, rw: m.RW })).sort((a, b) => a.destination.localeCompare(b.destination)) : [];
   const expectedMounts = plan.mounts.map((m) => ({ type: 'bind', source: m.source, destination: m.destination, rw: m.rw })).sort((a, b) => a.destination.localeCompare(b.destination));
   record('mounts', mountsPresent, JSON.stringify(mounts) === JSON.stringify(expectedMounts));
+  // The workspace bind must be non-recursive. Docker reports it as HostConfig.Mounts[].BindOptions.NonRecursive (explicit true);
+  // absence of the list or of the flag is INCOMPLETE, not "recursive is fine".
+  const hcMounts = hc.Mounts;
+  const wsMount = Array.isArray(hcMounts) ? hcMounts.find((m) => isRecord(m) && m.Target === '/workspace') : undefined;
+  record('workspaceNonRecursive', isRecord(wsMount) && isRecord(wsMount.BindOptions) && has(wsMount.BindOptions, 'NonRecursive'), wsMount?.BindOptions?.NonRecursive === true);
   record('dockerSocket', mountsPresent, !/docker\.sock/.test(JSON.stringify({ mounts: info.Mounts, hc })));
 
   const envPresent = Array.isArray(cfg.Env) && cfg.Env.every((e) => typeof e === 'string' && e.includes('='));

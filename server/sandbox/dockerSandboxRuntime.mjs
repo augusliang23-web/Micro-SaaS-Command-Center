@@ -39,9 +39,9 @@ const evidence = (kind, grade, data) => ({ kind, grade, data, observedAt: new Da
 function parseJson(text) { try { return JSON.parse(text); } catch { return undefined; } }
 
 export class DockerSandboxRuntime {
-  #docker; #images; #stateRoot; #commandCenterRoot; #homeDir; #user; #stopGraceSec; #records = new Map();
+  #docker; #images; #stateRoot; #commandCenterRoot; #homeDir; #user; #stopGraceSec; #lstat; #records = new Map();
 
-  constructor({ docker, images = TEST_IMAGES, stateRoot, commandCenterRoot = process.cwd(), homeDir = os.homedir(), user, stopGraceSec = 2 }) {
+  constructor({ docker, images = TEST_IMAGES, stateRoot, commandCenterRoot = process.cwd(), homeDir = os.homedir(), user, stopGraceSec = 2, lstat }) {
     if (!docker || typeof docker.run !== 'function' || typeof docker.stream !== 'function') throw new Error('A docker client is required');
     this.#docker = docker;
     this.#images = validateImageAllowlist(images);
@@ -53,6 +53,7 @@ export class DockerSandboxRuntime {
     if (!Number.isInteger(uid) || !Number.isInteger(gid) || uid <= 0 || gid < 0) throw new Error('Sandbox user must be a non-root numeric uid:gid');
     this.#user = `${uid}:${gid}`;
     this.#stopGraceSec = stopGraceSec;
+    this.#lstat = lstat; // test seam for the workspace scan only (server-side constructor option, never task input)
   }
 
   // ---- Docker readback helpers -------------------------------------------------------------------
@@ -145,7 +146,7 @@ export class DockerSandboxRuntime {
       const name = sandboxName(spec.role, spec.sandboxId);
       const command = validateCommand(spec.command);
       if (this.#records.has(spec.sandboxId) && this.#records.get(spec.sandboxId).state !== 'DESTROYED') throw new SandboxBlockedError('DUPLICATE_SANDBOX', 'A sandbox with this id already exists');
-      const workspace = inspectWorkspace(spec.worktreePath, { commandCenterRoot: this.#commandCenterRoot, homeDir: this.#homeDir, stateRoot: this.#stateRoot });
+      const workspace = inspectWorkspace(spec.worktreePath, { commandCenterRoot: this.#commandCenterRoot, homeDir: this.#homeDir, stateRoot: this.#stateRoot, lstat: this.#lstat });
 
       const image = await this.#readImage(policy.image);
       if (!image.present) throw new SandboxBlockedError(image.reason, `Image ${policy.image} is not usable (${image.reason}); images are never pulled automatically`);
@@ -232,7 +233,7 @@ export class DockerSandboxRuntime {
     const { plan, image } = record;
     // Re-check the host side (a file may have gained a hard link or a symlink since prepare)…
     try {
-      inspectWorkspace(plan.workspaceRoot, { commandCenterRoot: this.#commandCenterRoot, homeDir: this.#homeDir, stateRoot: this.#stateRoot });
+      inspectWorkspace(plan.workspaceRoot, { commandCenterRoot: this.#commandCenterRoot, homeDir: this.#homeDir, stateRoot: this.#stateRoot, lstat: this.#lstat });
     } catch (error) {
       if (error instanceof SandboxBlockedError) return { state: 'BLOCKED', code: error.code, reason: error.message, evidence: [] };
       throw error;

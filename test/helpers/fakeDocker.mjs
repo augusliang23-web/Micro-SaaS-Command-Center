@@ -85,7 +85,7 @@ export class FakeDocker {
     const flags = (n) => args.filter((a) => a.startsWith(`${n}=`)).map((a) => a.slice(n.length + 1));
     const imageIndex = args.findIndex((a, i) => i > 0 && !a.startsWith('-'));
     const name = this.#flag(args, '--name');
-    const mounts = flags('--mount').map((m) => { const o = Object.fromEntries(m.split(',').map((kv) => kv.split('=', 2))); return { source: o.src, destination: o.dst, rw: !m.includes(',readonly') }; });
+    const mounts = flags('--mount').map((m) => { const o = Object.fromEntries(m.split(',').map((kv) => kv.split('=', 2))); return { source: o.src, destination: o.dst, rw: !m.includes(',readonly'), nonRecursive: o['bind-recursive'] === 'disabled' }; });
     const tmpfs = Object.fromEntries(flags('--tmpfs').map((t) => { const [p, ...o] = t.split(':'); return [p, o.join(':')]; }));
     const mb = (v) => Number(v.replace('m', '')) * 1024 * 1024;
     this.containers.set(name, {
@@ -122,6 +122,7 @@ export class FakeDocker {
         NetworkMode: c.network, Privileged: false, CapDrop: c.capDrop.length ? c.capDrop : null, CapAdd: null, SecurityOpt: c.secOpt, ReadonlyRootfs: c.readOnly, PidMode: '', IpcMode: c.ipc, UsernsMode: '', UTSMode: '',
         Devices: [], DeviceCgroupRules: null, DeviceRequests: null, PortBindings: {}, Links: null, PublishAllPorts: false, Binds: null, VolumesFrom: null,
         Memory: c.memory, MemorySwap: c.memorySwap, NanoCpus: Math.round(c.cpus * 1e9), PidsLimit: c.pids, LogConfig: { Type: c.log }, Tmpfs: c.tmpfs,
+        Mounts: c.mounts.map((m) => ({ Type: 'bind', Source: m.source, Target: m.destination, ...(m.rw ? {} : { ReadOnly: true }), ...(m.destination === '/workspace' ? { BindOptions: { NonRecursive: m.nonRecursive } } : {}) })),
       },
       Mounts: c.mounts.map((m) => ({ Type: 'bind', Source: m.source, Destination: m.destination, RW: m.rw })),
     };

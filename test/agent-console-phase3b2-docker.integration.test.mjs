@@ -3,6 +3,8 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import net from 'node:net';
+import { execFileSync } from 'node:child_process';
 
 import { DOCKER_BIN, POLICY, git, makeScratch, nextId, realRuntime, realTmp } from './helpers/dockerScratch.mjs';
 import { TEST_IMAGES } from '../server/sandbox/sandboxImages.mjs';
@@ -388,4 +390,51 @@ test('real docker: no sandbox containers from this suite remain', { skip }, asyn
   const left = (await docker.run(['ps', '-a', '--filter', 'label=cc.sandbox=1', '--format={{.Names}}'])).stdout.trim();
   runtime.dispose();
   assert.equal(left, '', `leftover sandbox containers: ${left}`);
+});
+
+// ---- Phase 3B2.1: filesystem boundary ---------------------------------------------------------------------------------
+// argv verified (unit) / runtime accepted (real create) / behavior observed (the container below). Docker inspect exposes the
+// option as HostConfig.Mounts[].BindOptions.NonRecursive, which the strict readback requires. A nested host submount is NOT
+// created here (that would need a real host mount); the non-recursive behaviour itself is therefore accepted + inspect-verified,
+// not observed.
+test('real docker: the non-recursive workspace bind is accepted, reported by inspect, and prepare/start/destroy work', { skip }, async () => {
+  const scratch = makeScratch();
+  fs.mkdirSync(path.join(scratch.wt, 'sub'));
+  fs.writeFileSync(path.join(scratch.wt, 'sub', 'n.txt'), 'nested\n');
+  await withSandbox(async ({ runtime, docker, sandboxId, prepared }) => {
+    assert.equal(prepared.state, 'PREPARED', JSON.stringify(prepared));
+    assert.equal(prepared.evidence.find((e) => e.kind === 'sandbox_policy').data.checks.workspaceNonRecursive, true);
+    const info = JSON.parse(await dockerOut(docker, 'inspect', prepared.containerId))[0];
+    const ws = info.HostConfig.Mounts.find((m) => m.Target === '/workspace');
+    assert.equal(ws.BindOptions.NonRecursive, true, 'Docker reports the bind as non-recursive');
+    const started = await runtime.start(sandboxId);
+    assert.equal(started.outcome, 'FINISHED', JSON.stringify(started));
+    assert.equal(started.exitCode, 0);
+    const out = started.lines.join('\n');
+    assert.match(out, /hello from the worktree/);
+    assert.match(out, /nested/);
+  }, { scratch, command: run('cat /workspace/a.txt /workspace/sub/n.txt') });
+});
+
+test('real docker: a Unix socket or FIFO in the workspace BLOCKS before any container exists', { skip }, async () => {
+  const scratch = makeScratch();
+  const { runtime, docker } = realRuntime();
+  const before = (await docker.run(['ps', '-a', '--format={{.Names}}'])).stdout;
+  const sock = path.join(scratch.wt, 's.sock');
+  const server = net.createServer();
+  try {
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(sock, resolve); });
+    let r = await runtime.prepare({ sandboxId: nextId('sp'), role: 'scratch', worktreePath: scratch.wt, policy: POLICY(), command: run('true') });
+    assert.deepEqual([r.state, r.code], ['BLOCKED', 'SPECIAL_FILE_UNSAFE']);
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(sock, { force: true });
+    execFileSync('/usr/bin/mkfifo', [path.join(scratch.wt, 'pipe')]);
+    r = await runtime.prepare({ sandboxId: nextId('sp'), role: 'scratch', worktreePath: scratch.wt, policy: POLICY(), command: run('true') });
+    assert.deepEqual([r.state, r.code], ['BLOCKED', 'SPECIAL_FILE_UNSAFE']);
+    assert.equal((await docker.run(['ps', '-a', '--format={{.Names}}'])).stdout, before, 'no container was created');
+    fs.rmSync(path.join(scratch.wt, 'pipe'));
+    const ok = await runtime.prepare({ sandboxId: nextId('sp'), role: 'scratch', worktreePath: scratch.wt, policy: POLICY(), command: run('true') });
+    assert.equal(ok.state, 'PREPARED', 'the same workspace without special files is allowed');
+    await runtime.destroy(ok.sandboxId);
+  } finally { server.close(); runtime.dispose(); scratch.cleanup(); }
 });

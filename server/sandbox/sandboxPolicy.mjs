@@ -101,7 +101,9 @@ export function validateCommand(command) {
  * server allowlist. The container command follows the image and is plain data.
  */
 export function buildCreateArgs({ name, sandboxId, role, policy, image, workspacePath, gitMask, user, command }) {
-  const mountSrc = (src, dst, readonly) => `--mount=type=bind,src=${src},dst=${dst}${readonly ? ',readonly' : ''}`;
+  // The workspace bind is NON-RECURSIVE so host filesystems mounted below the worktree never become visible in the
+  // container. The .git mask is a single file bind and does not carry the option.
+  const mountSrc = (src, dst, readonly, nonRecursive = false) => `--mount=type=bind,src=${src},dst=${dst}${readonly ? ',readonly' : ''}${nonRecursive ? ',bind-recursive=disabled' : ''}`;
   const args = [
     'create',
     `--name=${name}`,
@@ -123,7 +125,7 @@ export function buildCreateArgs({ name, sandboxId, role, policy, image, workspac
     '--log-driver=none',
   ];
   if (policy.writablePaths.includes('/tmp')) args.push('--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m');
-  args.push(mountSrc(workspacePath, '/workspace', !policy.writablePaths.includes('/workspace')));
+  args.push(mountSrc(workspacePath, '/workspace', !policy.writablePaths.includes('/workspace'), true));
   if (gitMask?.kind === 'file') args.push(mountSrc(gitMask.emptyFile, '/workspace/.git', true));
   if (gitMask?.kind === 'dir') args.push('--tmpfs=/workspace/.git:ro,noexec,nosuid,nodev,size=1k');
   for (const [key, value] of Object.entries({ ...BASE_ENV, ...policy.env })) args.push(`--env=${key}=${value}`);
@@ -148,18 +150,23 @@ export function assertDockerArgs(args, { image, allowedBindSources }) {
   const bad = (m) => blocked('DOCKER_ARGS_REJECTED', m);
   if (!Array.isArray(args) || args[0] !== 'create') throw bad('Only `docker create` is built by the runtime');
   let i = 1;
+  let workspaceBinds = 0;
   while (i < args.length && args[i].startsWith('-')) {
     const arg = args[i];
     if (arg.startsWith('--mount=')) {
-      const m = /^--mount=type=bind,src=([^,]+),dst=(\/workspace(?:\/\.git)?)(,readonly)?$/.exec(arg);
+      const m = /^--mount=type=bind,src=([^,]+),dst=(\/workspace(?:\/\.git)?)(,readonly)?(,bind-recursive=disabled)?$/.exec(arg);
       if (!m || !allowedBindSources.includes(m[1])) throw bad('Unexpected mount');
       if (m[2] === '/workspace/.git' && !m[3]) throw bad('.git mask must be read-only');
+      if (m[2] === '/workspace/.git' && m[4]) throw bad('.git mask must not carry bind options');
+      if (m[2] === '/workspace' && !m[4]) throw bad('The workspace bind must be non-recursive (bind-recursive=disabled)');
+      workspaceBinds += m[2] === '/workspace' ? 1 : 0;
     } else if (!ALLOWED_FLAG.some((re) => re.test(arg))) {
       throw bad(`Option not allowed: ${arg.slice(0, 40)}`);
     }
     if (/docker\.sock/.test(arg)) throw bad('Docker socket may never be referenced');
     i += 1;
   }
+  if (workspaceBinds !== 1) throw bad('Exactly one /workspace bind is required');
   if (args[i] !== image.reference) throw bad('Image must be the allowlisted reference');
   return true;
 }
