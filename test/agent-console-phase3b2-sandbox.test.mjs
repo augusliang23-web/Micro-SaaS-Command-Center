@@ -88,7 +88,7 @@ test('argv: exact, minimal and every option uses --flag=value; the image is the 
   assert.deepEqual(args, [
     'create', '--name=cc-sandbox-scratch-abc', '--label=cc.sandbox=1', '--label=cc.sandbox.id=abc', '--label=cc.sandbox.role=scratch', '--pull=never', '--network=none', '--ipc=private',
     '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--memory=512m', '--memory-swap=512m', '--cpus=1', '--pids-limit=128', '--user=501:20', '--workdir=/workspace',
-    '--log-driver=none', '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m', '--mount=type=bind,src=/work/wt,dst=/workspace', '--mount=type=bind,src=/state/empty,dst=/workspace/.git,readonly',
+    '--log-driver=none', '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m', '--mount=type=bind,src=/work/wt,dst=/workspace,bind-recursive=disabled', '--mount=type=bind,src=/state/empty,dst=/workspace/.git,readonly',
     '--env=PATH=/usr/local/bin:/usr/bin:/bin', '--env=HOME=/tmp', IMG.reference, 'true',
   ]);
   const options = args.slice(1, args.indexOf(IMG.reference));
@@ -100,7 +100,7 @@ test('argv: exact, minimal and every option uses --flag=value; the image is the 
 test('argv: network profiles, limits and writable paths are all reflected', () => {
   const provider = sampleArgs(parse(policyOf({ network: 'PROVIDER_NETWORK', cpus: 0.5, memoryMb: 64, pids: 16, writablePaths: ['/tmp'] })));
   assert.ok(provider.includes('--network=bridge') && provider.includes('--cpus=0.5') && provider.includes('--memory=64m') && provider.includes('--memory-swap=64m') && provider.includes('--pids-limit=16'));
-  assert.ok(provider.includes('--mount=type=bind,src=/work/wt,dst=/workspace,readonly'), 'workspace is read-only unless /workspace is writable');
+  assert.ok(provider.includes('--mount=type=bind,src=/work/wt,dst=/workspace,readonly,bind-recursive=disabled'), 'workspace is read-only unless /workspace is writable');
   const none = sampleArgs(parse(policyOf({ writablePaths: ['/workspace'] })), null);
   assert.ok(!none.some((a) => a.startsWith('--tmpfs=')) && !none.some((a) => a.includes('/workspace/.git')));
   const dir = sampleArgs(parse(policyOf()), { kind: 'dir' });
@@ -116,7 +116,7 @@ test('argv guard: a Docker option can never be added — privileged, host networ
     '--user=0:0', '--user=root', '--volumes-from=x', '--group-add=0', '--shm-size=1g', '--entrypoint=/bin/sh', '-e', '--env=docker.sock=1', '--memory-reservation=1g', '--restart=always', '--add-host=a:1.1.1.1']) {
     assert.throws(() => assertDockerArgs(inject(arg), opts), (e) => e.code === 'DOCKER_ARGS_REJECTED', arg);
   }
-  assert.throws(() => assertDockerArgs(base.map((a) => (a.startsWith('--mount=type=bind,src=/work/wt') ? '--mount=type=bind,src=/work,dst=/workspace' : a)), opts), /Unexpected mount/);
+  assert.throws(() => assertDockerArgs(base.map((a) => (a.startsWith('--mount=type=bind,src=/work/wt') ? '--mount=type=bind,src=/work,dst=/workspace,bind-recursive=disabled' : a)), opts), /Unexpected mount/);
   assert.throws(() => assertDockerArgs(base.map((a) => (a.includes(',readonly') ? '--mount=type=bind,src=/state/empty,dst=/workspace/.git' : a)), opts), /read-only/);
   assert.throws(() => assertDockerArgs(base.map((a) => (a === IMG.reference ? 'busybox:latest' : a)), opts), /allowlisted reference/);
   assert.throws(() => assertDockerArgs(['run', ...base.slice(1)], opts), /docker create/);

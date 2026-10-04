@@ -44,7 +44,7 @@ docker create --name=cc-sandbox-<role>-<id> --label=cc.sandbox=1 --label=cc.sand
   --pull=never  --network=none|bridge  --ipc=private  --cap-drop=ALL  --security-opt=no-new-privileges  --read-only
   --memory=<n>m --memory-swap=<n>m --cpus=<n> --pids-limit=<n>  --user=<host uid>:<host gid> (non-root)  --workdir=/workspace  --log-driver=none
   --tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m
-  --mount=type=bind,src=<canonical worktree>,dst=/workspace[,readonly]
+  --mount=type=bind,src=<canonical worktree>,dst=/workspace[,readonly],bind-recursive=disabled
   --mount=type=bind,src=<empty 0444 file>,dst=/workspace/.git,readonly      (worktree .git FILE)   |   --tmpfs=/workspace/.git:ro,…,size=1k (.git DIR)
   --env=PATH=… --env=HOME=/tmp --env=<policy env…>
   <image@sha256:digest> <command…>
@@ -63,6 +63,13 @@ Workspace gate (shared helper): absolute, canonical, existing directory; not `/`
 Symlink gate: the Phase 3A detector runs first; escaping, dangling or chained symlinks, a symlinked `.git`, any nested `.git`, or a tree too large to scan **block** activation.
 
 Hard-link gate (closed in this phase): a bind-mounted workspace can contain a regular file whose inode is also referenced outside it (`workspace/leak` ↔ `outside/secret`), which would expose or let the container modify the outside file. We cannot robustly tell which other path owns an inode, so V1 **fails closed**: any regular file with link count > 1 → `HARDLINK_UNSAFE` → BLOCKED, before Docker is contacted, and again immediately before `start`. This is conservative (it also blocks workspaces that hard-link files among themselves, e.g. pnpm stores); a staged-copy design can replace it later. A container cannot create a link to a path outside its mount, so links added during a run cannot reach host files. This is still a preflight gate, not a sandbox: host-side integrity checks after a run remain required.
+
+### Filesystem boundary (Phase 3B2.1)
+
+- **Docker side (primary):** the `/workspace` bind is `bind-recursive=disabled`, so a host filesystem mounted *below* the worktree is not carried into the container. Verified on Docker Desktop 29.8.1 / linux/arm64: `docker create` accepts it (invalid values and use on non-bind mounts are rejected by Docker itself), and `docker inspect` reports `HostConfig.Mounts[].BindOptions.NonRecursive: true`, which the strict readback now requires (missing → `POLICY_READBACK_INCOMPLETE`, `false` → `POLICY_READBACK_MISMATCH`). The argv guard accepts only the exact option order `dst=/workspace[,readonly],bind-recursive=disabled`; the `.git` mask mount must carry no bind options. The option is server-generated; no task or policy field can supply it. *Evidence levels:* argv verified (unit), runtime accepted (real create), inspect verified (real readback). The non-recursive *behaviour* with an actual nested host mount was not observed — that would need a real host mount, which this phase deliberately does not create.
+- **Host side (defense in depth):** the workspace scan blocks any entry whose `st_dev` differs from the workspace root's (`MOUNT_BOUNDARY_UNSAFE`) and does not descend into it. Verified on macOS: APFS firmlinked volumes share one `st_dev`; an ordinary git worktree (194 entries) and a 14k-entry `node_modules` produce no boundary; `/dev` (devfs) differs from `/`. **Limits:** it detects mounts of a different device only — a same-filesystem bind mount keeps the same `st_dev` and is invisible — and a mount can appear after the scan (hence the re-scan before `start`). It is a preflight gate, not a guarantee.
+- **Special nodes:** only directories and regular files (plus the masked root `.git`, and symlinks under the symlink policy) are allowed. Unix sockets, FIFOs, block and character devices and any unrecognised node type → `SPECIAL_FILE_UNSAFE`; unknown types are never silently skipped. Device classification is unit-tested through `classifyNode` and an injected `lstat` (no device node is created).
+- The scan runs in `prepare` and again immediately before `start`; a boundary or special node introduced in between → `BLOCKED`, and `docker start` is never called.
 
 ## 5. Networks
 
