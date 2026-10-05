@@ -12,6 +12,17 @@ test('profile is immutable, ordered, and shares exact command identities', () =>
   assert.equal(COMMAND_CENTER_V1_PROFILE.commands.every(Object.isFrozen), true);
 });
 
+test('each command receives a fresh container identity after a fresh snapshot revalidation', () => {
+  const source = fs.readFileSync(path.resolve('server/verifier/verificationRunner.mjs'), 'utf8');
+  const loopStart = source.indexOf('for (const profileCommand of COMMAND_CENTER_V1_PROFILE.commands)');
+  const loopEnd = source.indexOf('const dockerAfter = await dockerInventory', loopStart);
+  assert.ok(loopStart >= 0 && loopEnd > loopStart);
+  const loop = source.slice(loopStart, loopEnd);
+  assert.match(loop, /const currentSnapshot = fingerprintSnapshot\(snapshot\.path\)/);
+  assert.match(loop, /currentSnapshot\.fingerprint !== snapshot\.fingerprint/);
+  assert.match(loop, /const sandboxId = `VERIFY-\$\{Date\.now\(\)\}-\$\{crypto\.randomBytes\(6\)\.toString\('hex'\)\}`/);
+});
+
 test('pinned runner identity binds the parent digest and current runner/profile/bootstrap bytes', () => {
   const root = path.resolve('server/verifier');
   const identity = JSON.parse(fs.readFileSync(path.join(root, 'verificationRunnerImageIdentity.json'), 'utf8'));
