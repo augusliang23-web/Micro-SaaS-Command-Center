@@ -92,3 +92,11 @@ PR delivery makes the narrow diagnostic and safety fixes reviewable; it does
 not turn the failed real smoke into READY_FOR_REVIEW. A successful bounded
 live invocation and the independent Claude review remain required for phase
 acceptance.
+
+The independent Sonnet/high review was attempted after PR #21 creation using
+a read-only preflight. It was blocked before inference (`AUTH_UNAVAILABLE`),
+so no review fixture or additional provider request was launched. A subsequent
+read-only auth check reported exit 1, `loggedIn:false`, `authMethod:none`.
+This differs from the original smoke preflight. The cause is unestablished;
+no login/logout/setup-token, CLI update or credential operation was performed.
+See [sanitized review evidence](../evidence/agent-console-phase3b4-independent-review.json).
