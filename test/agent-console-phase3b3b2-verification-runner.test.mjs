@@ -5,6 +5,90 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { COMMAND_CENTER_V1_PROFILE, evaluateCommandEvidence, ManagedWriterRegistry, VerificationRunner, verifyRunnerSourceIdentity } from '../server/verifier/verificationRunner.mjs';
+import { FakeDocker } from './helpers/fakeDocker.mjs';
+import { makeScratch } from './helpers/dockerScratch.mjs';
+
+// Exercise the real controller and sandbox readback path; only Docker and the final
+// host observation are simulated. No test-only execution shortcut is used here.
+function controllerFixture(t, { exitCode = 1, finalHost = 'UNCHANGED', finalInventory = 'unchanged', recordEvidence } = {}) {
+  const scratch = makeScratch();
+  t.after(scratch.cleanup);
+  for (const file of ['package.json', 'package-lock.json']) fs.copyFileSync(path.resolve(file), path.join(scratch.wt, file));
+  const b1 = JSON.parse(fs.readFileSync(path.resolve('server/verifier/verifierImageIdentity.json'), 'utf8'));
+  const image = JSON.parse(fs.readFileSync(path.resolve('server/verifier/verificationRunnerImageIdentity.json'), 'utf8'));
+  const ok = stdout => ({ exitCode: 0, stdout, stderr: '', spawnError: null, timedOut: false });
+  class VerifierDocker extends FakeDocker {
+    inventoryReads = 0;
+    async run(args) {
+      if (args[0] === 'image') {
+        this.calls.push([...args]);
+        return ok(JSON.stringify({ Id: image.imageId, Os: 'linux', Architecture: 'arm64', RepoDigests: [image.reference], Config: { Env: Object.entries(image.expectedEnv).map(([k, v]) => `${k}=${v}`), Entrypoint: image.expectedEntrypoint } }));
+      }
+      if (args[0] === 'ps' || ['network', 'volume'].includes(args[0])) {
+        this.calls.push([...args]);
+        if (args[0] === 'ps' && ++this.inventoryReads === 2) {
+          if (finalInventory === 'unavailable') return { ...ok(''), exitCode: 1 };
+          if (finalInventory === 'changed') return ok('unexpected-container\n');
+        }
+        return ok('');
+      }
+      return super.run(args);
+    }
+  }
+  const docker = new VerifierDocker();
+  docker.scenario.exitCode = exitCode;
+  docker.mutateInspect = info => {
+    info.Image = image.imageId;
+    info.Config.Entrypoint = image.expectedEntrypoint;
+    const env = Object.fromEntries(info.Config.Env.map(entry => { const index = entry.indexOf('='); return [entry.slice(0, index), entry.slice(index + 1)]; }));
+    info.Config.Env = Object.entries({ ...image.expectedEnv, ...env }).map(([k, v]) => `${k}=${v}`);
+  };
+  let hostReads = 0;
+  const integrityGuard = {
+    capture: () => ({ controllerVersion: 'synthetic-test-controller', capturedAt: new Date().toISOString(), paths: [{ path: scratch.wt, fingerprint: 'synthetic-source-identity' }] }),
+    compare: () => ({ state: ++hostReads === 3 ? finalHost : 'UNCHANGED' }),
+  };
+  const runner = new VerificationRunner({ sourcePath: scratch.wt, imageIdentity: b1, docker, commandCenterRoot: scratch.src, integrityGuard, recordEvidence });
+  return { runner, docker };
+}
+
+for (const scenario of [
+  { name: 'host integrity MISMATCH', finalHost: 'MISMATCH', expected: 'UNKNOWN' },
+  { name: 'host integrity UNKNOWN', finalHost: 'UNKNOWN', expected: 'UNKNOWN' },
+  { name: 'Docker inventory changed', finalInventory: 'changed', expected: 'UNKNOWN' },
+  { name: 'Docker inventory unavailable', finalInventory: 'unavailable', expected: 'UNKNOWN' },
+  { name: 'trusted final infrastructure', expected: 'FAIL' },
+]) {
+  test(`command FAIL plus ${scenario.name} gives profile ${scenario.expected}`, async t => {
+    const { runner, docker } = controllerFixture(t, scenario);
+    const result = await runner.run();
+    assert.equal(result.commands[0].state, 'FAIL', 'the command failure itself was authoritative');
+    assert.equal(result.state, scenario.expected);
+    assert.equal(result.profileEvidence.data.state, scenario.expected);
+    assert.equal(docker.callsOf('start').length, 1);
+    assert.equal(docker.containers.size, 0);
+  });
+}
+
+test('first command evidence persistence failure stops before any later container is created or started', async t => {
+  let commandRecords = 0;
+  const { runner, docker } = controllerFixture(t, {
+    exitCode: 0,
+    recordEvidence: record => {
+      if (record.kind === 'verification_command' && ++commandRecords === 1) throw new Error('synthetic persistence failure');
+    },
+  });
+  const result = await runner.run();
+  assert.equal(result.commands[0].evidence.execution.ExitCode, 0, 'UI executed successfully before persistence failed');
+  assert.equal(docker.callsOf('start').length, 1, 'no later command/container may execute after persistence fails');
+  assert.equal(docker.callsOf('create').length, 1, 'no later verifier container may be created');
+  assert.deepEqual(result.commands.map(command => command.state), ['UNKNOWN', 'NOT_RUN', 'NOT_RUN', 'NOT_RUN']);
+  assert.equal(result.commands[0].code, 'EVIDENCE_PERSISTENCE_FAILED');
+  assert.equal(result.commands[0].grade, null);
+  assert.equal(result.state, 'UNKNOWN');
+  assert.equal(commandRecords, 1);
+  assert.equal(docker.containers.size, 0);
+});
 
 test('profile is immutable, ordered, and shares exact command identities', () => {
   assert.deepEqual(COMMAND_CENTER_V1_PROFILE.commands.map(command => command.id), ['ui', 'typecheck', 'vite-build', 'server-build']);

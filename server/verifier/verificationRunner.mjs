@@ -185,13 +185,20 @@ export class VerificationRunner {
         results.push({ commandId: profileCommand.id, state: assessed.state, grade: assessed.grade, evidence: commandEvidence });
         try { this.#recorder(evidence('verification_command', commandEvidence)); }
         catch (error) { commandEvidence.state = 'UNKNOWN'; commandEvidence.grade = null; commandEvidence.failureReason = 'EVIDENCE_PERSISTENCE_FAILED'; commandEvidence.persistenceError = error.code ?? error.message; results[results.length - 1] = { ...results[results.length - 1], state: 'UNKNOWN', grade: null, code: 'EVIDENCE_PERSISTENCE_FAILED' }; }
-        if (assessed.state !== 'PASS') { this.#notRun(results, profileCommand.id); break; }
+        const effectiveResult = results[results.length - 1];
+        if (effectiveResult.state !== 'PASS') { this.#notRun(results, profileCommand.id); break; }
       }
       const dockerAfter = await dockerInventory(this.#docker);
       const finalIntegrity = integrity.compare(checkpoint);
-      const finalCheck = { dockerInventoryUnchanged: Boolean(dockerAfter && JSON.stringify(dockerAfter) === JSON.stringify(dockerBefore)), hostIntegrity: finalIntegrity.state };
+      const finalCheck = { dockerInventoryAvailable: dockerAfter !== null, dockerInventoryUnchanged: Boolean(dockerAfter && JSON.stringify(dockerAfter) === JSON.stringify(dockerBefore)), hostIntegrity: finalIntegrity.state };
       const commandsPass = results.length === COMMAND_CENTER_V1_PROFILE.commands.length && results.every(item => item.state === 'PASS');
-      const state = commandsPass && finalCheck.dockerInventoryUnchanged && finalIntegrity.state === 'UNCHANGED' ? 'PASS' : results.find(item => item.state === 'FAIL') ? 'FAIL' : 'UNKNOWN';
+      // A command failure is authoritative only while final infrastructure trust is intact.
+      let state = 'UNKNOWN';
+      if (finalCheck.dockerInventoryAvailable && finalCheck.dockerInventoryUnchanged && finalIntegrity.state === 'UNCHANGED') {
+        if (results.some(item => item.state === 'UNKNOWN')) state = 'UNKNOWN';
+        else if (results.some(item => item.state === 'FAIL')) state = 'FAIL';
+        else if (commandsPass) state = 'PASS';
+      }
       const profileEvidence = evidence('verification_profile', { profileId: COMMAND_CENTER_V1_PROFILE.id, profileVersion: COMMAND_CENTER_V1_PROFILE.version, state, grade: state === 'PASS' ? 'LOCALLY_VERIFIED' : null, finalCheck, snapshotFingerprint: snapshot.fingerprint, manifestHashes: manifest, imageDigest: verifierImage.digest, commandIds: results.map(item => ({ commandId: item.commandId, state: item.state })) });
       try { this.#recorder(profileEvidence); }
       catch (error) { return { profileId: COMMAND_CENTER_V1_PROFILE.id, version: COMMAND_CENTER_V1_PROFILE.version, state: 'UNKNOWN', code: 'EVIDENCE_PERSISTENCE_FAILED', persistenceError: error.code ?? error.message, commands: results, snapshotFingerprint: snapshot.fingerprint, manifestIdentity: manifest, imageDigest: verifierImage.digest, profileEvidence: { ...profileEvidence, grade: null } }; }
