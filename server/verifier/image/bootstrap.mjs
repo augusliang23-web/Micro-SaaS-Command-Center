@@ -33,8 +33,23 @@ export function prepareWorkspace({ sourcePath = '/workspace', targetPath = '/ver
             else
                 fs.chmodSync(p, (fs.statSync(p).mode & 0o111) ? 0o700 : 0o600);
         } };
-        if (fingerprintSnapshot(sourcePath).fingerprint !== expectedFingerprint || fingerprintSnapshot(targetPath).fingerprint !== expectedFingerprint)
-            throw new Error('SNAPSHOT_IDENTITY_MISMATCH');
+        const restoreSnapshotModes = (source, target) => {
+            for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+                const sourceEntry = path.join(source, entry.name), targetEntry = path.join(target, entry.name);
+                if (entry.isDirectory()) restoreSnapshotModes(sourceEntry, targetEntry);
+                fs.chmodSync(targetEntry, fs.statSync(sourceEntry).mode & 0o777);
+            }
+        };
+        restoreSnapshotModes(sourcePath, targetPath);
+        const sourceAfterCopy = fingerprintSnapshot(sourcePath).fingerprint;
+        const targetAfterCopy = fingerprintSnapshot(targetPath).fingerprint;
+        if (sourceAfterCopy !== expectedFingerprint) throw new Error(`SNAPSHOT_IDENTITY_MISMATCH:source:${sourceAfterCopy}`);
+        if (targetAfterCopy !== expectedFingerprint) {
+            const sourceEntries = fingerprintSnapshot(sourcePath).entries;
+            const targetEntries = fingerprintSnapshot(targetPath).entries;
+            const mismatch = sourceEntries.findIndex((entry, index) => JSON.stringify(entry) !== JSON.stringify(targetEntries[index]));
+            throw new Error(`SNAPSHOT_IDENTITY_MISMATCH:target:${targetAfterCopy}:${JSON.stringify({ source: sourceEntries[mismatch], target: targetEntries[mismatch] })}`);
+        }
         writable(targetPath);
         const deps = fs.realpathSync(depsPath);
         // Trusted image packages may use .bin relative symlinks; none may escape the immutable dependency tree.

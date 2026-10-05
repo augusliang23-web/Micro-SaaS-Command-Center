@@ -4,9 +4,11 @@ import crypto from 'node:crypto';
 import { inspectWorkspace } from '../sandbox/workspaceView.mjs';
 import { APPROVED } from './image/approvedIdentity.mjs';
 import { fingerprintSnapshot } from './image/snapshotInventory.mjs';
+import { COMMAND_CENTER_V1_PROFILE, resolveProfileCommand } from './verificationProfile.mjs';
 export { fingerprintSnapshot };
 export const APPROVED_IDENTITY = APPROVED;
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+const B1_IMAGE_IDENTITY = JSON.parse(fs.readFileSync(new URL('./verifierImageIdentity.json', import.meta.url), 'utf8'));
 const blocked = (code, message) => Object.assign(new Error(message), { code });
 const inside = (root, candidate) => candidate === root || candidate.startsWith(root + path.sep);
 const EXCLUDED = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', '.cache', '.vite', '.vite-temp', '.vitest', '.next', '.turbo', '.npm', '.yarn', '.pnpm-store', '.docker', '.ssh', '.aws', '.config', '.claude', '.codex', '.anthropic', '.gcloud', '.kube', '.bridge', '.superpowers', 'data', 'projects.local.json', '.npmrc', '.netrc', '.gitconfig', '.DS_Store']);
@@ -93,23 +95,23 @@ export function createSnapshot({ sourcePath, destinationPath, privatePaths = [],
         throw error;
     }
 }
-const commands = Object.freeze({
-    ui: Object.freeze({ kind: 'test', tool: 'vitest/vitest.mjs', args: Object.freeze(['run']), nodeEnv: 'test' }),
-    typecheck: Object.freeze({ kind: 'typecheck', tool: 'typescript/bin/tsc', args: Object.freeze(['--noEmit']), nodeEnv: 'test' }),
-    'vite-build': Object.freeze({ kind: 'build', tool: 'vite/bin/vite.js', args: Object.freeze(['build']), nodeEnv: 'production' }),
-    'server-build': Object.freeze({ kind: 'build', tool: 'esbuild/bin/esbuild', args: Object.freeze(['server.ts', '--bundle', '--platform=node', '--format=cjs', '--packages=external', '--sourcemap', '--outfile=dist/server.cjs']), nodeEnv: 'production' }),
-});
 export function resolveCommand(request, imageIdentity) {
-    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).length !== 2 || !Object.keys(request).every(k => ['profileId', 'commandId'].includes(k)) || request.profileId !== 'command-center-v1' || !Object.hasOwn(commands, request.commandId ?? ''))
+    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).length !== 2 || !Object.keys(request).every(k => ['profileId', 'commandId'].includes(k)) || request.profileId !== COMMAND_CENTER_V1_PROFILE.id || !COMMAND_CENTER_V1_PROFILE.commands.some(item => item.id === request.commandId))
         throw blocked('INVALID_VERIFICATION_PROFILE', 'Only a fixed profile and command ID may be requested');
     if (!/^sha256:[0-9a-f]{64}$/.test(imageIdentity?.digest ?? ''))
         throw blocked('INVALID_IMAGE_IDENTITY', 'Server-owned immutable image digest is required');
-    const c = commands[request.commandId];
-    return Object.freeze({ profileId: request.profileId, commandId: request.commandId, kind: c.kind, executable: '/usr/local/bin/node', args: Object.freeze([`/opt/cc-verifier/deps/node_modules/${c.tool}`, ...c.args]), cwd: '/verify/workspace', env: Object.freeze({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', TMPDIR: '/verify/tmp', CI: '1', NODE_ENV: c.nodeEnv }), network: 'NO_NETWORK', timeoutMs: 180000, outputLimits: Object.freeze({ stdoutBytes: 1048576, stderrBytes: 262144 }), resourceLimits: Object.freeze({ cpus: 2, memoryMb: 2048, pids: 256, tmpfsBytes: 1073741824 }), requiredManifestHashes: Object.freeze({ packageJsonHash: APPROVED.packageJsonHash, packageLockHash: APPROVED.packageLockHash }), imageDigest: imageIdentity.digest });
+    const fixed = resolveProfileCommand(request.profileId, request.commandId);
+    return Object.freeze({ profileId: request.profileId, ...fixed, requiredManifestHashes: Object.freeze({ packageJsonHash: APPROVED.packageJsonHash, packageLockHash: APPROVED.packageLockHash }), imageDigest: imageIdentity.digest });
 }
 /** Only server-owned, approved administrative image metadata may construct this alias. */
-export function verifierImageAllowlist(identity) {
-    if (!identity || !Object.keys(APPROVED).every(k => identity[k] === APPROVED[k]) || !/^sha256:[0-9a-f]{64}$/.test(identity.digest ?? '') || identity.reference !== `cc-verifier@${identity.digest}`)
+export function verifierImageAllowlist(identity, { allowDerivedRunner = false } = {}) {
+    const digestValid = /^sha256:[0-9a-f]{64}$/.test(identity?.digest ?? '');
+    const baseReference = digestValid && identity.reference === `cc-verifier@${identity.digest}`;
+    const runnerHashes = ['runnerHash', 'profileHash', 'bootstrapHash', 'snapshotInventoryHash', 'approvedIdentityHash', 'dockerfileHash'];
+    const derivedReference = allowDerivedRunner === true && digestValid && identity.reference === `cc-verification-runner@${identity.digest}`
+      && identity.parentB1Digest === B1_IMAGE_IDENTITY.digest && identity.parentB1ImageId === B1_IMAGE_IDENTITY.imageId
+      && identity.parentB1Tag === 'cc-verifier:phase3b3b1' && runnerHashes.every(key => /^[0-9a-f]{64}$/.test(identity[key] ?? ''));
+    if (!identity || !Object.keys(APPROVED).every(k => identity[k] === APPROVED[k]) || !(baseReference || derivedReference))
         throw blocked('DEPENDENCY_PROFILE_MISMATCH', 'Verifier image identity does not match the approved baseline');
     const env = { PATH: '/usr/local/bin:/usr/bin:/bin', NODE_VERSION: '22.23.3', YARN_VERSION: '1.22.22' };
     if (!identity.expectedEnv || Object.keys(identity.expectedEnv).length !== 3 || !Object.entries(env).every(([k, v]) => identity.expectedEnv[k] === v) || JSON.stringify(identity.expectedEntrypoint) !== JSON.stringify(['/usr/bin/env', '--']))

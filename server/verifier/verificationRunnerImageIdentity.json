@@ -1,0 +1,27 @@
+{
+  "parentB1Digest": "sha256:619d2835a4ae8c361b7a64a17c3cd528b0d8b22d756545db288ece1f1e9374c8",
+  "parentB1Tag": "cc-verifier:phase3b3b1",
+  "parentB1ImageId": "sha256:619d2835a4ae8c361b7a64a17c3cd528b0d8b22d756545db288ece1f1e9374c8",
+  "runnerHash": "42f57dc82664f242232519b1d649ce1adb6cc51beeb81fde6f8a926c8e014253",
+  "profileHash": "ae814931c404af2cdf4a45862215d9fd13fbf20c14ec2a1e88f53bc2e8df2807",
+  "bootstrapHash": "5c55c325645dab9d50b57c247d3e30f6be74e71c520c5d24bfcba9e93fceca0d",
+  "snapshotInventoryHash": "f34e4fb4d576c25905d26bf5c6be84b62553310a5527d09ba8e974c96802b175",
+  "approvedIdentityHash": "ffcd3925ba31656cb716202c6886f77e7fd1be4d5cc2659c0c5cfa807fdb129a",
+  "dockerfileHash": "8276e6ecb48d29d14c1920faa71f94c81e424a19eb33698ca9f7a900d90ffd12",
+  "platform": "linux/arm64",
+  "digest": "sha256:37810536bb25a3c1bee317b8c7757f8b1d7c0130e33cdb87926f8642253518cf",
+  "reference": "cc-verification-runner@sha256:37810536bb25a3c1bee317b8c7757f8b1d7c0130e33cdb87926f8642253518cf",
+  "imageId": "sha256:37810536bb25a3c1bee317b8c7757f8b1d7c0130e33cdb87926f8642253518cf",
+  "expectedEnv": {
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "NODE_VERSION": "22.23.3",
+    "YARN_VERSION": "1.22.22"
+  },
+  "expectedEntrypoint": [
+    "/usr/bin/env",
+    "--"
+  ],
+  "builtWithNetwork": "none",
+  "externalPulls": false,
+  "observedAt": "2026-10-05T07:22:16.231Z"
+}

@@ -22,7 +22,7 @@ export function fingerprintSnapshot(root) {
             }
             else {
                 if (!stat.isFile() || stat.nlink !== 1)
-                    throw blocked('SNAPSHOT_UNSAFE', 'Snapshot must contain independent ordinary files');
+                    throw blocked('SNAPSHOT_UNSAFE', `Snapshot must contain independent ordinary files: ${relative} (type=${stat.mode}, nlink=${stat.nlink})`);
                 const fd = fs.openSync(full, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
                 try {
                     const observed = fs.fstatSync(fd);

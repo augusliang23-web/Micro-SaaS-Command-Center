@@ -273,12 +273,15 @@ export class DockerSandboxRuntime {
       return { state: 'UNKNOWN', outcome: 'UNKNOWN', code: 'AMBIGUOUS_DOCKER_STATE', lines, evidence: [] };
     }
     const st = after.info.State;
-    if(plan.role==='verifier' && (!verifyContainerReadback(after.info,{plan,image,user:this.#user}).ok || !verifyExecutionReadback(after.info,{containerId:record.containerId}).ok)) {
+    const policyReadback = verifyContainerReadback(after.info,{plan,image,user:this.#user});
+    const executionReadbackCheck = verifyExecutionReadback(after.info,{containerId:record.containerId});
+    if(plan.role==='verifier' && (!policyReadback.ok || !executionReadbackCheck.ok)) {
       record.state='UNKNOWN';return {state:'UNKNOWN',outcome:'UNKNOWN',code:'EXECUTION_READBACK_INCOMPLETE',lines,evidence:[]};
     }
     record.state = 'EXITED';
     return {
-      state: 'EXITED', outcome: outcome ?? 'FINISHED', exitCode: st.ExitCode, oomKilled: st.OOMKilled === true, lines,
+      state: 'EXITED', outcome: outcome ?? 'FINISHED', exitCode: st.ExitCode, oomKilled: st.OOMKilled === true, lines, stderr: done.stderr ?? '', outputLimitKind: done.limit ?? null,
+      ...(plan.role==='verifier' ? { executionReadback: structuredClone(st), executionReadbackCheck, policyReadback, containerReadback: structuredClone(after.info), containerId: record.containerId } : {}),
       evidence: [evidence('sandbox_started', 'LOCALLY_VERIFIED', { containerId: record.containerId, startedAt: st.StartedAt, finishedAt: st.FinishedAt, exitCode: st.ExitCode, oomKilled: st.OOMKilled === true })],
     };
   }

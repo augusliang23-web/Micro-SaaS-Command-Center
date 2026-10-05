@@ -68,15 +68,15 @@ check('task input cannot override fixed executable, arguments, image or environm
     const identity = { digest: 'sha256:' + 'a'.repeat(64) };
     const c = mod.resolveCommand({ profileId: 'command-center-v1', commandId: 'ui' }, identity);
     assert.equal(c.executable, '/usr/local/bin/node');
-    assert.deepEqual(c.args, ['/opt/cc-verifier/deps/node_modules/vitest/vitest.mjs', 'run']);
+    assert.deepEqual(c.args, ['/verify/workspace/node_modules/vitest/vitest.mjs', 'run']);
     assert.equal(c.cwd, '/verify/workspace');
     assert.equal(c.env.NODE_ENV, 'test');
     assert.equal(c.imageDigest, identity.digest);
     for (const field of ['args', 'executable', 'cwd', 'env', 'image', 'mounts', 'shell'])
         assert.throws(() => mod.resolveCommand({ profileId: 'command-center-v1', commandId: 'ui', [field]: field === 'args' ? ['--version'] : 'evil' }, identity));
     assert.throws(() => mod.resolveCommand({ profileId: 'unknown', commandId: 'ui' }, identity));
-    assert.deepEqual(mod.resolveCommand({ profileId: 'command-center-v1', commandId: 'typecheck' }, identity).args, ['/opt/cc-verifier/deps/node_modules/typescript/bin/tsc', '--noEmit']);
-    assert.deepEqual(mod.resolveCommand({ profileId: 'command-center-v1', commandId: 'vite-build' }, identity).args, ['/opt/cc-verifier/deps/node_modules/vite/bin/vite.js', 'build']);
+    assert.deepEqual(mod.resolveCommand({ profileId: 'command-center-v1', commandId: 'typecheck' }, identity).args, ['/verify/workspace/node_modules/typescript/bin/tsc', '--noEmit']);
+    assert.deepEqual(mod.resolveCommand({ profileId: 'command-center-v1', commandId: 'vite-build' }, identity).args, ['/verify/workspace/node_modules/vite/bin/vite.js', 'build']);
     const build = mod.resolveCommand({ profileId: 'command-center-v1', commandId: 'server-build' }, identity);
     assert.equal(build.env.NODE_ENV, 'production');
     assert.ok(build.args.includes('--outfile=dist/server.cjs'));
@@ -98,6 +98,13 @@ check('verifier image allowlist requires approved toolchain and both dependency 
     for (const key of ['packageJsonHash', 'packageLockHash', 'npm', 'node', 'platform', 'baseReference', 'provisioningPolicy'])
         assert.throws(() => mod.verifierImageAllowlist({ ...identity, [key]: 'changed' }), key);
     assert.throws(() => mod.verifierImageAllowlist({ ...identity, expectedEnv: { ...identity.expectedEnv, GH_TOKEN: 'synthetic' } }));
+});
+check('derived verification runner image requires the exact local B1 parent identity', () => {
+    const b1 = JSON.parse(fs.readFileSync(new URL('../server/verifier/verifierImageIdentity.json', import.meta.url), 'utf8'));
+    const identity = { ...b1, digest: 'sha256:' + 'b'.repeat(64), reference: `cc-verification-runner@sha256:${'b'.repeat(64)}`, parentB1Digest: b1.digest, parentB1ImageId: b1.imageId, parentB1Tag: 'cc-verifier:phase3b3b1', runnerHash: 'a'.repeat(64), profileHash: 'a'.repeat(64), bootstrapHash: 'a'.repeat(64), snapshotInventoryHash: 'a'.repeat(64), approvedIdentityHash: 'a'.repeat(64), dockerfileHash: 'a'.repeat(64), expectedEnv: { PATH: '/usr/local/bin:/usr/bin:/bin', NODE_VERSION: '22.23.3', YARN_VERSION: '1.22.22' }, expectedEntrypoint: ['/usr/bin/env', '--'] };
+    assert.throws(() => mod.verifierImageAllowlist(identity), /identity/i);
+    assert.ok(mod.verifierImageAllowlist(identity, { allowDerivedRunner: true })['command-center-verifier']);
+    assert.throws(() => mod.verifierImageAllowlist({ ...identity, parentB1Digest: 'sha256:' + 'c'.repeat(64) }, { allowDerivedRunner: true }), /identity/i);
 });
 check('snapshot requires a host checkpoint for the exact stopped source', () => scratch(root => {
     const src = path.join(root, 'source');
