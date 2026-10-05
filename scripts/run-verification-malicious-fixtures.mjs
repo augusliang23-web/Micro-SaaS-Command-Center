@@ -15,8 +15,9 @@ const source = path.join(temporaryRoot, 'source');
 const secret = path.join(temporaryRoot, 'synthetic-host-secret.txt');
 fs.writeFileSync(secret, 'SYNTHETIC_SECRET_MUST_NEVER_BE_VISIBLE', { mode: 0o600 });
 const b1 = JSON.parse(fs.readFileSync(path.join(repo, 'server/verifier/verifierImageIdentity.json'), 'utf8'));
-const writeTest = sourceText => fs.writeFileSync(path.join(source, 'test/verification-boundary.test.mjs'), sourceText);
-const containerTest = `import { describe, it, expect } from 'vitest';
+const writeTest = sourceText => fs.writeFileSync(path.join(source, 'src/VerificationBoundary.test.tsx'), sourceText);
+const containerTest = `// @ts-nocheck
+import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
@@ -54,15 +55,10 @@ describe('synthetic verifier boundaries', () => {
     expect(refused).toBe(true);
     expect(children.length).toBeLessThan(pids);
   });
-  it('the memory cap terminates a child that attempts to allocate beyond it', async () => {
-    const child = spawn('/usr/local/bin/node', ['-e', "const a=[]; for(let i=0;i<256;i++){const b=Buffer.alloc(16*1024*1024); b.fill(1); a.push(b)}"], { shell: false, stdio: 'ignore' });
-    const outcome = await new Promise(resolve => { const timer=setTimeout(() => { child.kill('SIGKILL'); resolve('timeout'); }, 12000); child.once('close', (code, signal) => { clearTimeout(timer); resolve(signal ?? code); }); });
-    expect(outcome).toBe('SIGKILL');
-  });
 });`;
 try {
   git(['worktree', 'add', '--detach', source, 'HEAD']);
-  fs.mkdirSync(path.join(source, 'test'), { recursive: true });
+  fs.mkdirSync(path.join(source, 'src'), { recursive: true });
   const run = async mode => {
     const controller = new VerificationRunner({ sourcePath: source, imageIdentity: b1, commandCenterRoot: controlPlaneRoot, privatePaths: ['.bridge', '.superpowers', 'data', 'projects.local.json'] });
     const result = await controller.run();
@@ -73,6 +69,9 @@ try {
   writeTest(containerTest);
   const contained = await run('containment-and-resource-limits');
   if (contained.state !== 'PASS') throw new Error('SYNTHETIC_CONTAINMENT_PROFILE_NOT_PASS');
+  writeTest(`${containerTest}\nit('memory over-limit is terminated by the container', async () => { const child = spawn('/usr/local/bin/node', ['-e', \"const a=[]; for(let i=0;i<256;i++){const b=Buffer.alloc(16*1024*1024); b.fill(1); a.push(b)}\"], { shell: false, stdio: 'ignore' }); const outcome = await new Promise(resolve => { const timer=setTimeout(() => { child.kill('SIGKILL'); resolve('timeout'); }, 12000); child.once('close', (code, signal) => { clearTimeout(timer); resolve(signal ?? code); }); }); expect(outcome).toBe('SIGKILL'); });`);
+  const memoryLimit = await run('memory-limit');
+  if (memoryLimit.state !== 'FAIL' || memoryLimit.commands[0]?.evidence?.failureReason !== 'OOM_KILLED' || memoryLimit.commands.slice(1).some(item => item.state !== 'NOT_RUN')) throw new Error('MEMORY_LIMIT_NEGATIVE_PROOF_FAILED');
   writeTest(`${containerTest}\nprocess.stdout.write('PASS all tests passed\\n'); describe('synthetic fake result', () => { it('fails despite PASS output', () => { expect(true).toBe(false); }); });`);
   const fakePass = await run('fake-pass-with-nonzero-exit');
   if (fakePass.state !== 'FAIL' || fakePass.commands[0]?.state !== 'FAIL' || fakePass.commands.slice(1).some(item => item.state !== 'NOT_RUN')) throw new Error('FAKE_PASS_NEGATIVE_PROOF_FAILED');
