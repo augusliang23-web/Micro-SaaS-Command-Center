@@ -100,3 +100,83 @@ read-only auth check reported exit 1, `loggedIn:false`, `authMethod:none`.
 This differs from the original smoke preflight. The cause is unestablished;
 no login/logout/setup-token, CLI update or credential operation was performed.
 See [sanitized review evidence](../evidence/agent-console-phase3b4-independent-review.json).
+
+## Offline evidence-semantics correction (PR #21 remains Draft)
+
+This correction makes no Claude/provider request and performs no host auth
+operation. The original live and review JSON evidence remains byte-for-byte
+unchanged: exit 1, NONZERO_EXIT, no tools, unchanged target, unproven outside
+denial and unproven effective model. The live/auth gate remains BLOCKED.
+
+The observer now records separate `outsideAttempted`, `outsideToolFailed`,
+`outsideDeniedAuthoritatively` and `outsideDisclosure` facts. A matching
+`user.message.content[].tool_result` with `is_error:true` records only a tool
+failure. ENOENT, EIO, generic permission prose, assistant claims and custom
+events cannot prove boundary denial. The accepted permission signal is
+`result.permission_denials[]`, with `tool_name:Read` and `tool_input.file_path`
+resolving exactly to the synthetic canary, following an observed outside Read.
+All supplied tool/request identity fields must agree with the same observed
+Read ID. If the attempt supplied an ID, a denial missing its ID is insufficient.
+Path-only denial is accepted only when both the observed attempt and denial
+omit IDs. An unmatched or unobserved attempt never becomes authoritative.
+Without that structured proof, result is UNKNOWN / OUTSIDE_DENIAL_NOT_PROVEN.
+The failed historical CLI call did not prove that the installed version emits
+such a denial during a successful restricted smoke; no new live claim is made.
+
+Model records retain source, bounded raw label, normalized family and trust
+internally, rather than relying on the adapter's merged `actualModel` string.
+Persisted observations omit raw labels and payloads; they contain only source,
+normalized family, trust and label classification. The model-evidence locations
+and their roles are:
+
+| Location | Trust classification | Role |
+| --- | --- | --- |
+| `system:init.model` | REQUEST_METADATA | Selection metadata; cannot alone prove execution |
+| `assistant.message.model` | EXECUTION_METADATA | Structured executed-response model; required for effective-model authority |
+| `result.modelUsage` keys | USAGE_METADATA | Corroboration only; may aggregate helper models |
+| `result.model` | UNVERIFIED_METADATA | Conservatively retained if supplied; schema not proven, cannot alone establish authority |
+
+Closed normalization accepts only case-folded exact `sonnet` and
+`claude-sonnet-5` as Sonnet, and exact `opus` as Opus. The versioned Sonnet label
+was reported in the historical CLI metadata; this does not retroactively prove
+that the failed invocation executed it. Offline Phase 3A fixture version
+identifiers and arbitrary/future versions do not expand the production map.
+Unknown labels remain UNKNOWN; no substring/fuzzy model matching is used.
+
+One model result is produced: AUTHORITATIVE, UNKNOWN, CONFLICT,
+SYNTHETIC_OR_PLACEHOLDER or WRONG_MODEL. All observations are considered;
+synthetic/test/fixture/mock/placeholder contamination is not discarded to accept
+another label. Literal unknown is UNKNOWN. Different known families produce
+CONFLICT; an unknown label alongside a valid one remains UNKNOWN. Consistent
+known labels require assistant execution metadata to become AUTHORITATIVE.
+Selection or aggregate-usage metadata alone remains UNKNOWN.
+
+PASS requires AUTHORITATIVE Sonnet, and the exact same resolved model value
+supplies `effectiveModel`. No promotion from `run.actualModel` remains. Per the
+user's clarification, an authoritatively wrong Opus produces
+FAIL / EFFECTIVE_MODEL_MISMATCH, with `verifiedWrongModel:opus` and
+`effectiveModel:NOT_AUTHORITATIVELY_OBSERVED`. All other unverified model states
+also retain NOT_AUTHORITATIVELY_OBSERVED and prevent PASS.
+
+The complete PASS gate also requires explicit observed clean exit 0, known
+no-timeout/no-overflow/zero-malformed state, required event classes, approved
+Read plus Edit/Write, observed outside Read and structured denial, no disclosure,
+exact target, unchanged input/canary, and no added files or directories. Missing
+process/filesystem observations cannot silently become a clean result.
+
+Offline regressions cover ENOENT/EIO/prose, wrong/missing/conflicting IDs, wrong
+path/tool, custom events, self-report, valid structured denial, missing/unknown/
+synthetic/conflicting/wrong model, exact normalization and provenance. Both
+requested mutations were executed: treating generic errors as permission denial
+and removing the effective-model gate produced false PASS and failed regression
+tests. The safe implementation was restored before full local validation.
+
+The adapter did not need modification: its existing server-owned protocol
+observer receives raw bounded lines before the merged-model summary, so the
+standalone harness can preserve provenance without product changes.
+
+Correction validation (local only, no GitHub CI): focused 42/42, server
+442/442, UI 25/25, lint and build passed. The existing CJS `import.meta` build
+warning remains. Only this document, `scripts/claudeLiveSmoke.mjs` and its
+Phase 3B4 test file changed. Real inference/review calls and host auth
+operations during the correction: zero. PR #21 stays OPEN/Draft; no merge or deploy.
