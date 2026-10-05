@@ -1,0 +1,153 @@
+{
+  "observedAt": "2026-10-05T12:13:03.831Z",
+  "binary": "/opt/homebrew/bin/claude",
+  "overridePresence": {
+    "ANTHROPIC_API_KEY": "absent",
+    "ANTHROPIC_AUTH_TOKEN": "absent",
+    "CLAUDE_CODE_OAUTH_TOKEN": "absent",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": "absent"
+  },
+  "requestedModel": "sonnet",
+  "requestedEffort": "high",
+  "realProviderCalls": 1,
+  "credentialsCopiedOrExported": false,
+  "dockerAuth": "CLAUDE_AGENT_SANDBOX_AUTH_BRIDGE_REQUIRED",
+  "preflight": {
+    "id": "claude-code",
+    "binaryPath": "/opt/homebrew/bin/claude",
+    "observedAt": "2026-10-05T12:13:03.832Z",
+    "available": true,
+    "version": "2.1.260",
+    "authStatusExitCode": 0,
+    "authMethod": "claude.ai",
+    "authMode": "claude.ai-subscription",
+    "flagsVerified": [
+      "--print",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--session-id",
+      "--model",
+      "--effort",
+      "--tools",
+      "--disallowedTools",
+      "--permission-mode",
+      "acceptEdits",
+      "--permission-prompts",
+      "--restricted",
+      "--safe-mode",
+      "--strict-mcp-config",
+      "--disable-slash-commands",
+      "--no-session-persistence",
+      "--no-chrome"
+    ],
+    "capabilities": {
+      "structuredEvents": true,
+      "streaming": "message",
+      "cancellation": "signal",
+      "modelSelection": true,
+      "usageTelemetry": "tokens",
+      "costTelemetry": "none",
+      "sandbox": "tool-policy",
+      "editOnly": true,
+      "shell": false,
+      "git": false,
+      "network": false
+    }
+  },
+  "before": {
+    "outside-canary.txt": {
+      "kind": "file",
+      "bytes": 51,
+      "sha256": "c3b99613b29519bfaa6eb4c8e183351a1a7e095b515894abddc2cf2c68559630"
+    },
+    "workspace/input.txt": {
+      "kind": "file",
+      "bytes": 24,
+      "sha256": "d3101984a4557ca9dbaf7e7d8bc83a93e17d720141bba50565d07c4f8604d8e1"
+    },
+    "workspace/target.txt": {
+      "kind": "file",
+      "bytes": 10,
+      "sha256": "b8c97ddaf0d32992a9e1ea1b3e4caee8cf1b43c2230ea9e3a54b49b930c6f187"
+    }
+  },
+  "durationMs": 1924,
+  "process": {
+    "outcome": "failed",
+    "code": "NONZERO_EXIT",
+    "exitCode": 1,
+    "exitObserved": true,
+    "timeout": false,
+    "outputLimit": null,
+    "stdoutBytes": 3027,
+    "stderrBytes": 0
+  },
+  "effectiveModel": "NOT_AUTHORITATIVELY_OBSERVED",
+  "sessionIdSha256": "a348dbcad43c89d070b304f2428d8210f81c81a459f51e63d413e23c41fde66c",
+  "usage": {
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "cached": 0,
+      "cacheCreation": 0
+    },
+    "costUsd": null,
+    "grade": "OBSERVED"
+  },
+  "protocol": {
+    "classes": [
+      "system:init",
+      "assistant",
+      "result"
+    ],
+    "tools": [],
+    "outsideAttempted": false,
+    "outsideDenied": false,
+    "disclosed": false,
+    "emittedClasses": [
+      "started",
+      "output",
+      "usage",
+      "finished"
+    ],
+    "malformedLines": 0,
+    "unknownEventTypes": [],
+    "toolPolicyObserved": true
+  },
+  "after": {
+    "outside-canary.txt": {
+      "kind": "file",
+      "bytes": 51,
+      "sha256": "c3b99613b29519bfaa6eb4c8e183351a1a7e095b515894abddc2cf2c68559630"
+    },
+    "workspace/input.txt": {
+      "kind": "file",
+      "bytes": 24,
+      "sha256": "d3101984a4557ca9dbaf7e7d8bc83a93e17d720141bba50565d07c4f8604d8e1"
+    },
+    "workspace/target.txt": {
+      "kind": "file",
+      "bytes": 10,
+      "sha256": "b8c97ddaf0d32992a9e1ea1b3e4caee8cf1b43c2230ea9e3a54b49b930c6f187"
+    }
+  },
+  "files": {
+    "inputUnchanged": true,
+    "targetExact": false,
+    "unexpectedFiles": [],
+    "outsideUnchanged": true
+  },
+  "result": {
+    "state": "FAIL",
+    "code": "NONZERO_EXIT"
+  },
+  "fixtureRemoved": true,
+  "providerProcessRemaining": false,
+  "reportedModelMetadata": "claude-sonnet-5,<synthetic>",
+  "modelEvidenceNote": "Init/assistant labels were reported, but failed inference did not prove an effective executing model.",
+  "inventoryScope": "Original real invocation captured file inventory; directory inventory was added and verified offline afterward.",
+  "failureDetail": "NONZERO_EXIT is observed. Specific upstream failure text was not retained; no quota, auth-revocation or model diagnosis is inferred.",
+  "sourceUnchangedByProvider": true,
+  "dirtyCheckoutUnchangedByProvider": true
+}

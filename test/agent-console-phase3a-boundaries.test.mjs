@@ -38,15 +38,16 @@ test('unwired: the Orchestrator still fails closed on a claude-code adapter and 
   assert.ok(f.records.listEvidence(t.taskId).some((e) => e.kind === 'guard_violation' && /Phase 2 only permits internal fake/.test(e.data.reason)));
 }));
 
-test('unwired: nothing but the adapter modules and tests references the Claude adapter; no run route or UI exists', () => {
+test('unwired: only the adapter and explicit offline CLI harness reference Claude; no run route or UI exists', () => {
   const nonTestFilesMatching = (pattern) => walk(REPO)
     .filter((f) => /\.(mjs|ts|tsx|js|jsx|cjs)$/.test(f))
     .filter((f) => pattern.test(fs.readFileSync(f, 'utf8')))
     .map((f) => path.relative(REPO, f))
     .filter((f) => !f.startsWith('test/'))
     .sort();
-  // The Claude adapter and its parser are named only by the adapter itself (it imports the parser).
-  assert.deepEqual(nonTestFilesMatching(/claudeCliAdapter|claudeStreamParser/), ['server/execution/claudeCliAdapter.mjs']);
+  // Phase 3B4 adds an operator-invoked diagnostic, never a product import.
+  assert.deepEqual(nonTestFilesMatching(/claudeCliAdapter|claudeStreamParser/), ['scripts/claudeLiveSmoke.mjs', 'server/execution/claudeCliAdapter.mjs']);
+  assert.deepEqual(nonTestFilesMatching(/claudeLiveSmoke/), [], 'no product module imports the diagnostic');
   // streamingProcess is a generic, provider-neutral, shell-free process runner. Phase 3B2's Docker client reuses it;
   // nothing else may (in particular no route, task or orchestrator code).
   assert.deepEqual(nonTestFilesMatching(/streamingProcess/), ['server/execution/claudeCliAdapter.mjs', 'server/sandbox/dockerClient.mjs']);
