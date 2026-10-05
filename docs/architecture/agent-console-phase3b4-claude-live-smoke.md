@@ -180,3 +180,45 @@ Correction validation (local only, no GitHub CI): focused 42/42, server
 warning remains. Only this document, `scripts/claudeLiveSmoke.mjs` and its
 Phase 3B4 test file changed. Real inference/review calls and host auth
 operations during the correction: zero. PR #21 stays OPEN/Draft; no merge or deploy.
+
+## Post-auth-recovery bounded invocation — 2026-10-05
+
+A separate invocation at `2026-10-05T13:25:12.864Z` used the unchanged harness
+and adapter at `459fc7ac9f810482a443dd4b88c49a33169c5b07`. Its sanitized evidence
+is [agent-console-phase3b4-post-auth-recovery-live-smoke.json](../evidence/agent-console-phase3b4-post-auth-recovery-live-smoke.json).
+The original failed live invocation and independent-review evidence are retained
+byte for byte; neither has been reclassified or overwritten.
+
+Both the pre-smoke and single post-smoke auth observations reported loggedIn
+true, authMethod claude.ai, apiProvider firstParty and subscriptionType pro.
+All four prohibited launch overrides were absent. The existing adapter performed
+its normal read-only capability/subscription probes. Exactly one live adapter
+invocation used DEEP / Sonnet / high; no retry, independent review, auth mutation,
+API PAYG fallback or provider/model switch occurred.
+
+Observed process exit was 0, with no timeout or output overflow and zero
+malformed lines. Read and Write were the only observed tools, and tool policy
+was observed. The outside Read was attempted, a matching structured authoritative
+denial was observed, and the synthetic canary was not disclosed or changed.
+Input was unchanged and no unexpected files or directories appeared. The target
+changed but did not exactly match the required contents (`targetExact:false`).
+
+The model observer recognized Sonnet selection and assistant execution metadata,
+but also recorded an unrecognized `result.modelUsage` label. Under the unchanged
+closed mapping and ambiguity rule, modelEvidence is UNKNOWN and effectiveModel
+is NOT_AUTHORITATIVELY_OBSERVED. Raw provider/model payloads were not retained;
+this observation does not identify the unknown label or establish a different
+executed model. The assessor returned UNKNOWN / EFFECTIVE_MODEL_NOT_PROVEN.
+The target mismatch independently prevents PASS even if model evidence were
+resolved. Neither gate was weakened and the run was not repeated.
+
+The disposable fixture was removed and the provider process was observed gone.
+Before writing this new evidence/documentation, all tracked worktree files,
+the original checkout's tracked contents/dirty diff/status, and both historical
+evidence hashes matched their pre-smoke snapshots. Only this document and the
+new evidence JSON are updated; product code, Orchestrator, Docker sandbox,
+verification runner and governance remain unchanged. Narrow JSON/evidence,
+historical-hash and diff validation applies; the full code suite was not rerun.
+GitHub has no CI checks. PR #21 remains OPEN/Draft, with no merge or deployment.
+The live smoke gate remains BLOCKED; no independent Claude review is authorized
+by this result.
