@@ -16,7 +16,7 @@ import { RUN_ID_PATTERN, TASK_ID_PATTERN, EXECUTION_PROFILES } from '../tasks/ty
 /** Edit-only tool surface. No shell, no git, no gh, no WebFetch/WebSearch. */
 export const CLAUDE_TOOL_ALLOWLIST = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep']);
 /** Belt and braces on top of the allowlist. */
-export const CLAUDE_TOOL_DENYLIST = Object.freeze(['Bash', 'PowerShell', 'REPL', 'WebFetch', 'WebSearch']);
+export const CLAUDE_TOOL_DENYLIST = Object.freeze(['Bash', 'PowerShell', 'REPL', 'WebFetch', 'WebSearch', 'mcp__*']);
 
 /**
  * Execution profile -> model/effort. This is CONFIGURATION, not domain logic:
@@ -49,6 +49,7 @@ export const REQUIRED_CLAUDE_FLAGS = Object.freeze([
   '--print', '--output-format', 'stream-json', '--verbose', '--session-id', '--model', '--effort',
   '--tools', '--disallowedTools', '--permission-mode', 'acceptEdits', '--permission-prompts',
   '--restricted', '--safe-mode', '--strict-mcp-config', '--disable-slash-commands',
+  '--no-session-persistence', '--no-chrome',
 ]);
 
 /**
@@ -83,6 +84,8 @@ export function buildClaudeArgs({ sessionId, model, effort }) {
     '--safe-mode', // disables hooks, plugins, MCP, custom agents/commands from any config
     '--strict-mcp-config',
     '--disable-slash-commands',
+    '--no-session-persistence',
+    '--no-chrome',
     '--permission-mode=acceptEdits', // edits inside the cwd are pre-approved...
     '--permission-prompts=none', // ...and anything else is denied automatically, never waits for a terminal
   ];
@@ -111,12 +114,12 @@ export function assertSafeWorktree(worktreePath, { commandCenterRoot = process.c
 
 export class ClaudeCliAdapter {
   id = 'claude-code';
-  #binaryPath; #profiles; #env; #spawn; #idFactory; #commandCenterRoot; #limits; #killGraceMs; #active = new Map(); #reserved = new Set();
+  #binaryPath; #profiles; #env; #spawn; #idFactory; #commandCenterRoot; #limits; #killGraceMs; #timeoutMs; #onProtocolLine; #active = new Map(); #reserved = new Set();
 
   /**
    * @param {{ binaryPath: string }} options binaryPath comes from ProjectRegistry.agentBinaries.claude
    */
-  constructor({ binaryPath, profiles = DEFAULT_CLAUDE_PROFILES, env = process.env, spawnImpl, idFactory = randomUUID, commandCenterRoot = process.cwd(), limits, killGraceMs = 5000 }) {
+  constructor({ binaryPath, profiles = DEFAULT_CLAUDE_PROFILES, env = process.env, spawnImpl, idFactory = randomUUID, commandCenterRoot = process.cwd(), limits, killGraceMs = 5000, timeoutMs = 120_000, onProtocolLine }) {
     if (typeof binaryPath !== 'string' || !path.isAbsolute(binaryPath) || binaryPath.includes('\0') || path.normalize(binaryPath) !== binaryPath) {
       throw new AdapterError('INVALID_BINARY', 'Claude binary path must be a clean absolute path from server configuration');
     }
@@ -128,6 +131,10 @@ export class ClaudeCliAdapter {
     this.#commandCenterRoot = commandCenterRoot;
     this.#limits = limits;
     this.#killGraceMs = killGraceMs;
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000) throw new AdapterError('INVALID_LIMIT', 'timeout must be between 1 and 300000 ms');
+    if (onProtocolLine !== undefined && typeof onProtocolLine !== 'function') throw new AdapterError('INVALID_SPEC', 'protocol observer must be a server-owned function');
+    this.#timeoutMs = timeoutMs;
+    this.#onProtocolLine = onProtocolLine;
   }
 
   async #capture(args) {
@@ -165,6 +172,8 @@ export class ClaudeCliAdapter {
       ...base,
       available: true,
       version: version[1],
+      authStatusExitCode: authRun.exitCode,
+      authMethod: auth.authMethod,
       authMode: 'claude.ai-subscription',
       flagsVerified: [...REQUIRED_CLAUDE_FLAGS],
       capabilities: {
@@ -222,9 +231,13 @@ export class ClaudeCliAdapter {
     const parser = createClaudeStreamParser({ allowedTools: CLAUDE_TOOL_ALLOWLIST, expectedCwd: cwd });
     let violation = null;
     const onLine = (line) => {
+      // Internal diagnostic observer: bounded lines, never browser-configured.
+      // It may tighten policy but cannot waive the parser's tool checks.
+      try { violation ??= this.#onProtocolLine?.(line) ?? null; }
+      catch { violation ??= { code: 'PROTOCOL_OBSERVER_FAILED', message: 'Protocol observation failed' }; }
       for (const event of parser.push(line)) emitEvent(event);
-      if (!violation && parser.policyViolation) {
-        violation = parser.policyViolation;
+      violation ??= parser.policyViolation;
+      if (violation) {
         emitEvent({ type: 'error', code: violation.code, message: violation.message });
         handle?.cancel('policy');
       }
@@ -238,6 +251,7 @@ export class ClaudeCliAdapter {
       stdin: spec.prompt,
       limits: this.#limits,
       killGraceMs: this.#killGraceMs,
+      timeoutMs: this.#timeoutMs,
       onLine,
       ...(this.#spawn ? { spawnImpl: this.#spawn } : {}),
     });
@@ -250,6 +264,11 @@ export class ClaudeCliAdapter {
     try { proc = await handle.done; }
     finally { this.#active.delete(spec.runId); spec.signal?.removeEventListener?.('abort', onAbort); }
     if (emitFailure) throw emitFailure;
+    // Stderr is bounded too; a boundary disclosure there is equally unsafe.
+    if (proc.stderr) {
+      try { violation ??= this.#onProtocolLine?.(proc.stderr) ?? null; }
+      catch { violation ??= { code: 'PROTOCOL_OBSERVER_FAILED', message: 'Protocol observation failed' }; }
+    }
 
     const summary = parser.finish();
     let outcome; let code = null; let reason = null;
@@ -260,15 +279,17 @@ export class ClaudeCliAdapter {
     } else if (proc.terminateReason === 'cancel') {
       outcome = 'cancelled'; // only after the exit was observed
     } else if (violation) {
-      outcome = 'failed'; code = violation.code; reason = violation.message;
+      outcome = 'unknown'; code = violation.code; reason = violation.message;
     } else if (proc.limit) {
-      outcome = 'failed'; code = 'OUTPUT_LIMIT'; reason = proc.limit;
+      outcome = 'unknown'; code = 'OUTPUT_LIMIT'; reason = proc.limit;
     } else if (proc.terminateReason === 'timeout') {
-      outcome = 'failed'; code = 'TIMEOUT';
+      outcome = 'unknown'; code = 'TIMEOUT';
+    } else if (summary.malformedLines > 0) {
+      outcome = 'unknown'; code = 'PROTOCOL_PARSE_FAILED';
     } else if (proc.exitCode !== 0) {
       outcome = 'failed'; code = 'NONZERO_EXIT'; reason = `exit ${proc.exitCode ?? proc.signal}`;
     } else if (!summary.sawResult) {
-      outcome = 'failed'; code = 'TRUNCATED_STREAM'; reason = 'Exit 0 without a terminal result event.';
+      outcome = 'unknown'; code = 'TRUNCATED_STREAM'; reason = 'Exit 0 without a terminal result event.';
     } else if (!summary.resultOk) {
       outcome = 'failed'; code = 'AGENT_REPORTED_ERROR'; reason = summary.resultSubtype;
     } else {
@@ -286,6 +307,11 @@ export class ClaudeCliAdapter {
       ...base,
       outcome, code, reason,
       exitCode: proc.exitCode,
+      exitObserved: proc.exitObserved,
+      timeout: proc.terminateReason === 'timeout',
+      outputLimit: proc.limit,
+      stdoutBytes: proc.stdoutBytes,
+      stderrBytes: Buffer.byteLength(proc.stderr),
       signal: proc.signal,
       sessionId,
       processId: handle.pid,

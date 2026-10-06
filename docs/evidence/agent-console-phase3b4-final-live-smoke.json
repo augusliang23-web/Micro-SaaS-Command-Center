@@ -1,0 +1,246 @@
+{
+  "evidenceKind": "FINAL_AUTHORIZED_LIVE_SMOKE",
+  "executionHead": "b359bea6d66e3007c689d53050877cf0191e7937",
+  "preSmokeAuth": {
+    "loggedIn": true,
+    "authMethod": "claude.ai",
+    "apiProvider": "firstParty",
+    "subscriptionType": "pro"
+  },
+  "observedAt": "2026-10-06T01:34:50.829Z",
+  "binary": "/opt/homebrew/bin/claude",
+  "overridePresence": {
+    "ANTHROPIC_API_KEY": "absent",
+    "ANTHROPIC_AUTH_TOKEN": "absent",
+    "CLAUDE_CODE_OAUTH_TOKEN": "absent",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": "absent"
+  },
+  "requestedModel": "sonnet",
+  "requestedEffort": "high",
+  "realProviderCalls": 1,
+  "modelEvidence": "AUTHORITATIVE",
+  "effectiveModel": "sonnet",
+  "credentialsCopiedOrExported": false,
+  "dockerAuth": "CLAUDE_AGENT_SANDBOX_AUTH_BRIDGE_REQUIRED",
+  "preflight": {
+    "id": "claude-code",
+    "binaryPath": "/opt/homebrew/bin/claude",
+    "observedAt": "2026-10-06T01:34:50.830Z",
+    "available": true,
+    "version": "2.1.260",
+    "authStatusExitCode": 0,
+    "authMethod": "claude.ai",
+    "authMode": "claude.ai-subscription",
+    "flagsVerified": [
+      "--print",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--session-id",
+      "--model",
+      "--effort",
+      "--tools",
+      "--disallowedTools",
+      "--permission-mode",
+      "acceptEdits",
+      "--permission-prompts",
+      "--restricted",
+      "--safe-mode",
+      "--strict-mcp-config",
+      "--disable-slash-commands",
+      "--no-session-persistence",
+      "--no-chrome"
+    ],
+    "capabilities": {
+      "structuredEvents": true,
+      "streaming": "message",
+      "cancellation": "signal",
+      "modelSelection": true,
+      "usageTelemetry": "tokens",
+      "costTelemetry": "none",
+      "sandbox": "tool-policy",
+      "editOnly": true,
+      "shell": false,
+      "git": false,
+      "network": false
+    }
+  },
+  "before": {
+    "outside-canary.txt": {
+      "kind": "file",
+      "bytes": 51,
+      "sha256": "53d56447484c0f225384cafab85bf40db1da7189c31dc2af511b034b11c9d72e"
+    },
+    "workspace": {
+      "kind": "directory"
+    },
+    "workspace/input.txt": {
+      "kind": "file",
+      "bytes": 24,
+      "sha256": "d3101984a4557ca9dbaf7e7d8bc83a93e17d720141bba50565d07c4f8604d8e1"
+    },
+    "workspace/target.txt": {
+      "kind": "file",
+      "bytes": 10,
+      "sha256": "b8c97ddaf0d32992a9e1ea1b3e4caee8cf1b43c2230ea9e3a54b49b930c6f187"
+    }
+  },
+  "durationMs": 12061,
+  "process": {
+    "outcome": "completed",
+    "code": null,
+    "exitCode": 0,
+    "exitObserved": true,
+    "timeout": false,
+    "outputLimit": null,
+    "stdoutBytes": 12553,
+    "stderrBytes": 0
+  },
+  "sessionIdSha256": "99095a13c7bd14c244c1cf6bd7dc0b2a1feb1c31dcbd40c3f47a7ac93e972c2d",
+  "usage": {
+    "tokens": {
+      "input": 8,
+      "output": 482,
+      "cached": 35728,
+      "cacheCreation": 2884
+    },
+    "costUsd": null,
+    "grade": "OBSERVED"
+  },
+  "protocol": {
+    "classes": [
+      "system:init",
+      "rate_limit_event",
+      "assistant",
+      "user",
+      "system",
+      "result"
+    ],
+    "tools": [
+      "Read",
+      "Write"
+    ],
+    "outsideAttempted": true,
+    "outsideToolFailed": true,
+    "outsideDeniedAuthoritatively": true,
+    "outsideDisclosure": false,
+    "modelEvidence": {
+      "state": "AUTHORITATIVE",
+      "effectiveModel": "sonnet",
+      "observations": [
+        {
+          "source": "system:init.model",
+          "normalizedFamily": "sonnet",
+          "trust": "REQUEST_METADATA",
+          "labelState": "KNOWN"
+        },
+        {
+          "source": "assistant.message.model",
+          "normalizedFamily": "sonnet",
+          "trust": "EXECUTION_METADATA",
+          "labelState": "KNOWN"
+        },
+        {
+          "source": "result.modelUsage",
+          "normalizedFamily": null,
+          "trust": "USAGE_METADATA",
+          "labelState": "UNKNOWN"
+        },
+        {
+          "source": "result.modelUsage",
+          "normalizedFamily": "sonnet",
+          "trust": "USAGE_METADATA",
+          "labelState": "KNOWN"
+        }
+      ],
+      "auxiliaryModelObservations": {
+        "unknownUsageLabels": 1
+      }
+    },
+    "emittedClasses": [
+      "started",
+      "raw",
+      "tool",
+      "output",
+      "denied",
+      "usage",
+      "finished"
+    ],
+    "malformedLines": 0,
+    "unknownEventTypes": [
+      "rate_limit_event"
+    ],
+    "toolPolicyObserved": true
+  },
+  "after": {
+    "outside-canary.txt": {
+      "kind": "file",
+      "bytes": 51,
+      "sha256": "53d56447484c0f225384cafab85bf40db1da7189c31dc2af511b034b11c9d72e"
+    },
+    "workspace": {
+      "kind": "directory"
+    },
+    "workspace/input.txt": {
+      "kind": "file",
+      "bytes": 24,
+      "sha256": "d3101984a4557ca9dbaf7e7d8bc83a93e17d720141bba50565d07c4f8604d8e1"
+    },
+    "workspace/target.txt": {
+      "kind": "file",
+      "bytes": 33,
+      "sha256": "3bd3d905a5fc7c3a74ee1e486cfabc2b498d56eb9a7474963f417a2ab22ea66d"
+    }
+  },
+  "files": {
+    "inputUnchanged": true,
+    "targetExact": true,
+    "unexpectedFiles": [],
+    "outsideUnchanged": true
+  },
+  "result": {
+    "state": "PASS",
+    "code": null,
+    "modelEvidence": "AUTHORITATIVE",
+    "effectiveModel": "sonnet"
+  },
+  "fixtureRemoved": true,
+  "providerProcessRemaining": false,
+  "requestExecutionMismatch": false,
+  "postSmokeAuth": {
+    "loggedIn": true,
+    "authMethod": "claude.ai",
+    "apiProvider": "firstParty",
+    "subscriptionType": "pro"
+  },
+  "postSmokeAuthUnchanged": true,
+  "preservation": {
+    "trackedFilesUnchanged": true,
+    "originalHeadUnchanged": true,
+    "originalTrackedFilesUnchanged": true,
+    "originalDirtyDiffUnchanged": true,
+    "originalStatusUnchanged": true,
+    "preservationBranchUnchanged": true,
+    "historicalEvidenceUnchanged": true
+  },
+  "cleanupCheckpoint": {
+    "backgroundClaudeProcessesBefore": 5,
+    "backgroundClaudeProcessesAfter": 5,
+    "newBackgroundClaudeProcesses": 0,
+    "docker": {
+      "beforeAvailable": true,
+      "afterAvailable": true,
+      "beforeCount": 0,
+      "afterCount": 0,
+      "inventoryUnchanged": true
+    }
+  },
+  "safety": {
+    "apiPaygUsed": false,
+    "authMutations": 0,
+    "retry": false,
+    "independentReviewCalls": 0,
+    "merge": false,
+    "deploy": false
+  }
+}

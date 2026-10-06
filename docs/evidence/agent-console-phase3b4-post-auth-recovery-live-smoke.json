@@ -1,0 +1,233 @@
+{
+  "evidenceKind": "POST_AUTH_RECOVERY_LIVE_SMOKE",
+  "executionHead": "459fc7ac9f810482a443dd4b88c49a33169c5b07",
+  "preSmokeAuth": {
+    "loggedIn": true,
+    "authMethod": "claude.ai",
+    "apiProvider": "firstParty",
+    "subscriptionType": "pro"
+  },
+  "observedAt": "2026-10-05T13:25:12.864Z",
+  "binary": "/opt/homebrew/bin/claude",
+  "overridePresence": {
+    "ANTHROPIC_API_KEY": "absent",
+    "ANTHROPIC_AUTH_TOKEN": "absent",
+    "CLAUDE_CODE_OAUTH_TOKEN": "absent",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": "absent"
+  },
+  "requestedModel": "sonnet",
+  "requestedEffort": "high",
+  "realProviderCalls": 1,
+  "modelEvidence": "UNKNOWN",
+  "effectiveModel": "NOT_AUTHORITATIVELY_OBSERVED",
+  "credentialsCopiedOrExported": false,
+  "dockerAuth": "CLAUDE_AGENT_SANDBOX_AUTH_BRIDGE_REQUIRED",
+  "preflight": {
+    "id": "claude-code",
+    "binaryPath": "/opt/homebrew/bin/claude",
+    "observedAt": "2026-10-05T13:25:12.865Z",
+    "available": true,
+    "version": "2.1.260",
+    "authStatusExitCode": 0,
+    "authMethod": "claude.ai",
+    "authMode": "claude.ai-subscription",
+    "flagsVerified": [
+      "--print",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--session-id",
+      "--model",
+      "--effort",
+      "--tools",
+      "--disallowedTools",
+      "--permission-mode",
+      "acceptEdits",
+      "--permission-prompts",
+      "--restricted",
+      "--safe-mode",
+      "--strict-mcp-config",
+      "--disable-slash-commands",
+      "--no-session-persistence",
+      "--no-chrome"
+    ],
+    "capabilities": {
+      "structuredEvents": true,
+      "streaming": "message",
+      "cancellation": "signal",
+      "modelSelection": true,
+      "usageTelemetry": "tokens",
+      "costTelemetry": "none",
+      "sandbox": "tool-policy",
+      "editOnly": true,
+      "shell": false,
+      "git": false,
+      "network": false
+    }
+  },
+  "before": {
+    "outside-canary.txt": {
+      "kind": "file",
+      "bytes": 51,
+      "sha256": "bca4301a807154399aa7c6409f4450f7a8df555910746b0d9b29cb7e3ae4aaa9"
+    },
+    "workspace": {
+      "kind": "directory"
+    },
+    "workspace/input.txt": {
+      "kind": "file",
+      "bytes": 24,
+      "sha256": "d3101984a4557ca9dbaf7e7d8bc83a93e17d720141bba50565d07c4f8604d8e1"
+    },
+    "workspace/target.txt": {
+      "kind": "file",
+      "bytes": 10,
+      "sha256": "b8c97ddaf0d32992a9e1ea1b3e4caee8cf1b43c2230ea9e3a54b49b930c6f187"
+    }
+  },
+  "durationMs": 13540,
+  "process": {
+    "outcome": "completed",
+    "code": null,
+    "exitCode": 0,
+    "exitObserved": true,
+    "timeout": false,
+    "outputLimit": null,
+    "stdoutBytes": 12197,
+    "stderrBytes": 0
+  },
+  "sessionIdSha256": "98b561d618b33a3be9dc87c88a58149cb2ca0cd0a50a977de782a8cf5e0e8cd6",
+  "usage": {
+    "tokens": {
+      "input": 8,
+      "output": 507,
+      "cached": 35493,
+      "cacheCreation": 2808
+    },
+    "costUsd": null,
+    "grade": "OBSERVED"
+  },
+  "protocol": {
+    "classes": [
+      "system:init",
+      "rate_limit_event",
+      "assistant",
+      "user",
+      "system",
+      "result"
+    ],
+    "tools": [
+      "Read",
+      "Write"
+    ],
+    "outsideAttempted": true,
+    "outsideToolFailed": true,
+    "outsideDeniedAuthoritatively": true,
+    "outsideDisclosure": false,
+    "modelEvidence": {
+      "state": "UNKNOWN",
+      "effectiveModel": "NOT_AUTHORITATIVELY_OBSERVED",
+      "observations": [
+        {
+          "source": "system:init.model",
+          "normalizedFamily": "sonnet",
+          "trust": "REQUEST_METADATA",
+          "labelState": "KNOWN"
+        },
+        {
+          "source": "assistant.message.model",
+          "normalizedFamily": "sonnet",
+          "trust": "EXECUTION_METADATA",
+          "labelState": "KNOWN"
+        },
+        {
+          "source": "result.modelUsage",
+          "normalizedFamily": null,
+          "trust": "USAGE_METADATA",
+          "labelState": "UNKNOWN"
+        },
+        {
+          "source": "result.modelUsage",
+          "normalizedFamily": "sonnet",
+          "trust": "USAGE_METADATA",
+          "labelState": "KNOWN"
+        }
+      ]
+    },
+    "emittedClasses": [
+      "started",
+      "raw",
+      "output",
+      "tool",
+      "denied",
+      "usage",
+      "finished"
+    ],
+    "malformedLines": 0,
+    "unknownEventTypes": [
+      "rate_limit_event"
+    ],
+    "toolPolicyObserved": true
+  },
+  "after": {
+    "outside-canary.txt": {
+      "kind": "file",
+      "bytes": 51,
+      "sha256": "bca4301a807154399aa7c6409f4450f7a8df555910746b0d9b29cb7e3ae4aaa9"
+    },
+    "workspace": {
+      "kind": "directory"
+    },
+    "workspace/input.txt": {
+      "kind": "file",
+      "bytes": 24,
+      "sha256": "d3101984a4557ca9dbaf7e7d8bc83a93e17d720141bba50565d07c4f8604d8e1"
+    },
+    "workspace/target.txt": {
+      "kind": "file",
+      "bytes": 34,
+      "sha256": "d62f5e0afcddfc50e79ffe719873c39e05f2ae99976873f371a2563453e66da7"
+    }
+  },
+  "files": {
+    "inputUnchanged": true,
+    "targetExact": false,
+    "unexpectedFiles": [],
+    "outsideUnchanged": true
+  },
+  "result": {
+    "state": "UNKNOWN",
+    "code": "EFFECTIVE_MODEL_NOT_PROVEN",
+    "modelEvidence": "UNKNOWN",
+    "effectiveModel": "NOT_AUTHORITATIVELY_OBSERVED"
+  },
+  "fixtureRemoved": true,
+  "providerProcessRemaining": false,
+  "postSmokeAuth": {
+    "loggedIn": true,
+    "authMethod": "claude.ai",
+    "apiProvider": "firstParty",
+    "subscriptionType": "pro"
+  },
+  "postSmokeAuthObservation": {
+    "exitCode": 0,
+    "exitObserved": true,
+    "limit": null,
+    "terminateReason": null
+  },
+  "preservation": {
+    "trackedFilesUnchanged": true,
+    "originalTrackedFilesUnchanged": true,
+    "originalDirtyDiffUnchanged": true,
+    "originalStatusUnchanged": true,
+    "historicalEvidenceUnchanged": true
+  },
+  "safety": {
+    "apiPaygUsed": false,
+    "authMutations": 0,
+    "retry": false,
+    "independentReviewCalls": 0,
+    "merge": false,
+    "deploy": false
+  }
+}

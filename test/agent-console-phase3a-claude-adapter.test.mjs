@@ -279,12 +279,12 @@ test('failures: non-zero exit, truncated stream, agent error, malformed and unkn
   await withScratch(async ({ root, binaryPath }) => {
     const cwd = prepareWorktree(root, { lines: [init(), assistant([text('working')])] }); // exit 0, no result event
     const res = await adapterFor(binaryPath).start(spec(cwd), () => {});
-    assert.deepEqual([res.outcome, res.code], ['failed', 'TRUNCATED_STREAM']);
+    assert.deepEqual([res.outcome, res.code], ['unknown', 'TRUNCATED_STREAM']);
   });
   await withScratch(async ({ root, binaryPath }) => {
     const cwd = prepareWorktree(root, { script: `printf '%s' '${JSON.stringify(init())}'\n` }); // final line without newline, then EOF
     const res = await adapterFor(binaryPath).start(spec(cwd), () => {});
-    assert.equal(res.outcome, 'failed');
+    assert.equal(res.outcome, 'unknown');
   });
   await withScratch(async ({ root, binaryPath }) => {
     for (const bad of [result({ subtype: 'error_max_turns' }), result({ is_error: true })]) {
@@ -298,7 +298,8 @@ test('failures: non-zero exit, truncated stream, agent error, malformed and unkn
     const cwd = prepareWorktree(root, { lines });
     const { events, emit } = collect();
     const res = await adapterFor(binaryPath).start(spec(cwd), emit);
-    assert.equal(res.outcome, 'completed', 'malformed lines alone do not fail a run that reported a real result');
+    assert.equal(res.outcome, 'unknown', 'malformed protocol cannot establish completion');
+    assert.equal(res.code, 'PROTOCOL_PARSE_FAILED');
     assert.equal(res.malformedLines, 12);
     assert.equal(events.filter((e) => e.code === 'MALFORMED_EVENT').length, 5, 'error events are bounded');
     assert.deepEqual(res.unknownEventTypes, ['mystery_event']);
@@ -362,7 +363,7 @@ test('tool policy is observed at runtime: a runtime exposing Bash, bypass mode, 
       const { events, emit } = collect();
       const started = Date.now();
       const res = await adapterFor(binaryPath).start(spec(cwd), emit);
-      assert.deepEqual([res.outcome, res.code], ['failed', code]);
+      assert.deepEqual([res.outcome, res.code], ['unknown', code]);
       assert.ok(Date.now() - started < 10_000, 'the violating process must be terminated, not awaited');
       assert.ok(!alive(res.processId));
       assert.ok(events.some((e) => e.type === 'error' && e.code === code));
@@ -387,7 +388,7 @@ test('tool policy fails closed per call: a Bash tool_use is stopped even when in
       const { events, emit } = collect();
       const started = Date.now();
       const res = await adapterFor(binaryPath).start(spec(cwd), emit);
-      assert.deepEqual([res.outcome, res.code], ['failed', 'TOOL_POLICY_VIOLATION'], JSON.stringify(bad));
+      assert.deepEqual([res.outcome, res.code], ['unknown', 'TOOL_POLICY_VIOLATION'], JSON.stringify(bad));
       assert.equal(res.toolPolicyObserved, false);
       assert.ok(Date.now() - started < 10_000, 'process must be terminated, not awaited');
       assert.ok(!alive(res.processId));
@@ -411,7 +412,7 @@ test('output limits: an oversized line, flood of stdout or stderr terminates the
     const cwd = prepareWorktree(root, { script });
     const started = Date.now();
     const res = await adapterFor(binaryPath, { limits }).start(spec(cwd), () => {});
-    assert.deepEqual([res.outcome, res.code], ['failed', 'OUTPUT_LIMIT']);
+    assert.deepEqual([res.outcome, res.code], ['unknown', 'OUTPUT_LIMIT']);
     assert.ok(Date.now() - started < 10_000);
     assert.ok(!alive(res.processId));
     return res;
