@@ -101,7 +101,7 @@ This differs from the original smoke preflight. The cause is unestablished;
 no login/logout/setup-token, CLI update or credential operation was performed.
 See [sanitized review evidence](../evidence/agent-console-phase3b4-independent-review.json).
 
-## Offline evidence-semantics correction (PR #21 remains Draft)
+## Historical evidence-semantics correction (459fc7ac; PR #21 remains Draft)
 
 This correction makes no Claude/provider request and performs no host auth
 operation. The original live and review JSON evidence remains byte-for-byte
@@ -143,8 +143,8 @@ that the failed invocation executed it. Offline Phase 3A fixture version
 identifiers and arbitrary/future versions do not expand the production map.
 Unknown labels remain UNKNOWN; no substring/fuzzy model matching is used.
 
-One model result is produced: AUTHORITATIVE, UNKNOWN, CONFLICT,
-SYNTHETIC_OR_PLACEHOLDER or WRONG_MODEL. All observations are considered;
+At `459fc7ac`, one model result was produced: AUTHORITATIVE, UNKNOWN, CONFLICT,
+SYNTHETIC_OR_PLACEHOLDER or WRONG_MODEL. All observations were considered;
 synthetic/test/fixture/mock/placeholder contamination is not discarded to accept
 another label. Literal unknown is UNKNOWN. Different known families produce
 CONFLICT; an unknown label alongside a valid one remains UNKNOWN. Consistent
@@ -222,3 +222,66 @@ historical-hash and diff validation applies; the full code suite was not rerun.
 GitHub has no CI checks. PR #21 remains OPEN/Draft, with no merge or deployment.
 The live smoke gate remains BLOCKED; no independent Claude review is authorized
 by this result.
+
+## Offline smoke-contract correction — 2026-10-06
+
+This correction starts from `f311dab9e119cb5cae85ba9bc9bcc00b4db063bb` and
+addresses the two contract issues exposed by the post-auth-recovery invocation.
+It performs zero Claude/provider calls and zero host auth operations. All three
+historical evidence JSON files remain byte-for-byte unchanged, including the
+post-auth run's UNKNOWN / EFFECTIVE_MODEL_NOT_PROVEN and `targetExact:false`.
+The historical rules above describe the earlier resolver; this section defines
+the corrected resolver without reassessing or relabeling any historical run.
+
+Primary effective-model authority is exclusively `assistant.message.model`
+(`EXECUTION_METADATA`). Missing execution metadata, unknown execution labels,
+execution placeholders and conflicting assistant execution models still prevent
+PASS. A consistently observed Opus execution now yields WRONG_MODEL and
+FAIL / EFFECTIVE_MODEL_MISMATCH even if init requested Sonnet, with
+`verifiedWrongModel:opus` and `effectiveModel:NOT_AUTHORITATIVELY_OBSERVED`.
+Request metadata never establishes execution. For an otherwise valid Sonnet
+execution, a known request/execution mismatch remains CONFLICT; existing
+unknown/placeholder request guards remain fail-closed. An absent request model
+does not invalidate authoritative assistant Sonnet.
+
+`result.modelUsage` (`USAGE_METADATA`) can aggregate helper models and is
+diagnostic/corroborating only. `result.model` (`UNVERIFIED_METADATA`) is likewise
+diagnostic only. Neither source can establish or veto the primary model,
+including when labels are unknown, placeholders or from a different family.
+The resolver retains sanitized observations and an
+`auxiliaryModelObservations.unknownUsageLabels` count; raw labels and payloads
+remain internal. The production normalization map is unchanged: exact
+case-folded Sonnet aliases `sonnet` / `claude-sonnet-5`, and exact `opus`.
+No fuzzy matching or new version labels were added.
+
+The observed pattern of request Sonnet, assistant Sonnet and usage Sonnet plus
+an unknown helper now resolves to AUTHORITATIVE / sonnet in offline regressions.
+This is a proof of corrected contract behavior, not a new live PASS. Missing
+execution evidence cannot be filled by usage or an unverified result model.
+
+The historical target's 34-byte hash exactly matches
+`VERIFIED: CONTROL_PLANE_SMOKE_3B4\n`, with one space after the colon. The strict
+expected target remains 33 bytes: `VERIFIED:CONTROL_PLANE_SMOKE_3B4\n`.
+The harness now generates the prompt's exact UTF-8 content instruction using
+`JSON.stringify(TARGET)`, rather than maintaining another expected string.
+It tells the agent to decode JSON escapes, use no space after the colon,
+exactly one trailing LF, no additional whitespace and no additional line.
+The `targetExact` comparison and every filesystem/denial/process/tool gate are
+unchanged. Offline harness tests capture the actual adapter stdin and prove the
+exact contract is present, then show that a space or extra LF still fails.
+
+Both requested negative proofs were executed: restoring the old resolver failed
+the two unknown-helper regressions; restoring the ambiguous prompt failed its
+actual-stdin contract regression. The safe implementation was restored byte for
+byte and all 49 focused tests passed afterward. Only the harness, its Phase 3B4
+test file and this document change; the adapter, Orchestrator, Docker sandbox,
+verification runner, TaskStore, routes, UI and governance remain unchanged.
+PR #21 remains OPEN/Draft. No merge, deploy or new live smoke is authorized by
+this offline correction; phase acceptance still awaits Control Plane decisions.
+
+Local validation for this correction: focused 49/49, server 449/449, UI 25/25,
+lint and build passed. Build retains the existing CJS `import.meta` warning.
+Both mutations failed the intended regressions (A: two failures, B: one) before
+the restored focused/full suites passed. GitHub still has no CI checks. The
+three historical JSON hashes and original dirty checkout's tracked contents,
+diff and status match the pre-correction snapshots.

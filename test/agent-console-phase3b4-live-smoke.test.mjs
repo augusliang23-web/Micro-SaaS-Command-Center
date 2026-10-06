@@ -227,7 +227,7 @@ for (const [name, initModel, assistantModel, expected] of [
   ['literal UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'UNKNOWN'],
   ['synthetic only', null, '<synthetic>', 'SYNTHETIC_OR_PLACEHOLDER'],
   ['Sonnet plus synthetic', 'claude-sonnet-5', '<synthetic>', 'SYNTHETIC_OR_PLACEHOLDER'],
-  ['Sonnet plus Opus', 'sonnet', 'opus', 'CONFLICT'],
+  ['request Opus plus execution Sonnet', 'opus', 'sonnet', 'CONFLICT'],
   ['unknown arbitrary label', null, 'custom-sonnet-proxy', 'UNKNOWN'],
   ['selection metadata only', 'sonnet', null, 'UNKNOWN'],
 ]) {
@@ -242,7 +242,7 @@ for (const [name, initModel, assistantModel, expected] of [
 }
 
 test('authoritatively observed Opus fails Sonnet request rather than passing', () => {
-  const protocol = observedProtocol({ denial: outsideDenial(), initModel: 'opus', assistantModel: 'opus' });
+  const protocol = observedProtocol({ denial: outsideDenial(), initModel: 'sonnet', assistantModel: 'opus' });
   assert.equal(protocol.modelEvidence?.state, 'WRONG_MODEL');
   const assessed = assessSmoke(successful(), protocol, goodFiles());
   assert.equal(assessed.state, 'FAIL');
@@ -265,14 +265,98 @@ test('reviewed Sonnet aliases normalize consistently with source provenance and 
   }
 });
 
-test('result usage alone does not prove primary model; conflicting result metadata cannot be ignored', () => {
+test('result usage alone does not prove primary model', () => {
   const onlyUsage = observedProtocol({ denial: outsideDenial(), initModel: null, assistantModel: null,
     resultMetadata: { modelUsage: { sonnet: { input_tokens: 1, output_tokens: 1 } } } });
   assert.equal(onlyUsage.modelEvidence?.state, 'UNKNOWN');
-  for (const resultMetadata of [{ model: 'opus' }, { modelUsage: { opus: { input_tokens: 1 } } }]) {
-    const conflict = observedProtocol({ denial: outsideDenial(), resultMetadata });
-    assert.equal(conflict.modelEvidence?.state, 'CONFLICT');
-    assert.equal(assessSmoke(successful(), conflict, goodFiles()).state, 'UNKNOWN');
+  assert.equal(onlyUsage.modelEvidence?.effectiveModel, 'NOT_AUTHORITATIVELY_OBSERVED');
+  assert.equal(assessSmoke(successful(), onlyUsage, goodFiles()).state, 'UNKNOWN');
+});
+
+for (const initModel of ['sonnet', null]) {
+  test(`authoritative assistant Sonnet survives unknown auxiliary usage with request ${initModel}`, () => {
+    const protocol = observedProtocol({ denial: outsideDenial(), initModel, assistantModel: 'sonnet',
+      resultMetadata: { modelUsage: { sonnet: { input_tokens: 1 }, 'PRIVATE_HELPER_LABEL': { input_tokens: 1 } } } });
+    assert.equal(protocol.modelEvidence.state, 'AUTHORITATIVE');
+    assert.equal(protocol.modelEvidence.effectiveModel, 'sonnet');
+    assert.equal(protocol.modelEvidence.auxiliaryModelObservations.unknownUsageLabels, 1);
+    assert.ok(!JSON.stringify(protocol).includes('PRIVATE_HELPER_LABEL'));
+    assert.equal(assessSmoke(successful(), protocol, goodFiles()).state, 'PASS');
+  });
+}
+
+test('usage and unverified result metadata cannot veto authoritative assistant Sonnet', () => {
+  for (const resultMetadata of [
+    { model: 'opus' }, { model: 'UNKNOWN' }, { model: '<synthetic>' },
+    { modelUsage: { opus: { input_tokens: 1 } } },
+    { modelUsage: { '<synthetic>': { input_tokens: 1 } } },
+  ]) {
+    const protocol = observedProtocol({ denial: outsideDenial(), assistantModel: 'sonnet', resultMetadata });
+    assert.equal(protocol.modelEvidence.state, 'AUTHORITATIVE');
+    assert.equal(protocol.modelEvidence.effectiveModel, 'sonnet');
+    assert.equal(assessSmoke(successful(), protocol, goodFiles()).state, 'PASS');
+  }
+});
+
+test('unknown auxiliary usage never supplies an effective model without execution evidence', () => {
+  const protocol = observedProtocol({ denial: outsideDenial(), initModel: null, assistantModel: null,
+    resultMetadata: { model: 'sonnet', modelUsage: { 'PRIVATE_HELPER_LABEL': { input_tokens: 1 } } } });
+  assert.equal(protocol.modelEvidence.state, 'UNKNOWN');
+  assert.equal(protocol.modelEvidence.effectiveModel, 'NOT_AUTHORITATIVELY_OBSERVED');
+  assert.equal(protocol.modelEvidence.auxiliaryModelObservations.unknownUsageLabels, 1);
+  assert.ok(!JSON.stringify(protocol).includes('PRIVATE_HELPER_LABEL'));
+  assert.equal(assessSmoke(successful(), protocol, goodFiles()).state, 'UNKNOWN');
+});
+
+test('conflicting assistant execution models remain CONFLICT regardless of auxiliary usage', () => {
+  const protocol = observedProtocol({ denial: outsideDenial(), assistantModel: 'sonnet',
+    extraEvents: [assistant([], { model: 'opus' })],
+    resultMetadata: { modelUsage: { sonnet: { input_tokens: 1 } } } });
+  assert.equal(protocol.modelEvidence.state, 'CONFLICT');
+  assert.equal(protocol.modelEvidence.effectiveModel, 'NOT_AUTHORITATIVELY_OBSERVED');
+  assert.equal(assessSmoke(successful(), protocol, goodFiles()).state, 'UNKNOWN');
+});
+
+test('unknown or synthetic execution metadata remains unproven despite valid auxiliary Sonnet', () => {
+  for (const assistantModel of ['UNKNOWN', '<synthetic>']) {
+    const protocol = observedProtocol({ denial: outsideDenial(), assistantModel,
+      resultMetadata: { model: 'sonnet', modelUsage: { sonnet: { input_tokens: 1 } } } });
+    assert.equal(protocol.modelEvidence.state, assistantModel === 'UNKNOWN' ? 'UNKNOWN' : 'SYNTHETIC_OR_PLACEHOLDER');
+    assert.equal(protocol.modelEvidence.effectiveModel, 'NOT_AUTHORITATIVELY_OBSERVED');
+    assert.equal(assessSmoke(successful(), protocol, goodFiles()).state, 'UNKNOWN');
+  }
+});
+
+test('live prompt delivers exact JSON target bytes while space and extra LF remain rejected', async () => {
+  for (const [contents, want] of [
+    ['VERIFIED:CONTROL_PLANE_SMOKE_3B4\n', 'PASS'],
+    ['VERIFIED: CONTROL_PLANE_SMOKE_3B4\n', 'FAIL'],
+    ['VERIFIED:CONTROL_PLANE_SMOKE_3B4\n\n', 'FAIL'],
+  ]) {
+    await scratch(async ({ root }) => {
+      const capture = path.join(root, 'captured-live-prompt.txt');
+      const lines = [init({ model: 'sonnet' }), assistant([
+        { type: 'tool_use', name: 'Read', id: 'input', input: { file_path: 'input.txt' } },
+        { type: 'tool_use', name: 'Write', id: 'target', input: { file_path: 'target.txt' } },
+        { type: 'tool_use', name: 'Read', id: 'outside', input: { file_path: '../outside-canary.txt' } },
+      ], { model: 'sonnet' }), toolResult('input'), toolResult('target'), toolResult('outside', true),
+      result({ permission_denials: [outsideDenial()] })];
+      const binary = path.join(root, 'bin', 'claude');
+      fs.writeFileSync(binary, `#!/bin/sh\ncase "$1" in\n--version) echo '2.1.260 (Claude Code)'; exit 0;;\n--help) cat <<'HELP'\n${HELP_OK}\nHELP\nexit 0;;\nauth) echo '${AUTH_OK}'; exit 0;;\nesac\ncat > '${capture}'\nprintf '%s' '${contents}' > target.txt\ncat <<'STREAM'\n${lines.map(l => JSON.stringify(l)).join('\n')}\nSTREAM\n`, { mode: 0o755 });
+      const evidence = await runLiveSmoke({ binaryPath: binary, commandCenterRoot: process.cwd(), env: sourceEnv() });
+      const prompt = fs.readFileSync(capture, 'utf8');
+      const contract = /Write target\.txt with exactly this UTF-8 content \(JSON string notation\):\n("[^\n]+")/.exec(prompt);
+      assert.ok(contract, 'actual adapter stdin must contain an unambiguous exact target contract');
+      assert.equal(JSON.parse(contract[1]), 'VERIFIED:CONTROL_PLANE_SMOKE_3B4\n');
+      assert.ok(prompt.includes('no space after the colon'));
+      assert.ok(prompt.includes('exactly one trailing LF'));
+      assert.ok(prompt.includes('no additional whitespace'));
+      assert.ok(prompt.includes('no additional line'));
+      assert.equal(evidence.result.state, want);
+      assert.equal(evidence.files.targetExact, want === 'PASS');
+      assert.equal(evidence.result.code, want === 'PASS' ? null : 'FILESYSTEM_MISMATCH');
+      assert.equal(evidence.fixtureRemoved, true);
+    });
   }
 });
 

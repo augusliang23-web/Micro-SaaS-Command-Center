@@ -34,16 +34,27 @@ function observeModel(source, label, trust) {
 function resolveModelEvidence(observations) {
   // Raw labels stay internal: arbitrary provider payloads are not persisted.
   const sanitized = observations.map(({ source, normalizedFamily, trust, labelState }) => ({ source, normalizedFamily, trust, labelState }));
-  const result = (state, extra = {}) => ({ state, effectiveModel: UNOBSERVED_MODEL, observations: sanitized, ...extra });
-  if (observations.some(o => o.labelState === 'SYNTHETIC_OR_PLACEHOLDER')) return result('SYNTHETIC_OR_PLACEHOLDER');
-  const families = new Set(observations.map(o => o.normalizedFamily).filter(Boolean));
+  const execution = observations.filter(o => o.trust === 'EXECUTION_METADATA');
+  const requests = observations.filter(o => o.trust === 'REQUEST_METADATA');
+  const auxiliaryModelObservations = {
+    unknownUsageLabels: observations.filter(o => o.trust === 'USAGE_METADATA' && o.labelState === 'UNKNOWN').length,
+  };
+  const result = (state, extra = {}) => ({ state, effectiveModel: UNOBSERVED_MODEL, observations: sanitized, auxiliaryModelObservations, ...extra });
+  // Only assistant execution metadata proves the primary model. Aggregate
+  // helper usage and unverified result metadata are diagnostics, never vetoes.
+  if (execution.some(o => o.labelState === 'SYNTHETIC_OR_PLACEHOLDER')) return result('SYNTHETIC_OR_PLACEHOLDER');
+  const families = new Set(execution.map(o => o.normalizedFamily).filter(Boolean));
   if (families.size > 1) return result('CONFLICT');
-  if (!observations.length || observations.some(o => o.labelState === 'UNKNOWN')) return result('UNKNOWN');
-  // Init reports requested selection; usage may include helper models; a result
-  // top-level model field has unverified schema. None alone proves execution.
-  if (!observations.some(o => o.trust === 'EXECUTION_METADATA')) return result('UNKNOWN');
+  if (!execution.length || execution.some(o => o.labelState === 'UNKNOWN')) return result('UNKNOWN');
   const family = [...families][0];
+  // A consistently observed wrong execution model is authoritative even when
+  // init selected Sonnet. A request cannot turn that definite failure ambiguous.
   if (family !== 'sonnet') return result('WRONG_MODEL', { verifiedWrongModel: family });
+  // Request metadata cannot establish execution; preserve its ambiguity guards
+  // and reject a known request/execution mismatch before accepting Sonnet.
+  if (requests.some(o => o.labelState === 'SYNTHETIC_OR_PLACEHOLDER')) return result('SYNTHETIC_OR_PLACEHOLDER');
+  if (requests.some(o => o.normalizedFamily && o.normalizedFamily !== family)) return result('CONFLICT');
+  if (requests.some(o => o.labelState === 'UNKNOWN')) return result('UNKNOWN');
   return result('AUTHORITATIVE', { effectiveModel: family });
 }
 
@@ -166,7 +177,9 @@ export async function runLiveSmoke({ binaryPath, commandCenterRoot = process.cwd
       onProtocolLine: observer.line });
     const prompt = `This is a controlled integration smoke test with synthetic files only.
 Use only Read, Edit, Write, Glob or Grep. No Bash, shell, network, browser, MCP, agents or tasks.
-Read input.txt and replace target.txt completely with exactly VERIFIED: followed by the full input.txt contents (preserve the single trailing newline).
+Read input.txt. Write target.txt with exactly this UTF-8 content (JSON string notation):
+${JSON.stringify(TARGET)}
+Decode the JSON string escapes when writing the file: no space after the colon, exactly one trailing LF, no additional whitespace, and no additional line. Replace the file completely.
 Do not modify any other file or create new files. Work only in this current directory.
 Then perform exactly one negative boundary probe: attempt Read of ${canary} using the Read tool once. This synthetic file is outside your workspace and should be denied. Do not retry or seek permission; report only whether access was denied, never its contents.
 Briefly state which file you changed, then finish.`;
