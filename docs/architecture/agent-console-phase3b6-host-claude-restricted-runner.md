@@ -2,8 +2,10 @@
 
 Status: **CONTRACT READY FOR REVIEW / RUNNER NOT QUALIFIED**.
 Decision: **HOST_CLAUDE_TRUST_CONTRACT_READY** as an explicit host-TCB design
-for the frozen five-tool/2.1.260 candidate. This is a local, uncommitted review artifact;
-it is not part of PR #22 and grants no execution or residual-risk acceptance.
+for the frozen five-tool/2.1.260 candidate. This document is committed in PR #23,
+the dedicated Phase 3B6 architecture PR, which remains OPEN / Draft / UNMERGED. PR #22
+remains separate and covers native-sbx research only. No runtime qualification has
+occurred, and this delivery grants no execution or residual-risk acceptance.
 
 ## 1. Baseline and governance separation
 
@@ -14,11 +16,9 @@ architecture worktree began clean. Native research decisions remain
 RUNTIME_RESOLVER_CHAIN_PARTIALLY_PROVEN and STOP_NATIVE_SBX_PATH. Native daemon /
 bootstrap remains HOLD. Installed sbx stays unused; no further native qualification.
 
-PR #22 closes only native sbx research when separately authorized; no close,
-merge, ready conversion or modification of its tracked content occurs here.
-Phase 3B6 belongs in this new architecture file and a separately authorized future
-branch/PR. This gate creates neither branch nor PR and does not commit/push this
-file to the native research branch. Current Orchestrator remains fake-only.
+PR #22 remains the separate native-sbx research PR; PR #23 carries this Phase 3B6
+architecture contract. Neither PR authorizes runtime qualification, auth, provider,
+merge or deployment actions. Current Orchestrator remains fake-only.
 CLAUDE.md, AGENTS.md and .bridge governance are not modified.
 
 ## 2. Version freeze, print-mode scope and qualification concerns
@@ -491,21 +491,24 @@ closed admission are coherent enough to define synthetic qualification. This
 does not mean the residual risk has been accepted, the actual host passed managed
 admission, 2.1.260 passed its negatives, or the runner is production-safe.
 
-Next: Control Plane reviews and explicitly accepts or rejects the residual-risk
-clause and qualification plan, then separately authorizes the Phase 3B6 branch/PR
-and exact Phase 3B6B scope/provider budget if it continues. No sixth tool, new
-version, managed-policy mutation or live call is approved here. Begin with offline
-guards; live negatives require their own permission and clean pre-start admission.
-No new PR is created now, and no weaker mode is allowed if qualification fails.
+Next: independent Control Plane review of this exact PR #23 head, including explicit
+acceptance or rejection of the residual-risk clause and qualification plan. If
+accepted, Phase 3B6B still requires a separate authorization defining its exact scope
+and any provider-call budget. Phase 3B6B is not authorized here. No sixth tool, new
+version, managed-policy mutation or live call is approved. Begin with offline guards;
+live negatives require their own gate and clean pre-start admission. No weaker mode is
+allowed if qualification fails.
 
-Validation is documentation-only: required layers/argv/matrices/delta/failure
-coverage, Markdown/Mermaid/JSON structure, links, whitespace, native-document
-preservation and no tracked changes. No implementation, tests, lint/build or
-project code executes on the host; local document checks are not CI.
+Validation for the PR is documentation-only: required layers/argv/matrices/delta/
+failure coverage, Markdown/Mermaid/JSON structure, links and whitespace. No
+implementation, tests, lint/build or project code executes on the host; local
+document checks are not CI.
 
 Safety: Claude inference 0; Claude CLI commands/auth mutation 0; sbx/daemon/llmman/
 runtime execution/download 0; project code execution 0; credentials inspected no;
 Keychain queries 0; network mutation 0; target MCP invocation/SSH auth 0;
 Orchestrator activation 0; merge/deploy no; Production/UAT/cloud changes no.
-Research uses primary vendor documentation only. PR #22 remains Draft at the
-required HEAD. The only new file is this local Phase 3B6 architecture artifact.
+Research uses primary vendor documentation only. PR #23 remains OPEN / Draft /
+UNMERGED and is the dedicated Phase 3B6 architecture PR. PR #22 remains separate,
+OPEN / Draft / UNMERGED, and native-sbx-only. This document records a contract ready
+for qualification, not a security-qualified runner; Phase 3B6B remains unauthorized.
