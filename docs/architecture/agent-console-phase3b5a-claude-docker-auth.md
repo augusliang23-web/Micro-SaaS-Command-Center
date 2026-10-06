@@ -1090,3 +1090,316 @@ reset or deleted. Only existing research surfaces retrieved vendor docs and PR
 metadata; no host-side network command or Homebrew update occurred. PR #22 stays
 OPEN / Draft. This section is a local review artifact, not a pushed PR update,
 backend approval or authorization for the proposed first-daemon gate.
+
+---
+
+## Phase 3B5B1.3A — host isolation supervisor feasibility
+
+### H1. Baseline, scope and decision
+
+Review date: 2026-10-06 (Asia/Singapore). Local and remote PR #22 HEAD:
+`5bf7e5658a197ca0008c28ccb873cefe2bc8952a`. PR metadata was OPEN / Draft /
+UNMERGED; the existing architecture branch and worktree were clean. The gate was
+`AGENT_CONSOLE_PHASE3B5B1_2_STATIC_METADATA_GATE_PASS_FIRST_DAEMON_HOLD`.
+This section is append-only. Historical 3B5A, 3B5B1, 3B5B1.1 and 3B5B1.2 text
+remains unchanged. No implementation or supervisor qualification is performed.
+
+**Decision: NO_SAFE_HOST_ISOLATION_SUPERVISOR_FOUND.**
+
+No reviewed complete mechanism currently establishes all five requirements for
+the installed, unchanged macOS sbx package: real credential denial, empty remote
+destination set, complete process containment, enforced filesystem separation
+and failure before launch when any of these is unknown. This is a scoped review
+result, not a claim that macOS isolation is universally impossible. Privilege
+alone does not resolve the missing mechanisms. Creating a user plus a UID PF
+rule must not be promoted to a complete architecture on that basis.
+
+The architecture review is complete; **the first-daemon gate remains HOLD**.
+There is no viable preferred execution design or exact host mutation plan ready
+for approval. A single research candidate is identified in H8, without adopting
+it or authorizing its setup. No runtime experiment is substituted for evidence.
+
+### H2. Observed host and installed-package metadata
+
+| Observation | Result | Limit |
+|---|---|---|
+| Operating system | macOS 27.0.1, build 26A434 | Read-only OS metadata |
+| Hardware | Apple M5, arm64 | No VM or nested-virtualization capability API invoked |
+| Built-in tools | sandbox-exec, pfctl, launchctl and Application Firewall binary present | Existence does not prove active policy or sufficient enforcement |
+| sandbox-exec support | Installed Apple manual explicitly marks it DEPRECATED | It was not invoked, even for help |
+| Public sandbox.h | SDK header is deprecated; sandbox_init says No longer supported | No custom/private profile is designed or compiled |
+| Package access | All inspected parents have other-search permission; sbx, llmman and sbx-gui are 0755 | A different ordinary UID can traverse/read/execute by these observed modes; no account exists to test it |
+| Bundle resources | Resources/libexec and bundled kernel have other-read/search permission | Static access only, not proof of virtualization capability |
+| ACL inspection | No extra ACL entries displayed on inspected package-parent paths | No real credential paths or state contents inspected |
+| Public entitlement readback | codesign exited 0 and emitted no entitlement payload for sbx, llmman or sbx-gui | No App Sandbox/inherit entitlement observed; not proof that inherited kernel restrictions are impossible |
+
+The package remains sbx 0.47.0 as established in 3B5B1.2. No executable was
+launched from it. Package paths were inspected by metadata and public code-signing
+readback only. Full package integrity, helper launch behavior, alternate-user
+compatibility and runtime initialization remain untested. The installer user can
+modify the Homebrew tree; a future gate needs pinned identity/readback at the
+actual execution boundary rather than assuming the tree is immutable.
+
+Local Apple authorities: sandbox-exec(1), sandbox(7), pf.conf(5), launchd.plist(5),
+launchctl(1), and the public SDK sandbox.h. Only their installed text was read.
+No PF/firewall status, rule command, launch job, sandbox API or Keychain command
+was run. Apple's OS sandbox diagnostic service and sbx's daemon are distinct;
+the presence of Apple's sandbox machinery is not an sbx startup observation.
+
+### H3. Options A through F
+
+| Option | Credential / filesystem boundary | Network / process boundary | Decision |
+|---|---|---|---|
+| A. Temporary HOME, current user | Changes a path convention. Same UID, security context, readable real paths and existing broker access remain. Sanitizing environment is necessary but insufficient. | No socket denial or descendant ownership separation. | REJECT as containment; use only inside a separately enforced boundary. |
+| B1. Seatbelt / sandbox-exec | Kernel resource restrictions exist and can restrict files/services, but this review establishes no supported sbx-specific profile denying both real files and security services. | Generic child inheritance is documented; already-open resources and services acting outside the tree remain relevant. Exact network/profile semantics are unqualified. | REJECT as the durable product supervisor; deprecated launcher/API and no reviewed complete profile. No undocumented SBPL supplied. |
+| B2. Supported App Sandbox | Official app/container and entitlement mechanism; supported helper integration requires appropriate signed targets. It is not a universal deny-Keychain switch. | Network client/server grants are explicit. The unchanged vendor helper chain has not been shown to inherit a reviewed sandbox. | CANDIDATE ONLY; supported mechanism exists, but this package integration is unproved. Do not re-sign the Docker package. |
+| C. Dedicated non-admin user | Separate identity/HOME and user security context materially help. Files that are public/shared remain readable without an additional deny boundary. System Keychain is not automatically removed. | Exclusive UID improves cleanup, but does not prevent privilege transitions or services launching work under another UID. No network isolation by itself. | USEFUL COMPONENT, insufficient alone. |
+| D. Dedicated user plus PF | Adds no credential or filesystem denial. | Direct TCP/UDP socket ownership can be matched. Other-UID brokers, unknown/forwarded ownership, existing states and skipped interfaces prevent a complete empty-destination proof from a UID rule. | REJECT UID PF as the sole egress guard. |
+| E. VM wrapper | A VM with no host shares, credentials, integration channels or NIC is a stronger candidate boundary, if correctly configured. | A complete Sandboxes runtime needs reviewed nested virtualization. A daemon-only attempt may not exercise it; startup requirements are UNKNOWN. Linux sbx would be a different artifact/backend. | NOT QUALIFIED for the frozen host/package/resource contract; a narrower guest-only experiment needs a separate decision. No VM created. |
+| F. Other official mechanisms | App Sandbox, Unix permissions/ACLs and separate security sessions help. Endpoint Security offers pre-operation authorization/telemetry, not a preinstalled ready-made policy. | Network Extension has origin-aware flow APIs; launchd offers identity/jobs/groups. Restricted entitlements, deployment and complete failure behavior are unproved. | COMPONENTS ONLY; no existing complete supervisor is established. |
+
+Apple documents [supported App Sandbox controls](https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox)
+and [signed helper integration](https://developer.apple.com/documentation/xcode/embedding-a-helper-tool-in-a-sandboxed-app).
+Its [entitlement reference](https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/EnablingAppSandbox.html)
+describes the network grants and static helper inheritance. These are mechanisms
+for integrated code, not vendor confirmation that an arbitrary installed sbx
+launcher and every helper can be wrapped unchanged. Absence of entitlement
+readback does not itself prove escape; compatibility and coverage remain UNKNOWN.
+
+Apple's [generic nested virtualization property](https://developer.apple.com/documentation/virtualization/vzgenericplatformconfiguration/isnestedvirtualizationsupported)
+documents M3 and later hardware. A [macOS boot loader](https://developer.apple.com/documentation/virtualization/vzmacosbootloader)
+requires [VZMacPlatformConfiguration](https://developer.apple.com/documentation/virtualization/vzmacplatformconfiguration),
+which is a different configuration. No reviewed equivalent establishes sbx's
+macOS-in-macOS runtime here; no claim of universal VM incompatibility is made.
+Docker documents [nested virtualization for local Linux sandboxes in a VM](https://docs.docker.com/ai/sandboxes/install/).
+That alternative needs a separately pinned Linux package, guest OS and backend
+decision; it cannot qualify the already installed Mach-O executable.
+
+A credential-free macOS VM without a NIC could be a useful separately scoped
+daemon-only observation environment even if later nested VM creation fails.
+Do not conflate lack of reviewed nested support with proof that daemon start
+itself requires a hypervisor. Conversely, guest-only startup would not qualify
+the ordinary host's filesystem/Keychain/service behavior. A pinned guest image,
+absence of host shares/IPC integration and actual OS minimum-memory requirements
+also need review. The existing 512 MiB aggregate owned-process ceiling cannot be
+silently expanded to fit a VM. No safe preexisting VM setup or compliant resource
+configuration is established here; this gate does not select that rescope.
+
+### H4. Credential matrix — access potential, never actual secret access
+
+The current-user column describes architectural reach, not a successful lookup.
+Dedicated-user cells are conditional on correct UID/groups/security context and
+no credentials provisioned. No secret, actual item ACL, browser database,
+credential file, environment value or real sbx state content was read.
+
+| Credential/source | Current user process access | Dedicated user access | Temp HOME protection | OS sandbox protection | Remaining risk |
+|---|---|---|---|---|---|
+| macOS Keychain | Caller context may reach eligible user/System items; actual authorization UNKNOWN | User context separates; shared System items are not a blanket denial | NONE established | Requires reviewed implementation/access model; not equivalent to denying securityd | Shared/file-based keychains, item ACLs and service calls |
+| Claude auth | Same-user Keychain or readable fallback is a possible source | Private user files normally separated; Keychain caveat remains | Path selection only | File and broker denial both required | Active store unchanged/UNKNOWN; no auth lookup |
+| Docker auth | User config and credential helper may be sources | Private config/socket separation helps | Path selection only | Must cover files, helpers and broker IPC | Shared services/helper credentials |
+| GitHub credentials | Git/CLI stores, Keychain or environment may be sources | Private files not normally shared | No UID/ACL change | Must deny file/helper/broker channels | Other configured stores not enumerated |
+| SSH agent socket | Socket may be inherited or reachable by same UID | No inheritance plus filesystem/socket permissions helps | NONE for an inherited FD/socket | Explicit descriptor/IPC boundary needed | Existing open descriptors and other agents |
+| SSH files | Same-user file access possible | Permission/ACL dependent, not guaranteed for public files | NONE for an absolute path | Enforced path denial needed | Symlink/hardlink/shared-copy locations |
+| Browser state | Same-user files or services may be reachable | Private profile separation helps | NONE for real profile paths | Files and service integration must both be bounded | Shared data, GUI/session brokers; TCC is not a general guard |
+| Cloud/API credentials | Files, environment and helpers may be sources | Private files/env absence help | No protection against absolute paths or inherited values | File, env/FD and broker boundary needed | Shared credentials or helper-held tokens |
+| Real sbx state | Same UID could read existing user-owned state | Private 0700 state helps separation | Avoidance only; must deny real path | Enforced real-state denial needed | OS-account-derived paths and external copies |
+
+### H5. Keychain-specific conclusions
+
+Apple's [TN3137](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains)
+distinguishes file-based and data-protection implementations. Caller context
+selects the per-user data-protection keychain; a user file-based search list can
+include both login and System keychains. A system daemon uses file-based
+keychains, not the user data-protection implementation. Their access-control
+models differ. [Platform Security](https://support.apple.com/guide/security/secb0694df1a/web)
+also distinguishes per-user and system-level keychains.
+
+1. **Current UID with a different HOME:** not isolated. HOME does not replace
+   the caller's OS identity, audit/security context or already-open handles.
+   Actual secret access still depends on the item/model; neither universal
+   access nor universal denial is claimed.
+2. **Different dedicated UID/context:** materially separates the real user's
+   private files and data-protection context. It is not proof of no Keychain
+   access at all, or denial of credentials in shared System/file-based stores.
+   Never assume non-admin means no authorized System item can be read.
+3. **Sandboxed process:** the precise sandbox and keychain model matter. No
+   reviewed public switch here establishes denial of every real-user credential
+   service while preserving the unchanged sbx/helper chain. No custom Mach-service
+   profile or item inspection is used to paper over that gap.
+
+Fresh credentials, signing out the user, locking/deleting their keychain or
+changing real item ACLs are not acceptable substitutes. Future probes, if
+separately authorized, must use only synthetic stores/canaries and must not
+query real items. Synthetic denial alone also cannot prove every shared store
+or broker is inaccessible without a complete enforcement contract.
+
+### H6. Network boundary and PF limitations
+
+The narrow reviewed PF capability is socket-owner matching, not general causal
+process attribution. Installed pf.conf(5) says it covers TCP/UDP, uses effective
+IDs at socket creation, and cannot identify forwarded connections by user.
+It also documents interface skipping. Active state/rules/anchors were not read.
+
+| Surface | Dedicated-UID PF assessment |
+|---|---|
+| IPv4 / IPv6 | Rules can express inet/inet6; both families and every path need explicit coverage/readback, not presumed from one rule |
+| TCP / UDP | Direct sockets created by the dedicated effective UID are a documented match class |
+| DNS | Direct DNS sockets fit TCP/UDP; resolver work owned by another system identity is not covered by a UID-only match |
+| HTTP / HTTPS / CONNECT | A direct connection uses transport sockets; proxy or system-service causation is not established by transport ownership |
+| Loopback | Must not be automatically allowed or skipped; it can reach host proxies/services |
+| Unix / Mach IPC | PF is an IP packet filter, not a filesystem/Mach credential-service guard |
+| Descendants | Same effective UID/direct socket creation helps; inherited sockets, another UID or delegated service break that reasoning |
+| Other traffic / policy lifetime | Non-TCP/UDP ownership, stateful bypass, rule precedence, skipped interfaces, tunnels and guard failure need coverage; none is proved here |
+
+This service-origin concern is not speculative proof that sbx performs a bypass:
+Apple's [sourceProcessAuditToken](https://developer.apple.com/documentation/networkextension/nefilterflow/sourceprocessaudittoken)
+explicitly distinguishes a system process connecting on behalf of an app from
+the source app. That distinction explains why socket-owner denial cannot be
+promoted to complete origin-based denial.
+
+The [macOS Application Firewall](https://support.apple.com/guide/mac-help/block-connections-to-your-mac-with-a-firewall-mh34041/mac)
+documents inbound protection, not this required outbound containment. No reviewed
+per-UID built-in configuration guarantees the empty remote set for every required
+channel. A host-wide PF quarantine might block broker traffic too, but would
+affect unrelated workloads and still needs a complete all-path/state/IPC and
+rollback review. It is not selected or an automatic fallback.
+
+Official [Network Extension capabilities](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.networkextension)
+offer socket/packet filtering and app-origin information. A signed, approved,
+qualified filter with fail-closed handling of unattributed flows could be part
+of a different architecture. No such deployed capability, DNS/broker completeness
+or failure guarantee is established. The remote allowlist remains empty; sbx
+guest deny-all, proxy settings and download failures are not host-enforcement proof.
+
+### H7. Process supervision, resources and filesystem design
+
+An exclusive execution UID materially simplifies ownership, including children
+that detach or reparent while retaining that UID. It does not establish that
+every effect stays under that UID. A future launcher must use an actual identity
+transition, minimal groups and a separate security/bootstrap context; launchctl
+asuser alone does not change UID/GID according to its installed manual.
+
+The future evidence model needs PID plus creation time/PID version, real/effective
+UID, PPID/original parent, process group, session, executable and signing identity.
+Record fork/exec/exit and revalidate identity before signalling. PID, PPID, a name
+or an occasional ps snapshot alone cannot prove a complete tree. Reparenting,
+setsid, quick children, PID reuse and different-UID/XPC work require explicit
+handling. No private libproc unique-ID API is assumed to be a supported solution.
+
+Apple's [Endpoint Security](https://developer.apple.com/documentation/endpointsecurity)
+and [process records](https://developer.apple.com/documentation/endpointsecurity/es_process_t)
+are official candidates for authorization and richer identity telemetry. This
+requires restricted entitlement/deployment and validated event completeness;
+it is not installed or implemented by this task. Missing attribution, dropped
+events or guard failure must prevent launch or invalidate the attempt. A future
+policy must prevent untracked privilege/broker escapes, not discover them only
+after secrets or traffic could have been accessed.
+
+launchd.plist(5) offers UserName for system-domain jobs, security sessions and
+process-group cleanup. Group cleanup covers only members still in that group.
+No KeepAlive, timer, socket activation or automatic retry may relaunch the payload.
+Do not set system-domain resource keys casually: the installed manual describes
+global kern.maxproc/kern.maxprocperuid effects for NumberOfProcesses. ResidentSetSize
+is per-process and describes memory-pressure preference, not an aggregate hard
+512 MiB tree limit. Polling RSS is observation with possible overshoot. Per-file
+size limits likewise do not prove a total 128 MiB write budget. These required
+bounds remain unqualified; they must not be silently weakened.
+
+Conceptual paths, **not created**: a private task root `TASK_ROOT`, with distinct
+`home/`, `state/`, `cache/`, `logs/`, `tmp/` and `ipc/` children. HOME must agree
+with the execution account's canonical home where APIs derive paths from the OS.
+Only that task root is writable; the approved vendor bundle and minimal system
+runtime are read-only. Real user HOME/state/SSH/Claude/Docker/browser/cloud roots
+must be denied, not omitted from a prompt. Path aliases, symlinks, hardlinks,
+mounts, inherited descriptors, shell startup files and broker channels need
+enforcement. No real credential-location enumeration or permissions change ran.
+
+Before any future launch, close all non-allowlisted descriptors/handles, omit
+SSH agent/proxy/API/OAuth/cloud environment inheritance, and admit only fixed
+synthetic stdio and understood private IPC. Allowing an arbitrary Unix socket
+or same-user service is not isolation. If Keychain/service denial or these
+filesystem/resource boundaries lack an enforceable mechanism, launch budget is 0.
+
+### H8. Preferred architecture and conditional setup requirements
+
+**Preferred viable architecture: NONE FOUND for this gate.** Select no execution
+design on incomplete evidence. The single preferred direction for further
+research is **a dedicated non-admin identity with supported, integrated app/OS
+resource restrictions and origin-aware egress enforcement**, plus an exclusive
+single-use task root and exact process supervision. This is a research candidate,
+not a credible complete supervisor already established or adopted here.
+
+It improves on HOME-only by changing the security principal; it improves on UID
+PF alone by requiring service-origin coverage. It avoids treating deprecated
+private profiles or a different VM artifact as qualification of this package.
+Its remaining blockers are the unchanged Docker package's supported integration,
+complete Keychain/broker denial, network attribution/guard failure and hard tree
+resource/cleanup proof. There is no recommended implementation until resolved.
+
+No exact privileged mutation sequence is ready for authorization. The following
+are **conditional requirements for that research candidate**, not permission to
+create resources or assurance that performing them will qualify a supervisor:
+
+| Potential future change | Classification | Required prior decision |
+|---|---|---|
+| Dedicated non-admin execution UID/group, no real-user/admin group membership or interactive auth provisioning | REQUIRED if candidate approved | Exact unused identity, canonical home, security context and lifecycle reviewed |
+| Private task HOME/state/cache/log/tmp/IPC directories with minimal ownership/permissions | REQUIRED if candidate approved | Exact disposable paths and exclusive ownership; no inherited user state |
+| Enforced denial of real user HOME and other credential roots/services | REQUIRED; mechanism UNRESOLVED | Complete supported guard contract; any ACL changes require separately frozen targets and rollback |
+| One-shot identity launcher/supervisor and prelaunch active guards | REQUIRED; implementation UNRESOLVED | No root sbx payload, no privilege escape/retry, exact process and resource guarantees |
+| Supported vendor App Sandbox/helper packaging changes | REQUIRED for that integration route, not a host setting | Vendor support/identity decision; do not locally re-sign or modify sbx |
+| Entitled Network/Endpoint Security components | OPTIONAL alternative components, not existing capability | Separate engineering, signing/entitlement, approval and qualification gates |
+| Dedicated UID PF anchor | OPTIONAL defense in depth only | Cannot discharge broker/credential requirements; exact scope/order/state/rollback needed |
+| Application Firewall toggle, global sysctl changes, host-wide PF shutdown/quarantine, user Keychain edits | NOT_REQUIRED / NOT_SELECTED | Not approved as workarounds |
+| VM creation, image/model/runtime download, provider/auth setup | NOT_REQUIRED in this architecture gate | Would require a different explicit scope |
+
+### H9. Revised first-daemon contract — BLOCKED / NOT AUTHORIZED
+
+This appended assessment controls interpretation of the earlier conditional S6
+proposal without rewriting it. S6 is not a runnable gate: its required qualified
+supervisor has not been found. **Current permitted attempts: 0.**
+
+| Contract field | Required future proof; current disposition |
+|---|---|
+| Execution identity | Dedicated non-admin security principal, separate canonical HOME/session; not created |
+| HOME/state/cache/log/tmp | Fresh private task root, immutable approved package access, no real-user traversal; enforcement UNKNOWN |
+| Credential denials | Files, Keychain implementations, shared/broker access, env/FD/SSH/browser channels all denied before exec; UNKNOWN |
+| Network | Empty remote destinations across both IP families, transport/DNS/proxy and system-origin channels; fail-closed active enforcement UNKNOWN |
+| Supervisor | Exact identities/fork/exec/exit, exclusive UID and privilege/service containment; implementation UNKNOWN |
+| Resources | Keep proposed 512 MiB aggregate RSS, 32 processes, 128 MiB aggregate writes; no proven hard enforcement, so HOLD |
+| One-attempt budget | After separate qualification and authorization only: one foreground attempt, no restart/detach/retry |
+| Timeout/output | Proposed 60 s wall time, 64 KiB each stdout/stderr, bounded termination grace; guard behavior must be qualified |
+| Expected daemon/helper behavior | Vendor models guide documents llmman lifetime and a conditional missing-runtime download; neither daemon nor helper launched |
+| Runtime download | Always denied for this prospective attempt; no endpoint or artifact permission |
+| Cleanup | Quiesce launch sources, terminate only proven owned identities, bounded grace then proven-owned kill, verify UID/tree/helper/socket/listener absence |
+| Evidence | Sanitized guard readback, identities, bounded protocol/output, denied synthetic requests, isolated filesystem metadata; ambiguity never PASS |
+| Rollback | Remove only future task-owned disposable state after process absence; preserve real state/credentials/package and unrelated jobs/policies |
+| Stop conditions | Any missing prelaunch proof; auth prompt, out-of-scope access, unknown child/UID/broker, guard loss, traffic/download/VM attempt, bound breach or incomplete cleanup |
+
+The [models guide](https://docs.docker.com/ai/sandboxes/configuration/models/)
+supports the helper/download risk; it does not supply a host containment layer.
+Failure under incomplete guards is not a permissible discovery technique.
+
+**Next gate:** Control Plane review of this negative result, followed, if desired,
+by a separately scoped read-only vendor/platform support clarification for the
+single research candidate. Require a supported whole-chain credential/egress
+contract and credible hard resource/cleanup mechanism before proposing an exact
+setup gate. If unavailable, choose a separately qualified platform/backend with
+native isolation. Do not jump from this report to user creation, PF changes or
+the first sbx execution. Any later synthetic capability probes need their own
+exact scope and contain no real credentials/provider calls.
+
+### H10. Validation and safety
+
+Documentation-only validation covers required sections/options, the nine-source
+credential matrix, source/local links, fences, one-file scope, unchanged historical
+prefix and git diff --check. No full suite, build, runtime probe, supervisor
+implementation or local validation labelled CI is included.
+
+sbx executions 0; sbx/OS daemon operations 0; llmman launches 0; Claude/provider
+calls 0; auth operations 0; Keychain queries 0; credential contents inspected no;
+users created 0; firewall/PF/network changes 0; VM/sandbox creation 0; runtime
+downloads 0; MCP/SSH auth 0; Orchestrator activation 0; deploy no;
+Production/UAT/cloud changes no; governance unchanged. PR #22 remains Draft.
+Only approved architecture text is added; no secret or personal absolute path
+is persisted. Native research/PR metadata reads are not provider execution or
+network policy changes. This report grants no additional host authority.
