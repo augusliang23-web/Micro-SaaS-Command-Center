@@ -1,7 +1,9 @@
-# Phase 3B4: Claude auth and protocol smoke — BLOCKED
+# Phase 3B4: Claude auth and protocol smoke — final host smoke PASS; review pending
 
 Baseline: `main @ 3e787b8a0e662c4be52b3d988e37d5578bab544f`.
-The real invocation on 2026-10-05 failed. This phase is **not accepted** and real agents remain unwired.
+The initial real invocation on 2026-10-05 failed. The final authorized host smoke
+on 2026-10-06 passed; independent review and phase acceptance remain pending.
+Real agents remain unwired.
 
 ## Existing integration reused
 
@@ -33,7 +35,7 @@ The smoke uses it to detect a synthetic outside-canary disclosure and correlate
 an outside Read with its explicit error/permission denial. Raw stream, tool
 arguments, credential data and provider prose are not persisted as smoke evidence.
 
-## Actual live result
+## Original live result — 2026-10-05
 
 [Sanitized evidence](../evidence/agent-console-phase3b4-live-smoke.json) records
 one real CLI inference attempt through the existing adapter, using DEEP.
@@ -285,3 +287,52 @@ Both mutations failed the intended regressions (A: two failures, B: one) before
 the restored focused/full suites passed. GitHub still has no CI checks. The
 three historical JSON hashes and original dirty checkout's tracked contents,
 diff and status match the pre-correction snapshots.
+
+## Final authorized host live smoke — 2026-10-06: PASS
+
+[Final sanitized evidence](../evidence/agent-console-phase3b4-final-live-smoke.json)
+records the single final authorized invocation at `2026-10-06T01:34:50.829Z`
+(09:34:50 Singapore time), using the unchanged harness and adapter at
+`b359bea6d66e3007c689d53050877cf0191e7937`. PR #21 was OPEN/Draft and remote
+main still matched the Phase 3B4 base. Both pre-smoke and single post-smoke auth
+observations reported loggedIn true, authMethod claude.ai, apiProvider firstParty
+and subscriptionType pro; the four forbidden launch overrides were absent.
+
+The existing DEEP profile requested Sonnet/high. Exactly one live invocation
+completed in 12,061 ms with observed exit 0, no timeout, no overflow and zero
+malformed lines. Protocol classes were system:init, rate_limit_event, assistant,
+user, system and result. The parser retained the rate-limit event type only;
+it did not use unknown event contents as success evidence. Read and Write were
+the only observed tools, and tool policy was observed.
+
+The outside synthetic Read was attempted and its matching structured permission
+denial was authoritative. No canary disclosure occurred and the outside canary
+was unchanged. Model evidence was AUTHORITATIVE / sonnet from assistant
+execution metadata, corroborated by request metadata with no mismatch. One
+unknown auxiliary usage label was retained as a sanitized diagnostic count;
+its raw label was not persisted and it supplied no execution authority.
+
+Input was unchanged, no unexpected files or directories appeared, and the
+target exactly matched `VERIFIED:CONTROL_PLANE_SMOKE_3B4\n`: 33 UTF-8 bytes,
+SHA-256 `3bd3d905a5fc7c3a74ee1e486cfabc2b498d56eb9a7474963f417a2ab22ea66d`.
+The existing assessor returned PASS with a null result code. All reviewed gates
+were used unchanged; no retry, prompt reformulation, model switch, timeout/tool
+policy change or API PAYG fallback occurred.
+
+The disposable fixture was removed and the launched provider process was gone.
+Background Claude processes were five before and five after, with no new PIDs;
+the pre-existing processes were left untouched. Docker inventory was available
+and unchanged at zero containers. Before recording evidence, all tracked
+worktree files, the original checkout's HEAD/content/dirty diff/status, the
+preservation branch and the three historical JSON hashes matched their
+pre-smoke snapshots. No provider-generated repository source change occurred.
+
+Only this document and the new evidence JSON change. Narrow JSON, gate-field,
+hash, scope and cleanup validation applies; the full test suite is not rerun
+for this evidence-only update. GitHub has no CI checks. Historical failed,
+review-blocked and post-auth UNKNOWN evidence is preserved without
+reclassification. Auth mutations and independent review calls were zero;
+Orchestrator, Docker sandbox and governance remain unchanged. PR #21 stays
+OPEN/Draft, with no merge or deployment. This host smoke is ready for Control
+Plane review; no independent Claude review is started by this result, and
+Docker subscription auth remains CLAUDE_AGENT_SANDBOX_AUTH_BRIDGE_REQUIRED.
