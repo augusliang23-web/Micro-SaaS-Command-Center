@@ -1403,3 +1403,364 @@ Production/UAT/cloud changes no; governance unchanged. PR #22 remains Draft.
 Only approved architecture text is added; no secret or personal absolute path
 is persisted. Native research/PR metadata reads are not provider execution or
 network policy changes. This report grants no additional host authority.
+
+---
+
+## Phase 3B5B1.3B — trusted host daemon / guest trust boundary reconciliation
+
+### T1. Exact baseline and binary trust decision
+
+Review date: 2026-10-06 (Asia/Singapore). Starting local and remote PR #22 HEAD:
+`6ff7c86c4dea9d4a40744d3edc2f01cd32a85c06`. PR was OPEN / Draft / UNMERGED;
+the existing architecture branch/worktree was clean. Control Plane gate:
+`AGENT_CONSOLE_PHASE3B5B1_3A_GATE_PASS_TRUST_BOUNDARY_REFRAME_REQUIRED`.
+This is architecture/documentation only; every historical section is preserved.
+
+**Binary decision: DOCKER_HOST_CONTROL_PLANE_TRUST_MODEL_ACCEPTED.**
+
+Command Center accepts the approved Docker host control plane as part of its
+trusted computing base for the prospective native backend. The primary boundary
+is the untrusted microVM versus trusted host. The trusted proxy may access a
+host credential and host networking to perform its intended function. This
+access is distinct from exposing the credential or host capability to the guest.
+
+This is the architecture decision requested by this gate, not conditional
+selection of a third trust model. Local runtime qualification, subscription
+authentication, policy enforcement and provider execution are still unproved
+and require separate gates. Acceptance does not authorize a daemon command.
+
+The 3B5B1.3A **NO_SAFE_HOST_ISOLATION_SUPERVISOR_FOUND** conclusion remains valid
+for the stronger requirement that the sbx host daemon itself be denied host
+credentials/network. It is neither deleted nor disproved by this decision.
+That stronger supervisor is no longer a prerequisite for the selected trusted
+host model. Historical 3B5A conclusions about the custom raw-Docker runtime also
+remain intact. The accepted candidate is a different native backend, not an
+automatic retrofit of the existing Agent Sandbox. No PF/Seatbelt fallback work
+or governance migration is opened here.
+
+### T2. Trusted host component register
+
+Trust applies only to approved identities/versions and documented functions;
+it is not inherited by arbitrary code a trusted executable could launch.
+
+| Host component | Classification | Boundary / qualification obligation |
+|---|---|---|
+| sbx CLI | TRUSTED_REQUIRED | Pin approved 0.47.0 package, Docker signing identity and integrity; server-owned arguments/configuration only |
+| Sandboxes daemon | TRUSTED_REQUIRED | Own VM lifecycle and host state; verify executable/instance identity and documented behavior before integration |
+| Credential proxy | TRUSTED_REQUIRED | Host OAuth resolution/injection and refresh; never export raw values to guest or evidence |
+| Network proxy | TRUSTED_REQUIRED | Authoritative enforcement of guest destinations and permitted credential injection channels |
+| llmman | TRUSTED_REQUIRED for documented daemon startup | Bootstrap/model helper belongs to host TCB; inference/model/provider routing stays disabled for this target |
+| Other Docker-supplied helper processes | UNKNOWN until identity/function enumerated | A pinned, reviewed helper may become TRUSTED_REQUIRED; new/unknown helper blocks qualification, not automatic blanket trust |
+| SSH forwarding, host MCP, remote control and shared skills integrations | OPTIONAL_DISABLE | Target OFF; disabling must be proved, not inferred from lack of use |
+
+Host OS, Keychain service, hypervisor and approved artifact verification are
+underlying dependencies of the trusted platform. Downloaded native runtime code
+is a supply-chain extension of that TCB and needs its own provenance record.
+Package signing alone does not attest every subsequently fetched binary.
+The previous package/signature observations remain historical evidence; no new
+sbx/helper process or credential store was inspected in this gate.
+
+Repository contents, project scripts, generated code, agent decisions and every
+process inside the microVM remain UNTRUSTED, including privileged guest processes.
+Repository-authored hooks, credential resolvers, environment files or commands
+do not become trusted merely because Docker can run them on the host.
+
+### T3. Four-layer product model — TARGET, NOT IMPLEMENTED
+
+```mermaid
+flowchart TB
+  subgraph H[Layer 1: trusted host control plane]
+    CC[Command Center policy and trusted launcher]
+    D[Approved Docker daemon]
+    P[Credential and network proxy]
+    S[Host credential store]
+    L[llmman: bootstrap only, inference off]
+    CC --> D
+    D --> L
+    S --> P
+  end
+  subgraph G[Layer 2: untrusted Agent microVM]
+    A[Claude Code, repository and generated code]
+  end
+  subgraph V[Layer 3: separate Verification Sandbox]
+    CHECK[Credential free, NO_NETWORK, deterministic profile]
+  end
+  subgraph R[Layer 4: host Git and GitHub authority]
+    GIT[Controlled commit, push and PR]
+  end
+  CC -->|Sanitized source transfer, no host mount| A
+  A -->|Sentinel request, approved destination only| P
+  P -->|Host injected credential over TLS| PROVIDER[Explicitly approved provider]
+  A -->|Untrusted result transfer| CC
+  CC -->|Sanitized snapshot| CHECK
+  CHECK -->|Verified evidence| CC
+  CC -->|Accepted diff and evidence, release policy| GIT
+```
+
+Layer 1 owns registry/policy, fixed launcher/configuration, VM lifecycle, transfer
+guards, host credential mediation and network enforcement. It does not execute
+repository scripts on the host. Layer 2 edits only its private task data;
+its assertions and stdout are not PASS evidence or Git authority. Layer 3 runs
+the fixed server-owned verification profile without credentials or external
+network; it never uses the sbx credential proxy. Layer 4 exclusively performs
+host commit/push/PR after accepted diff/evidence and governance checks. A guest
+Git installation grants no host Git/GitHub authority or GitHub credential binding.
+
+The current Orchestrator remains fake-only. This diagram is a future target,
+not an adapter activation, browser Run route or permission to merge/deploy.
+
+### T4. Credential invariant and disclosure boundary
+
+Docker's [architecture](https://docs.docker.com/ai/sandboxes/architecture/)
+places destination checks and credential replacement after a request crosses
+the microVM boundary. The host proxy resolves the credential and replaces a
+non-secret sentinel before forwarding. Command Center accepts that mediation
+model; requiring the proxy to be unable to read its credential would defeat it.
+
+| Location | Real reusable credential permitted? |
+|---|---|
+| Trusted host credential store | YES, under host OS controls and approved binding |
+| Trusted Docker credential proxy memory | YES, for scoped injection/refresh |
+| Provider request after host injection | YES, to the approved authenticated endpoint over verified TLS |
+| MicroVM filesystem/environment/argv/stdin/stdout/stderr | NO |
+| Workspace, transferred source or result | NO |
+| TaskStore, Command Center UI or evidence | NO |
+| Git/history or Verification Sandbox | NO |
+
+The guest may receive protocol-defined non-secret OAuth access/refresh sentinels,
+including a credential-shaped JSON file containing only sentinels. A sentinel is
+not a reusable credential and is not proof of the effective authentication mode.
+Never infer host OAuth authorization from a token-shaped placeholder or agent
+self-report. Future proof must combine approved effective binding/passthrough
+metadata with synthetic disclosure tests; do not expose real secrets to compare
+them or persist them in an evidence log.
+
+Raw token responses, proxy debug headers, response reflection, crash diagnostics
+and exported files are potential disclosure surfaces to qualify. Approved
+provider transport is also an authorized data/capacity channel, not proof that
+a compromised guest cannot misuse that channel. Scope destinations, task data,
+binding lifetime and execution budget; sentinel isolation alone is insufficient.
+
+### T5. Claude Pro contract — SUBSCRIPTION_ONLY or BLOCKED
+
+Future target is host-managed Claude subscription OAuth with **passthrough=false**.
+No raw reusable access/refresh token may enter the guest. Docker's
+[credential guide](https://docs.docker.com/ai/sandboxes/configuration/credentials/)
+documents OAuth masking and API-key precedence when both resolve. The
+[credential capability specification](https://github.com/docker/sandbox-kit-spec/blob/main/docs/spec/capabilities/com.docker.sandbox/credential%401.md)
+defines sentinel rendering and passthrough as an isolation downgrade. These are
+current documentary contracts, not observed installed 0.47.0 readback.
+
+The trusted launcher must obtain authoritative **non-secret effective-source
+metadata** before admitting an Anthropic task. Account/subscription identity,
+OAuth binding, OAuth selection and passthrough=false must be proved. Absence of
+an API-key environment variable alone is not sufficient. Block Anthropic API-key
+configuration from every effective task source: global/sandbox-scoped store,
+kit/credential binding, environment, custom/dynamic resolver and model-provider
+route. A configured or ambiguous source yields BLOCKED, even if it appears unused.
+Do not delete a user's existing key to make the gate pass.
+
+No API-key fallback, no --provider/--model/overflow routing through llmman, and no
+alternative PAYG transport is permitted for the subscription-only target. If
+installed metadata cannot authoritatively establish source selection and absence
+of applicable API-key configuration without inspecting secrets, return BLOCKED.
+No trustworthy metadata interface is claimed already qualified by this document.
+
+The [Claude Code integration guide](https://docs.docker.com/ai/sandboxes/agents/claude-code/)
+describes a subscription OAuth flow initiated through the agent. That does not
+prove the host's existing Claude Pro session is automatically available to sbx.
+Any future interactive auth/OAuth setup needs a separate explicit gate. No login,
+token copy, Keychain lookup or provider request is performed here.
+
+### T6. Distinct host and guest network contracts
+
+| Domain | Future authority | Separate evidence |
+|---|---|---|
+| Trusted host daemon/helper traffic | Explicit host bootstrap/update/account/provider transport approval by phase; not guest policy | Approved artifact/endpoints, safe destination/process metadata, provenance, bounded transfer and before/after inventory |
+| Untrusted guest traffic | Server-owned deny-by-default effective policy; only explicitly approved provider destinations | Authoritative policy/source/override readback plus negative probes for unauthorized TCP/UDP/DNS/host-service destinations and positive approved transport proof |
+
+Host networking need not equal the guest allowlist. Allowing a trusted bootstrap
+artifact transfer does not allow the guest to browse the internet. Conversely,
+guest deny-all does not attest the daemon's own network behavior. Account/OAuth
+and provider transport may become approved host functions in later gates; they
+are **not approved for the bootstrap-only 3C attempt**.
+
+The [default posture](https://docs.docker.com/ai/sandboxes/security/defaults/)
+and [isolation layers](https://docs.docker.com/ai/sandboxes/security/isolation/)
+describe mediated networking. Defaults are not the Command Center effective
+allowlist. Review all global/task/kit/phase/organization sources and precedence;
+an override, wildcard, unknown rule, DNS leak, upstream-proxy ambiguity or host
+service route that widens scope blocks launch. No arbitrary guest web access,
+UDP enablement, ICMP exception, host loopback proxy or cross-sandbox path is admitted.
+Host credential injection is restricted to reviewed service/resource endpoints;
+generic forwarding must not create a credential-bearing arbitrary destination.
+
+### T7. Mandatory future optional-integration policy
+
+| Surface | Frozen target | Required proof, all currently UNPROVEN |
+|---|---|---|
+| SSH agent forwarding | OFF | Effective forwarding disabled, no socket/FD inheritance or signature/authentication path from guest |
+| Host MCP gateway | OFF | No guest gateway/server/tool access or host stdio/container launch path; empty server inventory alone is insufficient |
+| Shared skills | --skills=off | No shared host store or mutable cross-task agent state; check creation-time config and actual mounts |
+| Workspace | MOUNTLESS | No direct host working tree, clone-source mount, .git or ignored file exposure; controlled sanitized import/export only |
+| OAuth credential passthrough | false | Effective host-managed sentinel presentation, no raw access/refresh token response or alternate binding |
+| Remote control/browser/clipboard integrations | OFF / NOT_APPROVED | No remote/background control or clipboard-based host action/data path; unresolved disablement blocks guest qualification |
+
+Docker [settings](https://docs.docker.com/ai/sandboxes/configuration/settings/)
+documents SSH forwarding enabled by default, creation-time skills modes, and
+settings precedence/restart behavior. This target must be enforced despite any
+default. No invented MCP-off or helper-disable flag is provided. A supported
+disable mechanism and its readback still need qualification. Settings reads can
+start a daemon; none were executed in this zero-execution gate.
+
+Mountless is selected as the one future workspace mode. A no-path create followed
+by controlled attachment is the documentary candidate; a generic sbx run defaults
+to mounting the current directory and is not an acceptable substitute. Transfer
+must reject secrets, links escaping scope, special files, path traversal,
+unexpected Git state and protected configuration, and apply diff/path/size guards
+before host import. Guest output remains untrusted data until verified.
+
+### T8. MicroVM security and lifecycle contract
+
+The [Docker security model](https://docs.docker.com/ai/sandboxes/security/)
+uses a separate kernel/microVM rather than in-guest privilege separation as the
+host boundary. Guest sudo is architecturally acceptable for this native candidate
+only while the host boundary holds; it is not host privilege. This explicitly
+reframes the native candidate and does not weaken existing raw-container policy.
+
+Future guest qualification must prove all of the following before a real task:
+
+- No host filesystem exposure except the approved controlled transfer mechanism.
+- No host Docker socket/daemon, host process visibility or direct host credentials.
+- No SSH agent signing/authentication, host MCP or shared skills access.
+- No direct host workspace/clone-source mount or host working-tree mutation.
+- No raw credential in any guest channel, exported data, UI/evidence/store/Git.
+- Deny-by-default guest destinations; no arbitrary outbound internet or lateral
+  cross-sandbox communication. Indirect shared stores and gateways count too.
+- One task per microVM and one exclusive task identity; do not reuse stopped VMs.
+- Export bounded sanitized results, revoke task bindings/channels and destroy the
+  VM after completion/failure/cancellation; stopping alone is not destruction.
+- Verify owned VM/helper/mount/listener removal and no next-task access to prior
+  source, result or credential authority. Unknown cleanup blocks completion.
+
+This is a future invariant list, not local proof. Vendor isolation documentation
+does not establish the installed effective mounts, policy or binding state.
+Model identity and evidence validity remain separately required, as in Phase 3B4.
+
+### T9. Agent policy and repository configuration are separate layers
+
+**YES: tool policy remains a separate required layer above the microVM.**
+Allowed tools are exactly Read, Edit, Write, Glob and Grep under fixed task path
+constraints. Bash, PowerShell, WebFetch, WebSearch, browser/Chrome, MCP,
+unrestricted subagents and background autonomous agents are forbidden. The
+trusted launcher must never use **--dangerously-skip-permissions**.
+
+The [Docker Claude startup contract](https://docs.docker.com/ai/sandboxes/agents/claude-code/)
+currently includes that bypass flag; adding ordinary flag arguments preserves
+it. The unmodified default startup is therefore incompatible with Command
+Center's agent policy. Appending allowed-tool flags is not a qualified fix. A
+separately reviewed server-owned launcher/entrypoint that omits the flag and
+enforces the approved tools is required. This does not change the accepted host
+trust decision or permit a launch now. No custom kit/launcher is implemented.
+
+Repository content must not choose the launcher, argument list, credential
+resolver, policy source or host commands. Reject/neutralize unauthorized .claude
+settings, hooks, plugins, skills, MCP, commands, agent definitions, permission
+changes, network additions and browser integrations before load. Also reject
+sandbox environment/lifecycle files or credential commands capable of host
+execution. Do not auto-approve a repository plan, environment file or plugin.
+Keep authoritative configuration outside guest-controlled project data and
+revalidate it at launch and relevant checkpoints. Prose cannot expand privileges.
+
+The agent's tool protocol/tool inventory and effective configuration must be
+verified; a guest isolation label does not prove this policy. A compromised
+guest still must not gain host authority even if its in-VM tool controls fail.
+Host export/protected-path guards and the separate verifier remain necessary.
+
+### T10. Bootstrap decision and next 3C gate — DESIGN ONLY
+
+**Bootstrap choice: TRUSTED_VENDOR_BOOTSTRAP_DOWNLOAD_ACCEPTABLE.**
+An explicitly approved, bounded runtime/bootstrap transfer by a trusted vendor
+helper is acceptable. Model weights, templates/images, provider inference,
+unknown destinations and unreviewed native executables are not included. No
+download occurs now; architecture acceptance is not a download authorization.
+
+The [bundled model service guide](https://docs.docker.com/ai/sandboxes/configuration/models/)
+documents llmman startup with the daemon even without model selection, a download
+when its llama.cpp runtime is missing, and shared model-service state. Accordingly
+llmman is part of the trusted host startup, not presumed disabled. Local-model
+inference and hosted-provider routing remain OFF for this target.
+
+**Next gate: 3B5B1.3C — Trusted Host Daemon Bootstrap. NOT AUTHORIZED HERE.**
+
+The separately approved prompt must freeze the following manifest and procedure:
+
+| Future 3C requirement | Frozen design / unresolved precondition |
+|---|---|
+| Package | sbx 0.47.0; recheck approved artifact digest and Docker TeamIdentifier 9BNSXJN65R, bundle integrity and executable identity before invocation |
+| Artifact trust | Pin actual runtime release/source, allowed redirects/origins, vendor published digest/signature or other reviewed provenance where available, sizes and expected helper identity; no floating artifact or automatic upgrade |
+| Unknown bootstrap source | Current docs do not establish exact llama.cpp download URL/digest. Resolve and approve provenance before startup; if not possible, HOLD. A post-download hash identifies bytes but is not independent authenticity proof |
+| Host state | Explicitly approve initialization and expected state/cache/log roots. Inventory metadata before/after; preserve existing user state. Fresh task state only through a supported qualified selection mechanism, not an invented HOME/flag guarantee |
+| Environment/configuration | Minimal fixed launch environment, no API/OAuth token or SSH/proxy/provider inheritance; do not load repository configuration or user scripts. Trusted host credential access is a TCB function, not a request to copy or inspect values |
+| Launch budget | One foreground daemon startup; no detach, cloud mode, restart, retry, settings/help pre-probe that auto-starts it, or autonomous relaunch |
+| Bounds | Proposed 60 s wall time, 64 KiB each stdout/stderr, 32 owned processes, 512 MiB aggregate RSS and 128 MiB new task writes. Freeze approved bounds after artifact-size review; no silent widening. Polling/stop thresholds are not claimed as hard kernel aggregate caps |
+| Expected processes | Trusted daemon plus llmman and exact approved helper identities; capture PID/parent/group/session/UID/start identity before/after, not names alone; unknown helper invalidates the attempt |
+| Host network | Only approved bootstrap/vendor artifact traffic in this phase. Capture safe process/destination/time/transfer metadata where observable; never raw authenticated payloads, headers, cookies or credential values |
+| No-auth/no-provider | No login/logout/OAuth browser, token registration/import, automatic OAuth exchange/refresh, API-key setup or provider inference. Strip provider variables by name. Observe non-secret protocol and attributable destinations; unknown traffic cannot prove zero auth/provider activity |
+| No-sandbox proof | No create/run/exec or guest VM/image/model creation. Use only separately approved authoritative inventory/status metadata before/after; identify any CLI read that could start/mutate runtime before admitting it |
+| State/artifact evidence | Sanitized root-category/type/count/size changes and public runtime hashes/provenance; no real Keychain/auth/config contents, browser data, raw argv/env or credential-bearing diagnostics |
+| Cleanup | Stop the owned foreground instance and proven owned helpers with bounded grace; confirm process identities, sockets/listeners and helper absence. No broad kill, reset, real-state deletion or unrelated daemon interruption |
+| Outcome | Report observed exit/download/startup/cleanup separately. Missing destinations, inventory, provenance or no-auth/no-sandbox proof yields UNKNOWN/BLOCKED, never bootstrap PASS |
+| Rollback | Remove only separately approved disposable artifacts/state after owned-process absence; keep approved installation, prior state and unrelated services intact; preserve sanitized failure evidence |
+
+The [daemon start reference](https://docs.docker.com/reference/cli/sbx/daemon/start/)
+documents foreground startup and optional policy initialization. Initializing or
+changing global guest policy is a distinct mutation; 3C must not add --policy
+merely for convenience. No guest exists or executes in the bootstrap gate.
+This plan neither needs the rejected hostile-host-daemon PF/Seatbelt supervisor
+nor claims that those controls have been qualified.
+
+Before 3C, existing daemon/helper ownership and state/provenance requirements
+must be concretely frozen so cleanup cannot disturb an unrelated user instance.
+If there is no safe no-secret inventory/no-auth proof surface, pause that gate
+before invocation. Unexpected auth/provider traffic, secret output, helper,
+destination, VM creation, bound breach or incomplete cleanup stops the attempt;
+do not retry or relax flags automatically.
+
+### T11. Fail-closed admission and operational limits
+
+| Evidence condition | Future admission result |
+|---|---|
+| Trusted daemon unavailable or package/helper identity unproved | BLOCKED |
+| OAuth account/source/passthrough evidence UNKNOWN | BLOCKED |
+| Applicable Anthropic API-key source present or ambiguous | BLOCKED; never PAYG fallback |
+| Guest credential non-disclosure UNKNOWN | BLOCKED |
+| SSH/MCP/shared-skill or other host-integration disablement unproved | BLOCKED |
+| Mountless source/result isolation unproved | BLOCKED |
+| Effective guest network scope unproved | BLOCKED |
+| Agent tool/configuration or approved model evidence unproved | BLOCKED |
+| Export, verification evidence or cleanup incomplete | BLOCKED / UNKNOWN; no completion claim |
+
+The accepted trust model is not observed enforcement. 3C can at most qualify
+trusted host startup/cleanup and approved bootstrap behavior. It cannot prove
+guest isolation, Claude subscription use, a safe launcher, model identity or
+provider execution because those actions are forbidden in that gate. Keep all
+later guest/auth/agent qualification gates separate and explicitly authorized.
+Verification Sandbox remains unchanged, credential-free, deterministic and
+NO_NETWORK; no sbx credential bindings or host proxy reach it.
+
+### T12. Delivery validation and safety
+
+Validation is documentation-only: historical-prefix preservation, required
+decisions/component/layer/policy coverage, Markdown/Mermaid fences, source/local
+links, single-file scope and git diff --check. No full suite/build/runtime smoke
+is run or labelled CI. Historical evidence and governance remain unchanged.
+
+sbx executions 0; daemon operations 0; llmman launches 0; auth operations 0;
+Keychain queries 0; credential contents inspected no; network/firewall/PF changes
+0; runtime/model/image downloads 0; sandbox/VM creation 0; Claude/Codex provider
+execution calls 0; MCP/SSH auth 0; Orchestrator activation 0; merge/deploy no;
+Production/UAT/cloud changes no. Only this architecture Markdown is appended.
+PR #22 remains OPEN / Draft / UNMERGED. No secret or personal absolute path is
+added. Research reads and this document's branch delivery do not grant runtime,
+bootstrap, authentication or provider authority.
