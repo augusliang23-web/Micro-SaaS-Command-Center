@@ -779,3 +779,65 @@ access. Only vendor sources were used as capability authority.
 [C2]: https://code.claude.com/docs/en/permissions
 [C3]: https://code.claude.com/docs/en/network-config
 [C4]: https://code.claude.com/docs/en/authentication
+
+---
+
+## Phase 3B5B1.1 — sbx 0.47.0 installation observation
+
+Date: 2026-10-06 (Asia/Singapore). Starting PR #22 HEAD:
+`a5c092596010ec9de1cef0c72aa81622316853c3`, OPEN / Draft / UNMERGED.
+The preceding 0.46.0 authorization stopped before installation when the official
+stable cask resolved to 0.47.0. A subsequent explicit authorization opened only
+installation of stable 0.47.0 and bounded metadata verification.
+
+**Installation succeeded; CLI metadata qualification remains BLOCKED.**
+
+- Official Docker cask: `docker/tap/sbx`, version 0.47.0; vendor release
+  `docker/sbx-releases v0.47.0` was not prerelease or draft.
+- Authorized cask digest, release DMG digest and the Homebrew-downloaded artifact
+  all matched SHA-256
+  `bcd6bf72d46f882279638ccb52f8a78bbcb1a91ea299055d2124ecfb73feb726`.
+  The live cask blob was `32c23cf92e0520f77b2ca1170c9c01e6ad76ece1`.
+- Homebrew 7.0.8 required an explicit official `brew tap docker/tap` after
+  `brew trust docker/tap` before it could resolve the cask. The effective local
+  cask matched the live vendor definition immediately before installation.
+  Installation used `brew install docker/tap/sbx`, with auto-update, automatic
+  install upgrades, analytics and cleanup disabled. No package dependencies
+  beyond architecture/OS requirements or unrelated package upgrades occurred.
+- Homebrew receipt and signed bundle version metadata report 0.47.0 / v0.47.0.
+  Binary link: `/opt/homebrew/bin/sbx`; target category: Homebrew Caskroom /
+  sbx / 0.47.0 / Sbx.app. Architecture arm64; current-user owned; mode 0755.
+- Deep/strict code-signature verification passed. App identifier
+  `com.docker.sandboxes`; Docker Inc Developer ID / TeamIdentifier `9BNSXJN65R`.
+  Docker CLI/Engine remain 29.8.1; Desktop remains 4.93.0.
+- The cask only installed the bundle binary and shell completions; it had no
+  installation-start daemon hook. No automatic daemon/background startup was
+  observed after installation. No matching LaunchAgent/LaunchDaemon registration
+  or new sbx background process was observed during the metadata checks.
+
+The sole attempted CLI metadata command, `sbx --version`, exited 1:
+`unknown flag: --version`. It created a previously absent host state category
+containing a `sandboxes` directory and six initial directory/file entries.
+Only existence/type/mode metadata was inspected; state contents, credential
+stores and individual sandbox records were not read. No inference about those
+uninspected contents is made. This initialization failed the metadata-only
+no-runtime-state precondition, so all subsequent CLI help/version commands were
+withheld. Every requested local help surface remains UNKNOWN, not OBSERVED_HELP.
+The [official version reference](https://docs.docker.com/reference/cli/sbx/version/)
+documents the `sbx version` verb; it was not substituted or run after the stop.
+No native runtime enforcement or sandbox availability proof is claimed.
+
+The correctly versioned, signature-verified package remains installed. Rollback
+was not needed: package installation did not fail or install an unapproved
+version. New host state was not removed, credentials were not inspected, and no
+recovery/configuration was attempted. Control Plane must review the initialization
+and authorize any further bounded metadata discovery separately.
+
+Actual operations: Claude inference 0; Codex execution through sbx 0; sbx/Claude
+auth 0; OAuth browser flows 0; credential contents read/imported/copied/exported/
+mounted no; sandbox/VM create/start commands 0; image pull/build commands 0;
+network-policy/SSH/MCP operations 0; Orchestrator activation/deploy/Production/
+UAT/cloud/governance changes no. No network policy command ran; initialized
+state-file contents remain uninspected. No authentication or runtime qualification
+is inferred from installation. Historical 3B5A/3B5B1 conclusions and text remain
+unchanged; only this sanitized observation is appended. PR #22 stays Draft.
