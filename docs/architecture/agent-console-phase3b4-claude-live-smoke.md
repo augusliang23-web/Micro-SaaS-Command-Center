@@ -1,9 +1,28 @@
-# Phase 3B4: Claude auth and protocol smoke — final host smoke PASS; review pending
+# Phase 3B4: Claude auth and protocol smoke — final gate PASS / PR #21 merged
 
 Baseline: `main @ 3e787b8a0e662c4be52b3d988e37d5578bab544f`.
 The initial real invocation on 2026-10-05 failed. The final authorized host smoke
-on 2026-10-06 passed; independent review and phase acceptance remain pending.
-Real agents remain unwired.
+on 2026-10-06 passed. Independent review and Control Plane final gate subsequently
+passed at exact head `a95430ea3fdef5d5a7d30378cc015694c009fd5e`.
+[PR #21](https://github.com/augusliang23-web/Micro-SaaS-Command-Center/pull/21)
+merged as `25692a9a1fdedaf82910630fb767589aa5dccddf` on 2026-10-06.
+Real agents remain unwired. Docker auth remains
+`CLAUDE_AGENT_SANDBOX_AUTH_BRIDGE_REQUIRED`.
+
+## Final closeout and historical evidence
+
+- Independent review: PASS, referenced by the exact-head GitHub Control Plane
+  final review; the historical auth-blocked review JSON is not overwritten.
+- Control Plane status: `AGENT_CONSOLE_PHASE3B4_FINAL_GATE_PASS`.
+- Guarded merge status: `AGENT_CONSOLE_PHASE3B4_MERGE_PASS`.
+- The merged tree exactly matches the reviewed head tree.
+- Original failed smoke, auth-blocked review and post-auth UNKNOWN JSON records
+  remain unchanged and separate from the final PASS record.
+- The sections below describe the state at each historical checkpoint. Their
+  OPEN/Draft, review-pending and HOLD statements are historical, not current PR
+  status; they are not retroactively reclassified as successful runs.
+- This documentation closeout does not authorize auth changes, another provider
+  call, Docker credential integration, Orchestrator activation or deployment.
 
 ## Existing integration reused
 
