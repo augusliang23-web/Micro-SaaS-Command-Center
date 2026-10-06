@@ -1764,3 +1764,379 @@ Production/UAT/cloud changes no. Only this architecture Markdown is appended.
 PR #22 remains OPEN / Draft / UNMERGED. No secret or personal absolute path is
 added. Research reads and this document's branch delivery do not grant runtime,
 bootstrap, authentication or provider authority.
+
+---
+
+## Phase 3B5B1.3C0 — trusted bootstrap artifact / side-effect manifest
+
+### M1. Frozen baseline, authority and decision
+
+Review date: 2026-10-06 (Asia/Singapore). Starting local and remote PR #22 HEAD:
+`fa2a2ec79610dcba3bf3d98b32c3e52f98ace293`; OPEN / Draft / UNMERGED. Existing
+branch/worktree was clean. Gate:
+`AGENT_CONSOLE_PHASE3B5B1_3B_TRUST_BOUNDARY_GATE_PASS_BOOTSTRAP_MANIFEST_REQUIRED`.
+Only this documentation is appended; all historical content is preserved.
+
+**Decision: BOOTSTRAP_MANIFEST_INCOMPLETE.**
+**Runtime status: BOOTSTRAP_RUNTIME_SOURCE_UNRESOLVED.**
+The installed package can be identified, but the exact first-start runtime,
+complete helper/write/network set and absence of automatic auth/VM activity
+cannot be established from the reviewed static authority. Therefore the 3C
+execution gate remains HOLD with zero launch/download permission.
+
+DOCKER_HOST_CONTROL_PLANE_TRUST_MODEL_ACCEPTED remains frozen. This review does
+not reopen PF/Seatbelt or require the trusted daemon to be hostile to host
+credentials/network. Acceptance of the host TCB does not authorize unbounded
+downloads, unidentified code or auth/provider activity in a bootstrap-only gate.
+
+Evidence labels: LOCAL_STATIC = public installed bytes/metadata, not execution;
+VENDOR_RELEASE = official release/cask metadata; VENDOR_DOC = official contract,
+not installed behavior; SBOM / PROVENANCE = published documents with the binding
+limits below; UNKNOWN = not established and grants no permission. String/symbol
+presence is a candidate hint, never an executed call graph or effective policy.
+
+### M2. Approved package identity and complete static inventory
+
+Package: sbx **0.47.0**, Info.plist and both static version JSON files agree.
+Docker TeamIdentifier **9BNSXJN65R**, Developer ID Application Docker Inc;
+deep/strict bundle signature verification exited 0. The approved DMG digest is
+**bcd6bf72d46f882279638ccb52f8a78bbcb1a91ea299055d2124ecfb73feb726**.
+The current [official cask](https://github.com/docker/homebrew-tap/blob/main/Casks/sbx.rb)
+and [v0.47.0 release asset metadata](https://github.com/docker/sbx-releases/releases/expanded_assets/v0.47.0)
+agree on that DMG digest; release is non-draft/non-prerelease. No DMG/runtime
+artifact was fetched in this task. Installed bytes were hashed, not executed.
+
+Paths below are relative to Sbx.app. All native binaries/libraries listed are
+arm64 and signed by Docker with TeamIdentifier 9BNSXJN65R. Payload resources are
+covered by the verified bundle seal, not independently signed Mach-O programs.
+
+| Identity / relative location | Bytes | Version / role evidence | Classification |
+|---|---:|---|---|
+| sbx — Contents/MacOS/sbx | 139696368 | Package 0.47.0; CLI/daemon role VENDOR_DOC | TRUSTED_EXPECTED, not launch-authorized |
+| sbx-gui — Contents/MacOS/sbx-gui | 6103728 | Info.plist application executable; package 0.47.0, separate binary version UNKNOWN | OPTIONAL; excluded from daemon-only candidate |
+| llmman — Contents/MacOS/llmman | 52759776 | Embedded label 0.1.418 (753687a); model/bootstrap role VENDOR_DOC | TRUSTED_EXPECTED, not launch-authorized |
+| containerd-shim-nerdbox-v1 — Contents/Helpers/containerd-shim-nerdbox-v1 | 22232432 | Name identifies a shim candidate; exact first-start role/version UNKNOWN | UNKNOWN_HELPER |
+| libsailor.dylib — Contents/Helpers/lib/libsailor.dylib | 92630544 | Mach-O library, not a standalone child; exact startup load role UNKNOWN | UNKNOWN_HELPER / library dependency |
+| mkfs.erofs — Contents/Helpers/mkfs.erofs | 311808 | Filesystem-formatting role suggested by name; startup reachability/version UNKNOWN | UNKNOWN_HELPER |
+| mkfs.ext4 — Contents/Helpers/mkfs.ext4 | 619520 | Filesystem-formatting role suggested by name; startup reachability/version UNKNOWN | UNKNOWN_HELPER |
+| nerdbox kernel — Contents/Resources/libexec/nerdbox-kernel-arm64 | 19728896 | Linux ARM64 Image, little-endian, 16K pages; exact kernel release UNKNOWN | TRUSTED_EXPECTED package payload; guest start forbidden |
+| rootfs — Contents/Resources/libexec/nerdbox-rootfs-arm64.erofs | 12247040 | Packaged data image; exact content/release/startup use UNKNOWN | TRUSTED_EXPECTED package payload; VM use forbidden |
+
+Helpers/nerdbox-kernel-arm64 and Helpers/nerdbox-rootfs-arm64.erofs are sealed
+symlink aliases to the Resources/libexec payloads; target hashes agree. They
+are not additional downloaded helpers. Version JSON files have executable mode
+bits but are JSON data, not executable helper programs. No SBOM/provenance-named
+file was found in the inspected installed bundle. No library was loaded.
+
+| Relative package identity | LOCAL_STATIC SHA-256 |
+|---|---|
+| MacOS/sbx | 76316ac512f2ee8eb3a494f1ebf36d2d6c65d79b5addaf874bc848a4ea76b964 |
+| MacOS/sbx-gui | 4e4a6005e6ac3921b4520c5c3a77300b2108d220855398a152aea6cda3c836a9 |
+| MacOS/llmman | 7b743b89849c27fa50ae9bb11c92fc5fa960ecda2fbfa2667356d6a8275f0cbf |
+| Helpers/containerd-shim-nerdbox-v1 | 3f50b0e60efdf7c3b2a79ef9d28e4f308ce7804f579468f76327671a1a329ae6 |
+| Helpers/lib/libsailor.dylib | 0e5ea9f5beb74a220992403777edf0d355f142701611dd71335f99729c5e6d3c |
+| Helpers/mkfs.erofs | 0cfa676a0ed899691d9850f6a579dfc859da3b3237c74615965796e642bf423a |
+| Helpers/mkfs.ext4 | e4fad2e286daa5022bd812997ce620214a21447b93fd00b617c207a0fce56c6e |
+| Resources/libexec/nerdbox-kernel-arm64 | 9637042f4699a44951464b9076577a11405c1b5f7d53c92b5939edce440fc8d2 |
+| Resources/libexec/nerdbox-rootfs-arm64.erofs | 1f3ba4f9407d2f1504c611913ac09daef33fa25694b1c8290cdb688b8276a324 |
+
+Signing confirms package origin/integrity; it does not establish every helper's
+function or permit its first-start use. Any UNKNOWN_HELPER that might launch or
+load during bootstrap remains a blocker until its role/reachability is reviewed.
+The narrow earlier metadata inventories are historical partial observations,
+not claims that these newly inventoried files were absent.
+
+### M3. Build identity, SBOM and provenance limits
+
+Public Go build records were parsed from bytes without running Go, sbx or llmman.
+sbx records github.com/docker/sandboxes v0.47.0+dirty, Go go1.27.0, arm64,
+source revision 0411f50ee4700fe7bd37e6e7e3aced563e850ca9 and vcs.modified=true.
+Both version JSON files name that same source revision. The build's dirty marker
+describes vendor build metadata, not this checkout; it does not override the
+verified vendor signature or prove reproducible source correspondence.
+
+llmman embeds the display label **0.1.418 (753687a)** and build revision
+753687a5d6335a0bfbea462b759f336141e27e1e, with Go go1.25.14/arm64 and a
+github.com/llmman/go-shim development module. This is LOCAL_STATIC version/build
+evidence, not output of a version command. Docker's
+[0.46.0 notes](https://docs.docker.com/ai/sandboxes/release-notes/)
+also name bundled llmman 0.1.418; that older note alone would not prove this
+0.47.0 bundle. The current signed bytes and SBOM revision corroborate it.
+
+The following **public JSON documents**, not executable/runtime artifacts, were
+read into memory with a 1 MiB bound each, verified against VENDOR_RELEASE asset
+digests, and not saved as installed/downloaded payloads:
+
+| Docker-published metadata | Bytes | Published/verified SHA-256 |
+|---|---:|---|
+| DockerSandboxes-darwin-arm64.provenance.json | 117635 | 16d25c335a081421325b5c674dd109be4b4c85b8a366e81e8bf78e5310f80306 |
+| DockerSandboxes-darwin-arm64.sbom.json | 772387 | db842cd8b9c78751018c09054b7d976741b0f85aef2bf307f492f12c92d99449 |
+
+Both documents are available from the [Docker release assets](https://github.com/docker/sbx-releases/releases/expanded_assets/v0.47.0).
+Their metadata-document redirects reached release-assets.githubusercontent.com;
+that observation applies ONLY to these JSON reads, not to a llama.cpp download.
+
+SBOM identifies github.com/llmman/go-shim
+v0.0.0-20260915121019-753687a5d633 and github.com/docker/sailor/go/sailor
+v0.0.0-20260923081830-19f98075ed20. It does not establish the future downloaded
+llama.cpp runtime's digest/provenance. Both documents' subject names
+sandboxes-v0.47.0.darwin-arm64.tar.gz with SHA-256
+b999bf03208e045312fd2ebbf24b4d0cf674fdcbe8a3453db4c0f055ebdd34b1.
+That differs from the published DMG and public Darwin tarball digests. This
+may concern a different packaging stage; no binding to the approved DMG is
+asserted. No cryptographic attestation verification was performed, and published
+metadata document hashes alone do not supply that missing subject relationship.
+
+### M4. Llmman behavior register
+
+| Question | Evidence / result |
+|---|---|
+| Bundled version | LOCAL_STATIC 0.1.418 (753687a), exact build revision in M3 |
+| Role | VENDOR_DOC: model manager/service; local inference or hosted forwarding when requested |
+| Starts with daemon | VENDOR_DOC: yes, even without --model; stops when daemon stops |
+| Before any sandbox exists | Documentary daemon-lifecycle startup is independent of model selection; exact empty-state startup order UNKNOWN |
+| Inference unused | Target YES: no model selection, request, guest or provider route; absence must be observed, not assumed from lack of a model flag |
+| Missing llama.cpp | VENDOR_DOC: startup downloads the runtime if needed |
+| Automatic download | VENDOR_DOC: yes, conditional on a missing runtime |
+| Runtime storage | UNKNOWN exact path/category selection for this build; user state not inspected |
+| Shared scope | VENDOR_DOC: model service/store shared across sandboxes; exact downloaded-runtime cache scope UNKNOWN |
+| Update/retry/mirror behavior | UNKNOWN for first startup; no finite policy or authoritative disable mechanism established |
+
+Authority: [Docker models guide](https://docs.docker.com/ai/sandboxes/configuration/models/).
+The signed llmman bytes additionally contain candidate messages about fetching a
+runtime at startup, runtime fallback, llama.cpp and mlx-lm. Presence is not proof
+of which branch first startup uses, or that it downloads only one artifact.
+Do not enable model-selection features or invoke a model to investigate this.
+
+### M5. Highest-priority runtime artifact / authenticity gap
+
+**BOOTSTRAP_RUNTIME_SOURCE_UNRESOLVED** remains the required status.
+
+| Required field | Reviewed static result |
+|---|---|
+| Exact vendor source / full URL | UNKNOWN; signed bytes contain a GitHub API base candidate for ggml-org/llama.cpp, not a complete first-start artifact URL |
+| Release / version | Literal b10951 is present, but resolver selection/override/fallback is unproved; not an approved version pin |
+| Artifact name convention | UNKNOWN authoritative selected name |
+| Architecture | Host/bundled helper arm64; exact selected downloaded asset architecture UNKNOWN |
+| Compression / expanded format | UNKNOWN |
+| Expected compressed / expanded size | UNKNOWN |
+| Published digest | UNKNOWN |
+| Signature / runtime provenance / SBOM | UNKNOWN; bundle signature and package SBOM do not attest future downloaded bytes |
+| Redirect chain / CDN endpoints | UNKNOWN; JSON metadata redirect is not evidence for this download |
+| Storage destination / cache reuse | UNKNOWN |
+| Supply-chain classification | UNKNOWN for the runtime; candidate HTTPS strings do not establish authenticity |
+
+No artifact URL is synthesized from a version-like string or community naming
+convention. No floating latest reference is approved. Docker documentation links
+upstream llmman provider material, but outside-Docker upstream/community content
+is not used as capability authority under this task's narrower source allowlist.
+
+| Artifact class | Classification / acceptance rule |
+|---|---|
+| Already installed approved Docker bundle | Vendor signature plus approved DMG digest; identity ready, no re-download authorized |
+| Published package SBOM/provenance documents | Document digests verified; subject binding/attestation validation incomplete; not PROVENANCE_READY for runtime |
+| Future llama.cpp native executable/runtime | UNKNOWN; BLOCKED until a vendor-authenticated immutable source and reviewed verification rule exist |
+| Any alternate backend/runtime/model/package | UNKNOWN / not approved |
+
+A DIGEST_ONLY result would identify bytes without independently proving origin;
+HTTPS_ONLY would protect transport without the final authenticity contract.
+Neither is silently promoted to PROVENANCE_READY. A post-download hash cannot
+retroactively justify executing an artifact whose source was unproved prelaunch.
+
+### M6. First-start network / telemetry manifest
+
+No host destination is approved for execution by this discovery task. The table
+records candidates and uncertainty, not packets observed or a new allowlist.
+
+| Class | Candidate destination / transport | Purpose / authority | First-start determination |
+|---|---|---|---|
+| REQUIRED_BOOTSTRAP | UNKNOWN exact set; api.github.com HTTPS/443 appears in signed runtime-resolver data | LOCAL_STATIC llama.cpp API hint; VENDOR_DOC missing-runtime download | Artifact/redirect/byte scope unproved; no destination admitted |
+| OPTIONAL_UPDATE | GitHub release-latest API candidate, HTTPS/443 | LOCAL_STATIC sbx update string | Invocation/timing/disable behavior UNKNOWN; floating update forbidden |
+| TELEMETRY | UNKNOWN exact host/port/protocol | Diagnostics upload documented; generic telemetry code present | Optional diagnostic consent exists; all other first-start telemetry remains UNKNOWN |
+| AUTH | UNKNOWN first-start set | Credential/account functionality exists; not evidence it runs at startup | Forbidden in 3C; absence not established |
+| PROVIDER | UNKNOWN startup activity | Hosted routing supported by llmman | Forbidden in 3C; no inference request permitted |
+| MODEL | UNKNOWN selected source | Local model downloads require a model request in documented workflow | Weights/inference forbidden; no automatic startup request assumed absent |
+| OTHER | models.dev provider-list candidate, registry/fallback/backend hints | LOCAL_STATIC strings only | Timing/necessity/redirects UNKNOWN; excluded |
+
+An upstream GitHub runtime API request would be artifact bootstrap, not authorized
+GitHub project traffic. That distinction still does not approve api.github.com
+generally. No wildcard hosts, alternative mirrors, arbitrary web, MCP, SSH,
+project GitHub calls or AUTH/PROVIDER traffic are admitted. Exact selected URL,
+ports, protocols, redirects and purpose must be frozen before 3C.
+
+| Nonessential surface | Classification | Safe static authority / limit |
+|---|---|---|
+| Update check | UNKNOWN | Signed binary contains update code; startup trigger/complete disable contract unproved |
+| Feature flag fetch | UNKNOWN | No complete first-start contract found |
+| General telemetry | UNKNOWN | Code/dependencies do not prove either traffic or its absence |
+| Automatic diagnostics | OPTIONAL_DISABLE | VENDOR_DOC diagnostics.autoUpload=no; effective installed value uninspected |
+| License/account checks | UNKNOWN | No reviewed guarantee that bootstrap avoids them |
+
+[Settings](https://docs.docker.com/ai/sandboxes/configuration/settings/)
+documents diagnostic consent/disablement; settings reads themselves can start
+the daemon. No setting was read or changed. The
+[troubleshooting guide](https://docs.docker.com/ai/sandboxes/troubleshooting/)
+documents queued/retried diagnostic uploads after eligible errors. This is not
+the runtime downloader's retry contract. No undocumented no-telemetry/update
+environment variable is invented to fill these gaps.
+
+### M7. Host state categories — contents not read
+
+| Category | Proposed classification | Evidence / limit |
+|---|---|---|
+| Existing real sbx application-support state | EXPECTED_MODIFY | VENDOR_DOC state/database management; initialized directory preserved, no reset/delete/read of contents |
+| Daemon logs | EXPECTED_CREATE | VENDOR_DOC diagnostic surface; exact first-start paths, sizes and retention UNKNOWN |
+| Cache / downloaded artifact staging | UNKNOWN | Download requires storage; exact selection/layout/cleanup unproved |
+| Llama.cpp runtime storage | UNKNOWN | No authoritative build-specific destination established |
+| Daemon/control sockets | EXPECTED_CREATE | LOCAL_STATIC sandboxd.sock/container-runtime socket names; exact root and lifetime UNKNOWN |
+| PID / lock data | EXPECTED_CREATE | LOCAL_STATIC sandboxd.lock candidate; PID-file existence/timing UNKNOWN |
+| Settings / runtime database | EXPECTED_MODIFY | VENDOR_DOC schema/version management; first initialization/migration writes UNKNOWN |
+| Local audit | OPTIONAL | VENDOR_DOC conditional on governed authenticated users/licensing; not universally created |
+| Model-service configuration/data | UNKNOWN | Shared store documented; llmman.conf literal present, exact paths/startup writes unproved |
+
+[State/database documentation](https://docs.docker.com/ai/sandboxes/troubleshooting/)
+and [conditional audit documentation](https://docs.docker.com/ai/sandboxes/governance/audit/local/)
+are category authority, not a byte/file allowlist. No personal absolute path,
+real settings database, auth record, credential contents or nested user-state
+enumeration is included. No temporary HOME is claimed to select every vendor
+state path. The existing real state must remain intact; rollback is not reset.
+
+### M8. Expected process tree and executable admission
+
+| Node / expected parent | Executable identity / signer | Role / lifetime | Admission limit |
+|---|---|---|---|
+| Trusted supervisor / host executor | Future fixed supervisor, not built | One bounded foreground attempt | Not an sbx executable; no launcher implementation here |
+| sbx CLI / supervisor | M2 pinned sbx, Docker signer | Start documented sandbox daemon | Exact same-process versus child-daemon relationship UNKNOWN |
+| sandbox daemon / CLI or supervisor | Exact executable instance UNKNOWN; CLI docs name sandboxd | Host services until explicitly stopped | Name alone is not an executable identity or parent proof |
+| llmman / daemon | M2 pinned llmman, Docker signer | VENDOR_DOC daemon-owned service lifetime | Exact argv/config/descendant set UNKNOWN |
+| Additional shim/format tools | M2 signed identities, function/startup reachability UNKNOWN | May relate to VM/runtime operations; do not infer execution from names | UNKNOWN_HELPER blocker if reachable at first start |
+| libsailor | M2 signed library, not a process | Native loaded-code dependency | Actual loader/first-start use UNKNOWN; do not treat as a child PID |
+| Downloaded runtime/helper | UNKNOWN executable/digest/signer | Runtime startup versus inference lifetime UNKNOWN | No executable admission |
+
+Future evidence must correlate PID, creation identity, PPID/original lineage,
+UID/group/session and approved executable hash/signer, including detach/reparent
+and cleanup. No process tree was started or observed in this gate. Unknown
+executable, unexpected library/helper, incomplete lineage or surviving owned
+process makes the bounded qualification unsuccessful. Public OS linkage alone
+does not prove the daemon's actual credential access or auth behavior.
+
+### M9. Auth, VM and inference expectations
+
+| Daemon-only question | Classification | Interpretation |
+|---|---|---|
+| Initialize host credential/network proxy | VENDOR_DOC architecture; exact startup sequence UNKNOWN | Service initialization is not itself provider authentication/inference |
+| Inspect existing credential store | UNKNOWN | May be a trusted function generally, but no actual query made or startup guarantee established |
+| Refresh OAuth / contact account services | UNKNOWN | No accepted absence proof; an unavoidable exchange would block bootstrap-only 3C |
+| Initiate sign-in/browser | UNKNOWN for daemon-only startup | Explicit login workflows are documented separately; no blanket absence guarantee inferred |
+| Boot/create microVM | UNKNOWN | Daemon start and create/run are distinct commands; that does not prove no restore/preparation at startup |
+| Create template/sandbox or start guest kernel | UNKNOWN | Packaged kernel/rootfs presence is not VM execution; unavoidable creation requires another gate |
+| Pull guest image/template | UNKNOWN | No selected template/pull command, but complete startup side-effect guarantee is absent |
+
+Frozen future 3C prohibitions remain: sbx login 0, Claude auth 0, OAuth browser no,
+credential registration/refresh/exchange 0 and provider inference 0. No authentic
+credential use is inferred from proxy availability. No existing secret contents
+or current account state were queried to fill the table.
+
+Inference OFF requires combined evidence: no invocation/model/overflow route,
+no guest or inference request, no provider/model destination and attributable
+non-secret request/activity records plus bounded outputs. No generated output
+or no --model flag alone is insufficient. If no trustworthy observation surface
+can establish absence, report UNKNOWN. Do not enable model features, run probes
+or trust a provider/model self-report to manufacture this evidence.
+
+### M10. Frozen proposed 3C manifest — HOLD, NOT AUTHORIZED
+
+| Manifest field | Current frozen disposition |
+|---|---|
+| APPROVED EXECUTABLES | Candidate identities only: M2 sbx and llmman. Actual launch permission EMPTY while blockers remain |
+| APPROVED CHILD PROCESSES | EMPTY; daemon identity/parent relation and llmman descendants still unresolved |
+| APPROVED HOST WRITES | EMPTY concrete path/file set; only M7 documentary categories, not write authorization |
+| APPROVED REMOTE DESTINATIONS | EMPTY; unresolved bootstrap/redirect set, no wildcards |
+| APPROVED DOWNLOADS | NONE; intended eventual one immutable, authenticated runtime only |
+| APPROVED BYTE LIMIT | 0 runtime-download bytes currently; exact compressed/expanded/cumulative/retry limits must be frozen from an approved artifact manifest |
+| EXPECTED SOCKETS | sandbox control/container runtime candidate categories; exact endpoints/ownership/lifetime UNKNOWN |
+| EXPECTED STATE CHANGES | M7 categories only; existing state preservation and rollback required |
+| FORBIDDEN AUTH EVENTS | Login/OAuth/browser/credential registration/refresh/exchange/account authentication |
+| FORBIDDEN PROVIDER EVENTS | Local/remote inference, model selection, provider routing/overflow, model-weight download |
+| FORBIDDEN VM/SANDBOX EVENTS | Create/boot/restore sandbox, template VM/guest kernel, guest image pulls |
+| FORBIDDEN MCP/SSH EVENTS | Gateway/server/tool setup or use, SSH agent/signing/authentication/forwarding |
+| STOP CONDITIONS | Any unresolved prelaunch provenance/identity/path/network fact; unknown process/destination, integrity failure, out-of-scope event, budget breach or incomplete cleanup |
+
+Eventual download policy must admit **one exact version/arm64 artifact**, with
+approved source/redirects, independent authenticity rule, bounded compressed and
+expanded bytes, cumulative transfer limit, no alternate mirrors/retries/channel
+expansion and no extra runtime/model/package. Current sources do not prove the
+first-start downloader satisfies that finite set. If startup needs an unknown or
+unbounded set, HOLD. Trusting vendor code does not convert that set into one item.
+No daemon start, download approval or network rule is created by this document.
+
+### M11. Future outcome model
+
+| State / code | Required interpretation |
+|---|---|
+| PASS / BOOTSTRAP_VERIFIED | Only after approved manifest, matching artifact/identity/activity evidence, no forbidden event, bounded behavior and complete cleanup |
+| BLOCKED / BOOTSTRAP_PROVENANCE_NOT_READY | Runtime/source/provenance not proved before launch; no attempt |
+| BLOCKED / BOOTSTRAP_MANIFEST_INCOMPLETE | Process/path/network/auth/VM prerequisites incomplete; no attempt |
+| UNKNOWN / UNEXPECTED_PROCESS | Unexpected/unattributed helper; terminate owned attempt safely, never PASS |
+| UNKNOWN / NETWORK_DESTINATION_UNPROVEN | Destination/redirect or complete attribution missing |
+| UNKNOWN / BOOTSTRAP_OBSERVATION_INCOMPLETE | Missing auth/inference/VM/state/cleanup coverage or exceeded output observation bound |
+| FAIL / ARTIFACT_INTEGRITY_MISMATCH | Authoritative downloaded bytes differ from approved digest |
+| FAIL / AUTH_ACTIVITY_OUT_OF_SCOPE | Authoritatively observed auth attempt/exchange, not just proxy startup |
+| FAIL / SANDBOX_CREATED_OUT_OF_SCOPE | Authoritatively observed VM/sandbox creation/boot |
+| FAIL / PROVIDER_ACTIVITY_OUT_OF_SCOPE | Authoritatively observed inference/provider request |
+
+No automatic retry, mirror switch, flag/policy relaxation or second startup
+follows any outcome. Process exit alone is not bootstrap PASS. UNKNOWN must not
+erase a definite forbidden event or become reassurance about unobserved behavior.
+
+### M12. Missing evidence and next gate
+
+Critical unresolved prelaunch facts are: selected runtime URL/release/architecture,
+digest/signature/provenance, redirect/size/storage/fallback contract; complete
+daemon/helper/library admission; finite host write/socket set; startup update,
+telemetry/account behavior; no automatic auth/inference/VM/pull contract.
+
+Some facts are naturally runtime observations (exact PID tree/listeners, actual
+writes, chosen request destinations, exit and cleanup). They can corroborate a
+previously approved manifest. Other facts need **prelaunch vendor authority**:
+artifact authenticity and finite selection/retry behavior cannot be made safe
+merely by observing the first successful download and hashing it afterward.
+They may be resolvable through a Docker-published immutable bootstrap manifest,
+bound provenance or supplier clarification; this review does not claim that
+every missing fact is intrinsically unknowable without execution.
+
+A smaller offline, download-free observation attempt could in principle reveal
+startup processes/path attempts, but it is **not safely specified or authorized
+here**: no reviewed supported offline/source-selection/no-auth mechanism or
+bounded helper/write set has been established for this build. Running help,
+version, llmman or an abort-after-start is not a zero-side-effect workaround.
+Do not invent flags, start on the real state or reopen the rejected isolation
+research to bypass the manifest. Such an attempt requires its own exact,
+separately reviewed gate, and could not establish runtime artifact authenticity.
+
+**Next gate: Control Plane review of BOOTSTRAP_MANIFEST_INCOMPLETE; obtain the
+missing vendor/static provenance and startup contract before designing 3C.**
+No vendor message, issue, auth recovery, executable probe or download is sent/run
+by this task. The built-in Claude launcher remains
+**INCOMPATIBLE_WITH_COMMAND_CENTER_POLICY** because it uses
+**--dangerously-skip-permissions**. Its later custom launcher/kit qualification
+follows bootstrap and synthetic guest isolation; no launcher work is included.
+
+### M13. Validation and safety
+
+Documentation/static validation covers all manifest categories, evidence grades,
+hash/identity transcription, append-only history, Markdown/fences/source/local
+links, one-file scope and git diff --check. No full suite/build is run; local
+checks are not CI. No runtime artifacts or executable inspection scripts are
+added to Git. Public metadata JSON was read only; user state/credentials untouched.
+
+sbx executions 0; daemon operations 0; llmman/sbx-gui executions 0; dynamic
+completion evaluation 0; auth operations/Keychain queries 0; credential contents
+inspected no; runtime/model/image artifact downloads 0; network mutation 0;
+sandbox/VM creation 0; provider execution calls 0; MCP/SSH auth 0; Orchestrator
+activation 0; merge/deploy no; Production/UAT/cloud changes no; governance unchanged.
+The existing real sbx state was neither read deeply, reset nor deleted.
+Public vendor documentation/SBOM/provenance reads are distinguished from runtime
+artifact downloads. PR #22 stays OPEN / Draft / UNMERGED. No personal absolute
+path or credential is recorded. This incomplete manifest is reviewable evidence,
+not permission for a first daemon execution.
