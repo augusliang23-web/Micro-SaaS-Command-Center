@@ -382,3 +382,400 @@ currently reports zero exact-head checks for this baseline.
 Inference calls: **0**. Login/logout/setup-token: **0**. API PAYG: **no**.
 Credential contents read/copied/exported/mounted: **no**. No Docker state-changing
 operation, deployment, Orchestrator activation or historical-evidence alteration.
+
+---
+
+## Phase 3B5B1 — Official Docker Sandboxes backend qualification
+
+### B1. Decision, exact baseline and evidence grades
+
+**OFFICIAL_DOCKER_SANDBOX_BACKEND_REQUIRES_INSTALLATION_TO_QUALIFY**.
+This is a completed documentary qualification, not backend approval. The native
+candidate is promising, but the mandatory enforcement/readback properties below
+cannot be responsibly concluded on this host without a separately authorized
+installation and synthetic qualification. No installation is authorized here.
+The historical 3B5A decision **NO_SAFE_SUPPORTED_PATH_FOUND** is unchanged for
+the existing custom raw-Docker Agent Sandbox. No supported attachment of native
+OAuth mediation to that runtime is established.
+
+Qualification date: 2026-10-06, Asia/Singapore. Before research, PR #22 was
+OPEN / Draft / UNMERGED at `76d76a038bd6acc1ad840419f8d8556cf67dbee6`, based on
+remote main `25692a9a1fdedaf82910630fb767589aa5dccddf`. A clean isolated checkout
+was created at that exact commit; the dirty original main was not checked out,
+reset, pulled, stashed or used for execution. Only this appended section changes.
+
+- **DOCUMENTED**: current primary vendor documentation, linked at each finding.
+- **OBSERVED_LOCALLY**: metadata commands only; no sandbox runtime experiment.
+- **CONFIGURABLE**: a documented setting/mechanism, not proof it works here.
+- **UNKNOWN**: absent, incomplete, version-dependent or untested authority.
+- **INCOMPATIBLE**: a specific default/mode violates the required property;
+  this does not prove every possible custom workload has that incompatibility.
+
+The comparison uses MATCH / CAN_BE_CONFIGURED / UNKNOWN / INCOMPATIBLE. MATCH
+means a documented analogous boundary, never an installed or tested PASS.
+Only local qualification of all mandatory rows could promote this candidate.
+
+### B2. Local capability and exact installation prerequisite
+
+| Metadata | OBSERVED_LOCALLY |
+|---|---|
+| `sbx` executable on PATH | Absent; no `sbx` command was executed |
+| `docker sandbox --help` | Exit 1; command unavailable |
+| Docker CLI / Engine | 29.8.1 / 29.8.1 |
+| Docker Desktop bundle version / build | 4.93.0 / 240920 |
+| Host architecture / OS version | arm64 / macOS 27.0.1 |
+| Official local Sandboxes capability | Not available through either checked CLI surface |
+| Required capability state | **INSTALLATION_REQUIRED** |
+
+Docker now distributes a separate `sbx` CLI/local microVM backend; Desktop or
+Engine presence does not establish it. The documented Mac prerequisites are
+Apple silicon and macOS 14+. Its official install source is Docker's own
+`docker/tap/sbx`, or vendor release artifacts/manual instructions. The vendor's
+latest release metadata observed today is **v0.47.0**, published
+2026-10-05T15:46:13Z; v3 kits need at least v0.45. Future authorization must pin
+and verify the official package/artifact, version and signature/checksum first.
+No installer, tap change, download, feature enablement or daemon start occurred.
+[Installation][D1], [official release][D2], [kit versions][D3].
+
+Installation does not authorize `sbx login`, Claude login, image pulls/builds,
+sandbox creation, governance changes or provider requests. Docker's documented
+sign-in is a distinct OAuth operation; do not assume the existing Desktop login
+satisfies it. Those prerequisites require separate authority if later needed.
+
+### B3. Security contract comparison
+
+Current-contract authority remains [sandboxPolicy.mjs](../../server/sandbox/sandboxPolicy.mjs),
+[workspaceView.mjs](../../server/sandbox/workspaceView.mjs),
+[readbackVerifier.mjs](../../server/sandbox/readbackVerifier.mjs) and
+[verifier foundation](../../server/verifier/foundation.mjs). Their strict flags,
+limits, immutable IDs, path scans and evidence semantics are unchanged.
+
+| Property | Current custom Agent Sandbox | Official default / candidate | Classification / proof still required |
+|---|---|---|---|
+| Non-root execution | Numeric UID:GID, UID > 0 | `agent` UID 1000; v3 custom image account | CAN_BE_CONFIGURED; read actual UID/GID [D4] |
+| Sudo availability | no-new-privileges prevents elevation | Standard v2 requires passwordless sudo; v3 example omits sudo | CAN_BE_CONFIGURED via v3, not v2; negative elevation proof [D4][D5] |
+| Root filesystem immutability | Read-only root mount | Default VM writes persist; no complete equivalent established | UNKNOWN for custom v3; default INCOMPATIBLE [D6] |
+| Workspace write scope | `/workspace` and bounded scratch only | Mountless private working directory possible; broader guest writes default | CAN_BE_CONFIGURED for host exposure; guest write restriction UNKNOWN [D7] |
+| Host filesystem exposure | One non-recursive bind; no home/secret mounts | Explicit mounts/skills are exceptions to VM isolation | CAN_BE_CONFIGURED with zero host mounts, skills off [D8] |
+| .git isolation | Read-only mask; host Git control unavailable | Direct mode exposes .git; clone mode mounts source RO | CAN_BE_CONFIGURED: mountless sanitized source without Git [D8] |
+| Docker socket exposure | No Docker socket | Host daemon isolated; standard templates have guest Docker | CAN_BE_CONFIGURED: no-Docker custom image; prove no socket [D5][D8] |
+| Device exposure | No host devices | Optional GPU/USB/display interfaces | CAN_BE_CONFIGURED: omit all; verify device readback [D9] |
+| Capabilities | cap-drop=ALL, strict readback | Non-privileged template available; exact drop set unestablished | UNKNOWN; privileged=false is insufficient [D5] |
+| No-new-privileges equivalent | Kernel no-new-privileges flag required | No authoritative corresponding setting/readback established | UNKNOWN; do not infer from microVM [D10] |
+| PID/process isolation | Private namespace, no host PID | Separate VM kernel/process boundary | MATCH documented VM separation; inspect after installation [D8] |
+| IPC isolation | Private IPC namespace | Separate kernel isolates host/other VMs; guest IPC details unproven | UNKNOWN for full equivalent [D8] |
+| Resource controls | Server-owned bounded policy | CPU/memory creation controls; remaining controls below | UNKNOWN until effective limits readback [D9] |
+| CPU limits | 1 CPU default | Explicit `--cpus`; default 0 may allocate all host CPUs | CAN_BE_CONFIGURED; never accept 0/default [D9] |
+| Memory limits | 512 MiB, equal swap ceiling | `--memory`/sandbox memory setting documented | CAN_BE_CONFIGURED; prove effective cap/swap, not just requested value [D9] |
+| Process/PID limits | 128 PIDs default | No documented equivalent located in reviewed local interfaces | UNKNOWN; timeout alone does not prevent exhaustion |
+| Disk limits | Root RO; `/tmp` 64 MiB tmpfs | Kit volume sizing / Docker storage size settings | UNKNOWN for total root/workspace/cache growth [D5][D11] |
+| Timeout supervision | 120000 ms, observed exit required | Local agent/session/VM supervision not qualified | UNKNOWN; CLI disconnect is not stopped execution |
+| Stdout/stderr limits | Bounded streaming; overflow UNKNOWN | No equivalent native stream bound established | UNKNOWN; host supervision must bound and confirm termination |
+| Writable temp areas | Ephemeral noexec/nosuid/nodev tmpfs | Kit tmpfs mounts possible; full option equivalence unproven | UNKNOWN; inspect flags, size and lifetime [D5] |
+| Persistent VM state | Per-task disposal required | Stop/start retains guest packages/files/configuration | INCOMPATIBLE if reused; fresh-create/destroy candidate [D6] |
+| Shared state | No shared mutable task state | Shared skills and host credential/binding/MCP state exist | CAN_BE_CONFIGURED partly; credentials/gateway scope UNKNOWN [D12][D13] |
+| Per-task destruction | Owned immutable ID; confirm removal | `sbx rm` deletes VM contents | CAN_BE_CONFIGURED; require absence, not stop success [D7] |
+| Cross-task persistence | No VM/session/approval reuse | State retained on restart; some host records survive removal | UNKNOWN for full no-reuse equivalence [D13] |
+| Skills persistence | No shared agent skills | Shared store default readonly, optional readwrite/off | CAN_BE_CONFIGURED: `--skills=off`; readonly is not isolation [D12] |
+| Network default | Ordinary bridge; not provider-only | Policy proxy; unmatched local traffic can request approval | CAN_BE_CONFIGURED, not automatically a strict task allowlist [D14] |
+| DNS control | Bridge supplies ordinary resolver | Internal resolver governed by network policy | MATCH documented mediation; bypass/rebinding negatives untested [D8] |
+| IPv4 control | No endpoint filter | Host/IP/port policy grammar | CAN_BE_CONFIGURED; exact hosts/443 only [D15] |
+| IPv6 control | No endpoint filter | IPv6 policy grammar; kit enforcement limitations differ | UNKNOWN for chosen kit/runtime version; no fallback bypass [D5][D15] |
+| Redirect handling | No redirect restriction | All TCP policy mediation documented, exact chain untested | UNKNOWN; each new destination and auth-header recipient must be checked |
+| HTTP CONNECT handling | Unrestricted bridge destinations | Forward/transparent proxies enforce policy | UNKNOWN for CONNECT/SNI/Host/port bypass proof [D8] |
+| Credential visibility | No safe custom subscription bridge | Proxy substitutes sentinels; passthrough optionally exposes tokens | CAN_BE_CONFIGURED: OAuth only, passthrough false [D5][D16] |
+| Credential lifetime | No accepted transport lifecycle | Host storage/refresh; guest sentinel files and persistent state | UNKNOWN for per-task transport expiry [D16] |
+| Credential revocation | Must block subsequent task transport | Removing secrets/bindings is not proof of provider revocation | UNKNOWN for in-flight/refresh/replay scope [D16][D17] |
+| Cross-task credential reuse | Independently authorized task transport | Global services/bindings and shared OAuth refresh possible | UNKNOWN; scope binding and replay negatives required [D16][D17] |
+| Workspace snapshots | Sanitized, fingerprinted, metadata guarded | Native transfer/saved templates have different semantics | UNKNOWN until hostile export/import tests [D7] |
+| Verification Sandbox compatibility | Separate credential-free NO_NETWORK runner | Agent output must cross a new extraction boundary | CAN_BE_CONFIGURED architecturally; transfer proof UNKNOWN |
+
+The default template is not accepted. Its broad guest privilege and persistent
+filesystem are not substitutes for cap-drop/read-only/no-new-privileges. V3's
+non-sudo example prevents a blanket claim that all native backends inevitably
+require sudo. Undocumented remaining controls stay UNKNOWN, not NOT_SUPPORTED
+or MATCH. No custom nested security runtime is proposed as a proven workaround.
+
+### B4. Claude launcher and repository configuration
+
+| Control | Qualification |
+|---|---|
+| Custom launcher | CONFIGURABLE: v3 image ENTRYPOINT/CMD or v2 full entrypoint replacement; not merely appended flags [D4][D5] |
+| Default bypass flag | INCOMPATIBLE: native built-in Claude launches with `--dangerously-skip-permissions`; flags after `--` normally preserve it [D18] |
+| Executable/model/profile/cwd/env | CONFIGURABLE in host-owned, digest-pinned workload plus fixed launcher; no browser/task argv or repository-selected kit/env file |
+| Timeout/output | UNKNOWN effective VM supervision; host-side bounded capture must also stop/observe the guest and revoke transport |
+| Tool availability | CONFIGURABLE via explicit `--tools=Read,Edit,Write,Glob,Grep`; `--allowedTools` alone is not a tool boundary [C1] |
+| Bash/PowerShell/shell/WebFetch/WebSearch | Deny by exact tool names plus restricted mode; OS compromise confinement is a separate unqualified boundary |
+| Browser/Chrome | No browser kit, display/USB/clipboard-image bridge or Chrome flag; no remote-control session [D9][D11][C1] |
+| Subagents/background agents | No agents-view, `--bg`, resume/continue, task tool or project agent discovery; inspect available tool classes for the pinned CLI [D18][C1] |
+
+Required future launcher: server-selected absolute executable and immutable
+image/kit; non-interactive print mode; server profile/model/effort; fixed cwd and
+minimal environment; existing restricted/safe-mode and strict tool-denial rules;
+strict empty MCP configuration; no arbitrary argument tail, add-dir, plugins,
+agent definitions, sessions or browser. Preserve structured process/model/tool
+proof; prose remains non-authoritative. This is a requirement, not launch code.
+
+Docker does not import host `~/.claude` by default, but does expose project
+configuration in a mounted workspace. Kit instructions do not replace project
+CLAUDE.md, and v2 child kits inherit permissions, MCP settings and volumes.
+`locked` kit fields govern kit composition, not all repository configuration.
+Do not pass an untrusted kit, sbxenv.yaml, host lifecycle command, credential
+command resolver or local override file to the trusted service. [D5][D18].
+
+Claude's `--restricted` ignores user/project settings and confines built-in file
+tools; `--safe-mode` skips project customization. Managed policy still applies,
+including some managed executable hooks, so managed files must also be trusted
+and protected. CLI tool limits do not automatically disable MCP. Use explicit
+MCP deny and empty strict config, and test the selected version rather than
+assuming current documentation equals its installed behavior. [C1][C2].
+
+Project `.claude/`, settings, hooks, plugins, skills, commands, MCP definitions,
+agent definitions and CLAUDE.md must not enable tools, hooks, network, providers,
+browser or background processes. Under the proposed launcher, preventing that
+is **CONFIGURABLE at Claude configuration discovery; UNKNOWN at the complete
+native startup boundary**. The official v3 example makes persistent shell setup
+agent-writable; copying it verbatim would let earlier guest state influence
+startup before Claude's flags apply. Never reuse it; fixed trusted shell startup
+and fresh creation must be proven. If a repository/guest can override the
+trusted launcher or its policy, qualification fails. [D4][D10].
+
+### B5. SSH and host MCP — separate authority paths
+
+SSH forwarding is documented ON when the client supplies an SSH agent.
+Private-key confidentiality does not remove signing/authentication authority.
+The official global switch is `ssh.agentForwardingEnabled=false`, followed by a
+daemon restart. No per-kit/per-task switch was established. A future dedicated
+trusted daemon must prove it remains false; merely clearing one client's
+SSH_AUTH_SOCK is insufficient. No host SSH socket, Git/signing identity,
+credential helper or GitHub/registry service grant is permitted. No key/agent
+contents were inspected. [D11].
+
+Docker documents a gateway for every sandbox, automatic configuration in supported
+integrations, and dynamic catalog/attach tools. Static mode removes dynamic
+helpers, but is not an OFF switch. Local stdio MCP servers execute on the host;
+MCP Toolkit configuration is separate. No documented general gateway-disable
+switch was established. Claude's empty/denied MCP config is only an agent-level
+barrier; it does not prove compromised guest code cannot call the gateway.
+Host gateway denial and guest discoverability remain **UNKNOWN / BLOCKER**.
+Organization MCP policies can forbid gateway requests, but their local
+availability/account entitlement is unobserved. They do not cover direct remote
+MCP traffic, which also needs network denial. No MCP registration, discovery,
+authentication or tool invocation was performed. [D19][D20].
+
+### B6. Credential proxy and subscription-only control
+
+The official proxy intercepts OAuth token responses, supplies guest sentinels,
+and substitutes real credentials on approved provider requests. With proxy
+management active and OAuth `passthrough:false`, real reusable tokens remain in
+the trusted host storage/proxy boundary. Passthrough true is **INCOMPATIBLE**.
+If API key and OAuth both resolve, API key wins; missing required bindings can
+warn and start without credentials. Neither sandbox creation success nor the
+kit's required flag proves subscription auth. [D5][D16][D18].
+
+Future target: an explicitly approved OAuth-only credential capability/binding;
+no API-key capability or fallback, no inherited service/registry grants, no raw
+credential environment, no dynamic secret-output command, no importing the
+current host login. Missing, ambiguous, API-backed or expired auth must prevent
+agent start. Exact subscription-only resolution, sentinel placement, guest
+memory/files/logs, refresh, revocation and cross-task authorization are UNKNOWN
+until approved synthetic tests and a later distinct manual-auth gate. Native
+host reuse of a Pro account is not an authorization for every future task.
+
+Host-managed credentials may outlive a VM; `sbx rm` cannot be treated as provider
+revocation or deletion of global bindings. Future teardown must first deny that
+task's transport, then destroy/check absence and retire its scoped authorization.
+Never persist real credentials in guest env/files, argv/stdin/stdout/stderr,
+workspace, TaskStore, evidence/logs/UI, images or Git. Sentinels are not tokens;
+their inability to authenticate outside their authorized scope still needs proof.
+No credential store, token, cookie, SSH identity or user configuration was read.
+
+### B7. Network governance and no guest self-approval
+
+| Surface | Native documentary capability / unresolved proof |
+|---|---|
+| TCP/HTTP/HTTPS | DOCUMENTED host proxy enforcement; CONFIGURABLE exact destination/port rules [D8][D14] |
+| UDP | Disabled by default; never enable experimental egress for this task runtime [D6] |
+| DNS | Policy-aware resolver; DNS exfiltration/rebinding and all resolver bypasses remain UNKNOWN [D8][D17] |
+| IPv4/IPv6 | Grammar supports both; chosen release/kit enforcement must be tested [D15] |
+| Redirects / CONNECT | UNKNOWN end-to-end auth-header and destination enforcement; positive provider and negative escape tests required |
+| Alternate ports | Host without port matches more than 443; require exact host:443 and reject all alternate ports [D15] |
+| Proxy bypass | `no_proxy` bypasses upstream proxy, not native network policy; prove unsetting guest HTTP_PROXY still cannot bypass native proxy [D11] |
+| Package registries / GitHub / arbitrary websites | No runtime allow grants; installation/build traffic is a separate trusted phase, not agent egress |
+| New destination approval | DOCUMENTED developer/host-side CLI workflow; trusted Command Center automation and guest inability to exercise host authority are UNKNOWN [D14] |
+
+Approval queues do not themselves grant access, but approvals expand later
+requests. Never auto-approve a guest request. Local unmatched traffic may ask for
+approval, and broad presets/kit allows are not provider-only policy. An
+organization allowlist can deactivate local/kit allow expansion; only trusted
+host-side authority may change it. A blanket deny followed by provider allow is
+not a valid recipe: matching deny wins. Effective rules must permit only the
+reviewed hosts/ports, with no interactive/self-approval expansion and no guest
+access to policy RPC/CLI credentials. That complete policy is **UNKNOWN** here.
+No policy was inspected through secret-bearing state or changed. [D14][D15].
+
+Current Claude docs distinguish inference `api.anthropic.com`, account sign-in
+`claude.ai`/`claude.com`, and OAuth exchange/refresh/revocation
+`platform.claude.com`. MCP proxy, browser bridge, updates, plugins, npm/GitHub
+and telemetry destinations are not task grants. Exact version-specific endpoints,
+methods and redirect chains must be reviewed; don't copy a wildcard vendor list.
+Admin login/refresh and guest inference have separate policies. No network trace
+or provider request was made. [C3][C4].
+
+### B8. Exactly one candidate workspace and lifecycle
+
+**Recommend mountless mode only**, conditional on qualification. Create with
+no workspace path; subsequent attach must identify that sandbox. A bare
+`sbx run` without a path auto-mounts the current directory and is not mountless.
+Direct mode violates host write/Git isolation. Clone mode protects host writes,
+but its source mount still exposes ignored/untracked files and Git metadata;
+it is not a sanitized-input boundary. [D7][D8].
+
+The future trusted host imports only sanitized task source without .git, auth,
+configuration or caches into a fresh private guest directory. Native `sbx cp`
+provides a documented transfer interface, not a verified safe snapshot codec.
+Guest output is untrusted: export to private staging, stop writers, apply
+protected-path/diff guards and independently sanitize before host Git operations.
+Orchestrator alone creates branches/commits/pushes/PRs; never consume guest refs,
+hooks, remote configuration or Git executable commands. [D7].
+
+Create a unique fresh sandbox for one task; never resume/reuse a stopped guest.
+Remove it, verify exact owned identity absence and no running process/session;
+if teardown is ambiguous, block task reuse and transport. Native removal deletes
+VM contents, but host workspace, shared skills, credential bindings and MCP
+registrations can survive. Never save a whole VM template as verifier input.
+Shared skills must use `--skills=off`; no shared mutable state, skills/packages,
+sessions/environment/history/project changes or network approvals may transfer
+to another task. Native global-state cleanup remains unqualified. [D7][D12][D13].
+
+### B9. Resource governance and verifier compatibility
+
+CPU and memory have documented explicit creation controls; numeric requests are
+not effective-limit proof. Docker storage size settings do not bound all guest
+root/workspace writes. Native process/PID ceilings, read-only root, complete
+capability/no-new-privileges state and total disk bounds remain UNKNOWN. Future
+host duration/output/count supervision must reserve one owned sandbox per task,
+cap concurrent creations, count stdout/stderr bytes and kill/revoke/remove on
+limits. It must observe guest termination, not merely kill the attached CLI.
+A hostile guest's process/disk exhaustion cannot be solved by a timer alone;
+reject launch if mandatory native limits or readback are unavailable. [D9][D11].
+
+Verification remains separate, credential-free, deterministic **NO_NETWORK**.
+No code/image/profile changes are made. Compatibility work is a new trusted
+input/output transfer adapter, not sharing the Agent VM or its auth state. Preserve
+existing symlink containment, hardlink rejection, special-file rejection,
+non-recursive/submount containment and .git masking/exclusion. Reject ambiguous
+exports, path traversal, device/FIFO/socket nodes and foreign mount artifacts.
+Rebuild regular files/directories rather than trusting guest UID/GID, set safe
+permission modes while retaining reviewed executable bits, ignore timestamps as
+identity but detect concurrent writes, and recompute content fingerprints and
+manifest authority. Guest caches, sessions, skills, credential/sentinel files,
+MCP/project config and Git control data must not enter verifier input. The
+existing foundation's host paths and integrity checkpoints are not a native VM
+export/import implementation; ownership, links, timestamps and transfer races
+require later negative proof before any integration.
+
+### B10. Proposed boundary — candidate only, not implemented
+
+```mermaid
+flowchart LR
+  subgraph HOST["TRUSTED host boundary"]
+    CC["Command Center: TRUSTED / CREDENTIAL-FREE"]
+    ORC["Orchestrator: TRUSTED / CREDENTIAL-FREE; currently fake-only"]
+    SBX["Docker Sandboxes host service: TRUSTED; candidate policy authority"]
+    STORE["Official host credential store: TRUSTED / CREDENTIAL-BEARING"]
+    PROXY["OAuth credential proxy: TRUSTED / CREDENTIAL-BEARING"]
+    STAGE["Host private staging: TRUSTED controller / UNTRUSTED output / CREDENTIAL-FREE"]
+  end
+  subgraph VM["microVM: UNTRUSTED task / MUST be CREDENTIAL-FREE for real tokens"]
+    CLAUDE["Claude process: UNTRUSTED / CREDENTIAL-FREE; sentinels only"]
+    WS["Mountless workspace: UNTRUSTED / CREDENTIAL-FREE"]
+    MCP["Host MCP path: FORBIDDEN; denial still UNKNOWN"]
+  end
+  VERIFY["Verification Sandbox: separate / CREDENTIAL-FREE / NO_NETWORK"]
+  PROVIDER["Claude provider: external credential recipient over approved TLS"]
+  CC --> ORC
+  ORC -. "future fixed launch; not activated" .-> SBX
+  SBX -. "pinned policy and workload" .-> CLAUDE
+  STORE --> PROXY
+  CLAUDE -. "sentinel request / approved destination" .-> PROXY
+  PROXY -->|"real credential in outbound provider header"| PROVIDER
+  CLAUDE --> WS
+  WS -. "untrusted export; codec unqualified" .-> STAGE
+  STAGE -. "sanitized, fingerprinted snapshot only" .-> VERIFY
+  CLAUDE -. "must be inaccessible; negative proof required" .-> MCP
+```
+
+Real subscription credentials may exist only in the official trusted host store,
+proxy memory/refresh channel and approved provider transport. They MUST NOT exist
+in Command Center/Orchestrator state, microVM/Claude memory or filesystem,
+workspace, verifier, argv/stdin/output, logs/evidence/UI, images or Git. This
+placement is DOCUMENTED for mediated OAuth and a REQUIRED future invariant; no
+real credential flow was observed here. Host/proxy compromise remains outside
+guest isolation guarantees. MCP denial and the native enforcement gaps are
+explicitly unresolved, not hidden behind the microVM boundary. [D16].
+
+### B11. Real blockers, next gate and safety
+
+1. **INSTALLATION_REQUIRED**: no native `sbx` capability is available locally.
+2. Required read-only root, cap-drop/no-new-privileges, PID/IPC/disk ceilings,
+   authoritative guest termination/readback and guarded transfer are UNKNOWN.
+3. Complete host MCP inaccessibility, startup/config immutability and inability
+   to alter host network approvals are not established; agent flags alone are
+   insufficient for compromised guest code.
+4. OAuth-only selection, task-scoped lifetime/revocation/replay and cross-task
+   host-state isolation lack synthetic proof. Standard defaults are unacceptable.
+
+These are blockers to adoption, not claims of an active incident or a proven
+fundamental impossibility of every v3 workload. Decision remains exactly
+**OFFICIAL_DOCKER_SANDBOX_BACKEND_REQUIRES_INSTALLATION_TO_QUALIFY**.
+Next gate: **explicit installation authorization** for the pinned official local
+component and bounded metadata-only verification, with 0 Claude calls, 0 auth,
+0 credentials and no sandbox/policy creation. Docker sign-in, image provisioning
+and synthetic sandbox/network/credential negatives need separate explicit scope
+if required later. Only after renewed qualification could 3B5B2 be authorized;
+it must use synthetic credentials, 0 auth operations and 0 real provider calls.
+No gate, installation or implementation is approved by this document.
+
+Safety in this task: Claude inference 0; auth login/logout/setup-token 0;
+credential contents read/copied/exported/mounted no; API PAYG no; Docker sandbox
+created no; image pulled/built no; network policy changed no; SSH auth no; guest
+MCP calls no; Orchestrator activation no; deploy no; Production/UAT/cloud changes
+no; governance changes no. Historical evidence and 3B5A text remain unchanged.
+Validation is documentation-only: structure/fences, local links, all comparison
+properties/required sections, append-only preservation and exact diff scope.
+No executable code, test suite, runtime or dependency installation is needed.
+Local document checks are not GitHub CI; PR #22 remains OPEN / Draft.
+
+### B12. Primary source register (accessed 2026-10-06)
+
+Live vendor documentation can change. The observations above are date-scoped;
+future installation must pin the package/kit/Claude versions and recheck the
+supported behavior. Specific v3 and CLI references override assumptions drawn
+from older built-in/v2 defaults; conflicting generic descriptions never grant
+access. Only vendor sources were used as capability authority.
+
+[D1]: https://docs.docker.com/ai/sandboxes/install/
+[D2]: https://github.com/docker/sbx-releases/releases/tag/v0.47.0
+[D3]: https://docs.docker.com/ai/sandboxes/customize/
+[D4]: https://docs.docker.com/ai/sandboxes/customize/author/build-an-agent/
+[D5]: https://docs.docker.com/ai/sandboxes/customize/kits-v2/
+[D6]: https://docs.docker.com/ai/sandboxes/security/defaults/
+[D7]: https://docs.docker.com/ai/sandboxes/usage/
+[D8]: https://docs.docker.com/ai/sandboxes/security/isolation/
+[D9]: https://docs.docker.com/ai/sandboxes/configuration/environment-files/
+[D10]: https://docs.docker.com/ai/sandboxes/customize/author/base-images/
+[D11]: https://docs.docker.com/ai/sandboxes/configuration/settings/
+[D12]: https://docs.docker.com/ai/sandboxes/workflows/agent-skills/
+[D13]: https://docs.docker.com/ai/sandboxes/configuration/environment-files/
+[D14]: https://docs.docker.com/ai/sandboxes/governance/access-controls/network/
+[D15]: https://docs.docker.com/ai/sandboxes/governance/concepts/
+[D16]: https://docs.docker.com/ai/sandboxes/configuration/credentials/
+[D17]: https://docs.docker.com/ai/sandboxes/release-notes/
+[D18]: https://docs.docker.com/ai/sandboxes/agents/claude-code/
+[D19]: https://docs.docker.com/ai/sandboxes/mcp-gateway/
+[D20]: https://docs.docker.com/ai/sandboxes/governance/access-controls/mcp/
+[C1]: https://code.claude.com/docs/en/cli-reference
+[C2]: https://code.claude.com/docs/en/permissions
+[C3]: https://code.claude.com/docs/en/network-config
+[C4]: https://code.claude.com/docs/en/authentication
