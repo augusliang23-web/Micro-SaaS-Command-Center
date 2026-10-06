@@ -841,3 +841,252 @@ UAT/cloud/governance changes no. No network policy command ran; initialized
 state-file contents remain uninspected. No authentication or runtime qualification
 is inferred from installation. Historical 3B5A/3B5B1 conclusions and text remain
 unchanged; only this sanitized observation is appended. PR #22 stays Draft.
+
+---
+
+## Phase 3B5B1.2 — static installed-package metadata qualification
+
+### S1. Exact baseline and zero-execution scope
+
+Review date: 2026-10-06 (Asia/Singapore). Local HEAD and remote PR #22 metadata
+agreed on `1383bee511c5cc523a8ae5459ad1df797bdff160`; PR was OPEN / Draft /
+UNMERGED. PR metadata was read through the existing GitHub research connector,
+not a host-side GitHub/network command. The worktree began tracked-clean.
+This append is local only: no fetch, push, remote update, rebase or merge runs.
+Historical 3B5A, 3B5B1 and 3B5B1.1 text/conclusions remain byte-identical.
+
+**Static review is ready for Control Plane review. Runtime qualification remains
+unproved.** No sbx/llmman/sbx-gui executable or completion script was run, sourced,
+evaluated, imported as executable code or invoked indirectly. Only static
+package text, public signature metadata and allowed top-level host-state
+metadata were read. No runtime-help discovery is substituted for static proof.
+
+### S2. LOCAL_STATIC_EVIDENCE — installed identity and versions
+
+| Static authority | Observation |
+|---|---|
+| Homebrew installed cask listing | `sbx 0.47.0`, with HOMEBREW_NO_AUTO_UPDATE=1 and analytics disabled |
+| INSTALL_RECEIPT.json | `source.tap:docker/tap`, `source.version:0.47.0` |
+| Sbx.app Info.plist | CFBundleShortVersionString 0.47.0; CFBundleVersion 0.47.0 |
+| MacOS/sbx-version.json | version v0.47.0 |
+| Resources/sbx-version.json | version v0.47.0 |
+| Auxiliary installed sbx.json | Empty object; no independent version authority |
+| Mach-O architecture metadata | arm64 |
+| Binary ownership/mode | Current-user owned, regular target file, 0755 |
+| Deep/strict public signature verification | Passed; Docker Inc; TeamIdentifier 9BNSXJN65R; app identifier com.docker.sandboxes |
+| Approved DMG provenance | Prior verified digest bcd6bf72d46f882279638ccb52f8a78bbcb1a91ea299055d2124ecfb73feb726; not redownloaded |
+
+Leading `v` in static resource labels is a notation difference, not a different
+version. All actual local version authorities agree on 0.47.0. Receipt fields
+are nested under `source`; an absent version key in an empty auxiliary JSON
+must not be fabricated into a contradictory version or an authentication claim.
+No CLI version execution was used as evidence in this gate.
+
+Package filenames include `sbx`, `sbx-gui`, `llmman`, static version JSON,
+completion resources and `nerdbox-kernel-arm64` under libexec. These are file
+presence observations only. They prove neither a running service nor a complete
+llama.cpp runtime, guest boot, model store, downloader or sandbox capability.
+No binary internals or model/credential stores were inspected.
+
+### S3. Completion adapters: static command and flag authority
+
+| Installed adapter | Read-only evidence | SHA-256 |
+|---|---|---|
+| Bash, 15,973 bytes | Runtime request assembled at line 26; evaluation at line 48 | 4f984b7fa30e49d3629a0335b16dd59189a73098104be55463c16f1a11886c43 |
+| Zsh, 7,640 bytes | Runtime request assembled at line 49; evaluation at line 60 | cd993275c528fec96b6d57e3ed338f92b8af09437e19dafbd807f47ffda35676 |
+| Fish, 9,417 bytes | Runtime request assembled at line 22; evaluation at line 25 | 9e6d8f4eba2bd76a2ccb78a38f46608ba8da29b112ba0e3467aa08d7a03dc77e |
+
+All three are generic dynamic adapters to the program's `__complete` entry
+point. They contain no embedded declaration table for the requested commands
+or flags. Bash uses the word "version" in generic debug messages about Bash
+compatibility; it is not a `version` subcommand declaration. Reading a script
+is permitted; invoking it, tab-completing sbx, sourcing it or evaluating its
+request would violate this gate. Dynamic completion is not static help.
+
+Classification definitions: STATICALLY_PRESENT requires an actual static
+command/flag declaration. NOT_PRESENT denotes a meaningful closed static table
+that omits a surface. UNKNOWN applies here because enumeration is delegated to
+forbidden executable evaluation. Literal absence from an adapter is not proof
+that the installed CLI lacks a command.
+
+| Requested command | LOCAL_STATIC_EVIDENCE | OFFICIAL_DOCUMENTATION |
+|---|---|---|
+| version | UNKNOWN | Listed in official root CLI reference |
+| daemon | UNKNOWN | Listed |
+| run | UNKNOWN | Listed |
+| create | UNKNOWN | Listed |
+| rm | UNKNOWN | Listed |
+| stop | UNKNOWN | Listed |
+| reset | UNKNOWN | Listed |
+| login | UNKNOWN | Listed |
+| logout | UNKNOWN | Listed |
+| settings | UNKNOWN | Listed |
+| policy | UNKNOWN | Listed |
+| secret | UNKNOWN | Listed |
+| mcp | UNKNOWN | Listed |
+| kit | UNKNOWN | Listed |
+| skills | UNKNOWN | Listed as experimental |
+| setup | UNKNOWN | Listed as experimental |
+| diagnose | UNKNOWN | Listed |
+| cp | UNKNOWN | Listed |
+| exec | UNKNOWN | Listed |
+| ports | UNKNOWN | Listed |
+| template | UNKNOWN | Listed |
+| volume | UNKNOWN | Listed as cloud-only |
+
+Documentation authority: [Docker root CLI reference](https://docs.docker.com/reference/cli/sbx/).
+These documented names are not locally observed executable support.
+
+| Requested flag | LOCAL_STATIC_EVIDENCE | Documentary cross-check |
+|---|---|---|
+| --rm | UNKNOWN | v0.47.0 release notes; absent from reviewed generic run option table |
+| --cpus | UNKNOWN | Generic run option table |
+| --memory | UNKNOWN | Generic run option table |
+| --skills | UNKNOWN | Generic run option table |
+| --provider | UNKNOWN | Models guide; absent from reviewed generic run option table |
+| --model | UNKNOWN | Models guide; absent from reviewed generic run option table |
+| --kit | UNKNOWN | Generic run option table |
+| --template | UNKNOWN | Generic run option table |
+| --cloud | UNKNOWN | Generic run/global option table |
+| --detached | UNKNOWN | Generic run option table |
+| --name | UNKNOWN | Generic run option table |
+| --clone | UNKNOWN | Generic run option table |
+
+Sources: [run reference](https://docs.docker.com/reference/cli/sbx/run/),
+[v0.47.0 release](https://github.com/docker/sbx-releases/releases/tag/v0.47.0),
+[models guide](https://docs.docker.com/ai/sandboxes/configuration/models/).
+The release-specific cleanup addition is stronger documentary evidence than
+absence from a generic table; neither is local runtime proof. Do not infer that
+an installed flag was removed, accepted or safely implemented from this mismatch.
+
+Other requested indications — SSH, MCP, credential passthrough, network policy,
+sandbox lifecycle, workspace modes and mountless operation — are all UNKNOWN
+from these adapters. The earlier vendor-source register documents candidate
+mechanisms, not static declarations in this installed completion material.
+The [SSH setting](https://docs.docker.com/ai/sandboxes/configuration/settings/),
+[credential descriptor](https://docs.docker.com/ai/sandboxes/configuration/credentials/)
+and [mountless workflow](https://docs.docker.com/ai/sandboxes/usage/) must not be
+reported as observed local controls.
+
+Additional discrepancy/stop boundary: v0.47.0 notes say local kit inspection,
+validation and pulling require a running daemon. They cannot be used here as
+an apparently static workaround. The generic release-notes index currently
+stops at 0.46.0 while the version-specific GitHub release documents 0.47.0.
+Current web references are not a complete immutable 0.47.0 help dump.
+
+### S4. Real state — top-level metadata only
+
+The previously initialized real host state category exists as a directory,
+current-user owned, mode 0700, with **one top-level entry**. No entry contents,
+child directories, stored records, settings, auth files or secret-bearing data
+were inspected or enumerated deeply. Top-level existence/type/owner/mode/count
+are the only retained facts. The six nested initial entries reported in the
+historical installation note used a different scope; this review does not
+repeat that enumeration or claim entries disappeared.
+
+Directory existence proves no login, no subscription identity and no credential
+availability. Authentication state remains UNKNOWN. No state reset, deletion,
+migration or configuration occurs. Only matching before/after top-level metadata
+can be claimed; byte-for-byte state-content preservation is not asserted.
+
+### S5. FIRST future daemon start: documentary effects and uncertainty
+
+| Possible effect | Grade | Authority / limit |
+|---|---|---|
+| sandboxd process | DOCUMENTED | Daemon start reference; not executed locally |
+| Local model service / llmman | DOCUMENTED | Models guide says daemon starts/stops it, even without model selection |
+| llama.cpp runtime download | DOCUMENTED, conditional if missing | Models guide requires network for the first missing-runtime download; exact endpoints/checksums/retries UNKNOWN |
+| State initialization | LIKELY | Daemon-managed stored state described in troubleshooting; exact first-start writes UNKNOWN |
+| Settings/state database initialization or migration | LIKELY | Database-version incompatibility is documented; current schema, writes and migrations uninspected |
+| Daemon log writes | DOCUMENTED as a daemon diagnostic surface | Exact first-start files/volume/retention UNKNOWN |
+| Local audit files | DOCUMENTED, conditional | Requires signed-in governed users with AI Governance licensing; not unconditional without auth |
+| Host-side network activity | DOCUMENTED download risk; other destinations UNKNOWN | No safe host-side egress cap or complete endpoint set observed |
+
+Sources: [daemon start](https://docs.docker.com/reference/cli/sbx/daemon/start/),
+[local model service](https://docs.docker.com/ai/sandboxes/configuration/models/),
+[0.46.0 startup change](https://docs.docker.com/ai/sandboxes/release-notes/),
+[state/database troubleshooting](https://docs.docker.com/ai/sandboxes/troubleshooting/),
+[conditional local audit](https://docs.docker.com/ai/sandboxes/governance/audit/local/).
+Only documentation and static package filenames support this analysis. The
+presence of bundled llmman is corroboration of packaging, not an observation of
+service start, downloaded runtime, inference or current auth.
+
+A native sandbox `deny-all` policy does not establish that the host daemon or its
+model helper cannot download. Proxy settings route traffic; they are not proof
+of an OS-level egress denial. No documented no-model-service startup switch was
+established in the reviewed references; do not invent an environment flag or
+assume skipping `--model` suppresses the helper. Network, TLS/DNS/update/telemetry,
+Keychain access and persistent paths remain unqualified for first execution.
+
+### S6. Future gate design — NOT AUTHORIZED OR EXECUTED
+
+Name: **3B5B1.3 — one supervised offline first-daemon attempt**.
+This is a conditional plan for Control Plane review. No current command,
+credential grant, filesystem/network guard, HOME change or daemon permission is
+created by it. If its isolation preconditions cannot be demonstrated, the
+future executor must return HOLD before any sbx execution.
+
+| Frozen future boundary | Proposed minimum |
+|---|---|
+| Version / identity | sbx 0.47.0 only; recheck receipt, signed resources, arm64, Docker TeamIdentifier and binary hash immediately before start |
+| Network allowance | NONE externally: no DNS, IPv4/IPv6/TCP/UDP/HTTP/CONNECT/updates/telemetry/download destination; allowed remote destinations = empty set |
+| Local IPC | Only the task's private Unix control socket; no access to existing host services, MCP or credential brokers; local-model network failure is acceptable |
+| Runtime download | Forbidden; no image/model/llama.cpp/runtime download, prefetch, installer or existing user cache import |
+| HOME / state | Fresh private temporary HOME for the supervised child only; fresh state/log/cache paths; never the real HOME or initialized real sbx state |
+| Credential boundary | Fixed child environment, no API/OAuth/SSH/Git/cloud tokens or proxy inheritance; OS enforcement must also deny real credential files and Keychain access |
+| Startup count / duration | One foreground daemon-start attempt; omit detach, max 60 seconds; no retry/restart or automatic policy widening |
+| Output / resource budget | Proposed ceilings: 64 KiB each stdout/stderr, 512 MiB aggregate owned-process RSS, 32 owned processes and 128 MiB disposable writes; enforce before launch or HOLD, never silently widen |
+| Process inventory | Before/after PID, parent/session lineage, executable identity and creation time; track daemon, llmman and every owned descendant, not names alone |
+| Filesystem inventory | Before/after bounded metadata/hashes in the fresh synthetic home; real state remains top-level metadata-only; write/read boundary enforced before launch |
+| Auth / runtime | No login/logout/setup-token/OAuth/browser/secret import; no sandbox/VM creation; no agent, provider inference, SSH or MCP operation |
+| Stop / cleanup | Gracefully terminate owned process tree; bounded grace then kill only proven owned survivors; confirm absence of daemon/helper/socket/listeners before finishing |
+| Rollback | Remove only this gate's disposable synthetic home after confirmed process absence and sanitized evidence capture; no uninstall, reset or real user state/credential deletion |
+
+**Required pre-start proof:** a separately reviewed, already-qualified host-side
+supervisor must impose the filesystem/credential and egress boundaries on the
+daemon and all helpers before executable launch. Temporary HOME alone does not
+isolate a macOS Keychain or paths derived from the OS account. An environment
+allowlist or sbx guest network policy alone is not that proof. No available
+mechanism is assumed to satisfy these restrictions in this static review.
+Creating accounts, installing guards, changing global firewall rules or enabling
+VMs would require separate explicit scope; none is authorized by this plan.
+
+The [documented start](https://docs.docker.com/reference/cli/sbx/daemon/start/)
+is foreground unless detached, and has a `--policy` initialization option.
+A future approved attempt may initialize only its isolated fresh policy as
+`deny-all`; this is a newly authorized state mutation, not current permission or
+a replacement for host egress enforcement. The real daemon/settings must not be
+shared. Do not rely on an unqualified CLI launcher to contain itself.
+
+Stop before launch if exact version/signature/hash, isolated paths, credential
+store denial, process ownership, network denial or cleanup cannot be proven.
+During the one attempt, abort on any out-of-scope write/read, auth prompt/browser,
+unknown child, unauthorized socket/listener, download attempt, network attempt,
+sandbox/VM creation, resource/output bound breach or timeout. A safe denied
+startup is an acceptable observation; it is not daemon qualification or reason
+to retry with broader access. Preserve unknown outcomes. Do not use an unscoped
+`sbx daemon stop`, `sbx reset`, wildcard process kill or real-state deletion as
+cleanup. The official stop surface remains documentary only in this gate.
+
+No runtime download destinations are approved. If a later proposal needs a
+runtime artifact, its official URL, redirect chain, signature/digest, traffic
+allowlist and explicit download authorization must be reviewed as another gate.
+The exact runtime distribution endpoints have not been established here.
+
+### S7. Validation, delivery and safety
+
+This task validates static package agreement, completion provenance/read-only
+interpretation, Markdown structure/local links/fences, append-only historical
+preservation, exact one-file documentation scope and unchanged top-level real
+state metadata. No executable file, test suite, build or provider smoke is added
+or run. Local document validation is not CI.
+
+All sbx/daemon/llmman executions in this gate: **0**. Claude/Codex provider calls,
+auth/OAuth, credential contents read/copied/imported/exported/mounted, sandbox/VM
+creation, image/runtime download/build, network policy/SSH/host-MCP operations,
+Orchestrator activation, deploy/Production/UAT/cloud/governance changes: **0/no**.
+Installed package material is read only; the real sbx state is not read deeply,
+reset or deleted. Only existing research surfaces retrieved vendor docs and PR
+metadata; no host-side network command or Homebrew update occurred. PR #22 stays
+OPEN / Draft. This section is a local review artifact, not a pushed PR update,
+backend approval or authorization for the proposed first-daemon gate.
