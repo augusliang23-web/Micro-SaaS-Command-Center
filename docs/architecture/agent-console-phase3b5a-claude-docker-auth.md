@@ -2140,3 +2140,278 @@ Public vendor documentation/SBOM/provenance reads are distinguished from runtime
 artifact downloads. PR #22 stays OPEN / Draft / UNMERGED. No personal absolute
 path or credential is recorded. This incomplete manifest is reviewable evidence,
 not permission for a first daemon execution.
+
+---
+
+## Phase 3B5B1.3C1 — llmman runtime resolver / upstream provenance qualification
+
+### R1. Baseline, scope and result
+
+Review date: 2026-10-06 (Asia/Singapore). Starting local and remote PR #22 HEAD:
+`3560ca27ab9aec19cc11ce29da734aea8eaf45c3`; OPEN / Draft / UNMERGED. Existing
+architecture branch/worktree was clean. Gate:
+`AGENT_CONSOLE_PHASE3B5B1_3C0_GATE_PASS_BOOTSTRAP_HOLD_RESOLVER_PROOF_REQUIRED`.
+This section is append-only; all earlier decisions/evidence remain unchanged.
+
+**Decision: RUNTIME_RESOLVER_CHAIN_PARTIALLY_PROVEN.**
+**Exactly one recommendation: STOP_NATIVE_SBX_PATH under the current provenance
+contract.** No daemon launch is requested or authorized.
+
+Static code now establishes more than the earlier bare literal: the default
+llama.cpp pin is b10951, the compiled resolver constructs a macOS arm64 asset
+suffix, and the candidate upstream asset has matching release/digest/attestation
+metadata. But the effective daemon arguments, fallback closure, source controls,
+download/cache integrity and acceptance-before-execution remain unqualified.
+This is not RUNTIME_RESOLVER_CHAIN_PROVEN or safe bootstrap permission.
+
+DOCKER_HOST_CONTROL_PLANE_TRUST_MODEL_ACCEPTED remains the chosen host/guest
+architecture. That decision does not waive the distinct native-runtime provenance
+contract. No PF/Seatbelt research, runtime experiment, auth or launcher work is
+included. The stop recommendation changes no installed package, account, policy,
+PR state, code or Orchestrator behavior.
+
+### R2. Reconfirmed signed installed identity
+
+| LOCAL_STATIC field | Reconfirmed result |
+|---|---|
+| Embedded llmman version label | 0.1.418 (753687a) |
+| Embedded build revision | 753687a5d6335a0bfbea462b759f336141e27e1e |
+| Architecture / format | Mach-O arm64 executable |
+| Signer | Developer ID Application: Docker Inc (9BNSXJN65R) |
+| TeamIdentifier | 9BNSXJN65R |
+| Static SHA-256 | 7b743b89849c27fa50ae9bb11c92fc5fa960ecda2fbfa2667356d6a8275f0cbf |
+| Strict signature verification | Exit 0; digest equals prior C0 evidence |
+
+The binary was read as data only. Native symbol tables, bounded ARM64 disassembly,
+Mach-O address-to-file mapping and referenced constants were inspected. No
+function was loaded/called from llmman; version labels are not CLI output.
+Build metadata and candidate source references remain evidence about this exact
+signed hash, not proof of reproducible correspondence to a complete source tree.
+
+### R3. Default pin — actual code reference, not a literal-only inference
+
+Classification: **CONFIGURABLE_FIXED** for the llama.cpp version selector.
+Default b10951 is proved in the inspected helper; effective first-daemon selection
+is not proved because caller configuration and alternative paths remain open.
+
+| Static code anchor in frozen binary | Observation |
+|---|---|
+| runtime::llama_cpp_pin, VA 0x1001ac2d0–0x1001ac3a4 | Takes optional version input; no-input branch references a seven-byte constant then trims whitespace |
+| VA 0x1001ac324–0x1001ac33c | Referenced bytes at VA 0x101771ae2 are b10951 followed by newline; the trimmed default is b10951 |
+| VA 0x1001ac2ec–0x1001ac320 | Explicit six-byte latest input has a distinct unpinned result; other supplied versions can replace the default |
+| serve_async call at VA 0x1000649a8 | Calls the pin helper using an optional caller field; this is a serve configuration path, not dead literal evidence |
+| Additional call references | Other serve/mediagen paths also call the helper; no complete daemon-to-helper effective configuration proof established |
+
+The latest branch is PRESENT. It cannot be treated as a fixed tag or erased by
+the fact that the compiled default is b10951. Do not infer a closed resolver from
+the absence of a live override read; real user configuration was not inspected.
+
+### R4. Platform asset selection — supported candidate, limited closure
+
+Frozen host target: darwin/arm64. In this compiled arm64 Mach-O,
+llama_release::ensure_llama_server at VA 0x10032e608 constructs the actual
+23-byte suffix **-bin-macos-arm64.tar.gz** from VA 0x101771a73 and constructs
+the backend label **metal**. It passes configuration into its network/cache
+resolution path. This is code-use evidence, not a filename guessed from releases.
+
+The current b10951 release metadata contains one asset matching that suffix:
+llama-b10951-bin-macos-arm64.tar.gz. Combining the default pin, compiled suffix
+and primary release inventory strongly supports the candidate for a fresh
+default llama.cpp network resolution.
+
+**Exact effective platform → selected asset result: UNKNOWN.** The entire
+asset predicate, caller backend choice, existing-cache route and effective sbx
+startup configuration have not been closed. A compiled suffix is not proof that
+every first-start branch downloads that filename. No archive was inspected or
+downloaded, so its actual contained machine code is also not locally verified.
+
+### R5. Upstream release and exact asset metadata
+
+Primary [ggml-org/llama.cpp release](https://github.com/ggml-org/llama.cpp/releases/tag/b10951),
+[release API](https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/b10951)
+and [tag ref API](https://api.github.com/repos/ggml-org/llama.cpp/git/ref/tags/b10951)
+were read. The tag object directly names the expected commit, rather than merely
+trusting the release's target_commitish field.
+
+| VENDOR_RELEASE / upstream primary metadata | Result |
+|---|---|
+| Tag | b10951 |
+| Tag object type / commit | commit / 093a2f86c3e37c54fa3e1f9efb17b304f3433abd |
+| Release target commit | Same expected commit |
+| Draft | false |
+| Prerelease | **true**; not silently classified as a stable release |
+| Published | 2026-09-14T04:05:10Z |
+| Asset | llama-b10951-bin-macos-arm64.tar.gz |
+| Asset ID | 562537950 |
+| Asset size | 11145567 bytes |
+| Published asset digest | sha256:93d024186f1e6ff1d221f5e0b03567f74dc27a49f5bd42c83066d30af4fbbfec |
+| Published download URL | https://github.com/ggml-org/llama.cpp/releases/download/b10951/llama-b10951-bin-macos-arm64.tar.gz |
+
+This verifies publication metadata, not downloaded bytes. No GET/HEAD request to
+the runtime asset was made and no redirect chain was followed. A tag-addressed
+URL is not itself content-addressed immutability; the approved digest must be
+checked against actual bytes before any later execution. Prerelease acceptance
+would be part of a separately reviewed artifact rule, not assumed here.
+
+### R6. Attestation binds the asset — metadata versus verification
+
+Classification: **ATTESTATION_BINDS_ASSET** at the inspected statement/metadata
+level. The [upstream attestation](https://github.com/ggml-org/llama.cpp/attestations/47247883)
+and digest-specific attestation API returned a SLSA v1 DSSE bundle whose decoded
+payload includes the exact macOS arm64 subject and expected SHA-256.
+
+| Binding field | Inspected value |
+|---|---|
+| Subject | llama-b10951-bin-macos-arm64.tar.gz |
+| Subject SHA-256 | 93d024186f1e6ff1d221f5e0b03567f74dc27a49f5bd42c83066d30af4fbbfec |
+| Repository | https://github.com/ggml-org/llama.cpp |
+| Workflow | .github/workflows/release.yml |
+| Workflow ref | refs/heads/master, not a directly asserted b10951 tag ref |
+| Resolved source commit | 093a2f86c3e37c54fa3e1f9efb17b304f3433abd |
+| Run | https://github.com/ggml-org/llama.cpp/actions/runs/34802485537/attempts/1 |
+| Public certificate summary issuer | https://token.actions.githubusercontent.com |
+| Signature / material presence | One DSSE signature; certificate, tlog entries and timestamp material present |
+
+Tag correspondence is established separately by the tag-ref commit match. This
+is stronger than merely finding an attestations page. **No independent DSSE,
+certificate chain, transparency inclusion or timestamp verification was
+performed**, and no actual runtime bytes were hashed. It is not a claim of
+completed cryptographic artifact acceptance. The binding metadata can support a
+future pinned verification rule; it does not prove llmman applies that rule.
+
+### R7. URL construction and fallback register
+
+resolve_release code at VA 0x100313990 references the GitHub API base for
+ggml-org/llama.cpp and uses tags versus latest endpoint format strings. The
+network resolver deserializes release metadata and subsequently uses an asset
+URL. It is not proved to build only the literal approved download URL without
+consulting remote metadata. Current release API supplies the exact URL in R5.
+
+| Resolver surface | Classification | Scope of proof |
+|---|---|---|
+| Explicit supplied version | PRESENT | Version input replaces the default pin |
+| latest release API | PRESENT | Distinct unpinned helper branch and /releases/latest code references |
+| Previously completed cache | PRESENT | Pinned cache check; unpinned branch scans prior directories and can retain a previously downloaded server after network-check failure |
+| Pointer release | PRESENT | try_ensure_from_network compares the sole-asset name nightly-tag.txt, fetches pointer text and resolves another release; second pointer has a rejection path |
+| Alternate mirror / host retry | UNKNOWN | No closed allowed-host/retry table proved |
+| mlx-lm backend | PRESENT | Separate compiled mlx_release/ensure_mlx_server paths; reachability under the effective Docker startup configuration UNKNOWN |
+| Different architecture | UNKNOWN | Compiled default suffix identified; all alternate selectors/configuration not closed |
+| Source-build fallback | UNKNOWN | No closed absence proof |
+| models.dev / custom registry | UNKNOWN for this runtime path | Earlier general binary candidates do not prove llama.cpp resolver use |
+
+No fallback is declared ABSENT_WITH_CLOSED_TABLE. The default fixed-tag path
+need not take every listed branch, but Command Center has not proved that its
+effective startup disables all artifact-changing paths. Do not approve wildcard
+GitHub/CDN access, mirrors or a floating latest download on this evidence.
+
+### R8. Overrides and policy authority
+
+Only static names/interfaces were examined; no actual environment values,
+configuration file, settings database or credential-bearing state was read.
+
+| Name/source | Static evidence | Precedence / freeze / repository implications |
+|---|---|---|
+| --llama-cpp-version / optional version field | Embedded CLI interface plus caller-to-pin code | Fixed default can be replaced; complete CLI/env/config precedence UNKNOWN. Must be server-owned; never repo input |
+| LLAMA_CPP_VERSION | Static parser/config name candidate | Binding/precedence not fully qualified; freeze or strip only after interface review, never assume absence |
+| --runtime / LLMMAN_RUNTIME | Static runtime-selection interface; path/other backends referenced | Effective Docker-provided setting and priority UNKNOWN; cannot silently choose a different backend |
+| --runtime path / host PATH | Embedded help says PATH runtime does not pull | Not proof Docker daemon supports this as an approved preprovision interface; PATH must not resolve project executables |
+| LLMMAN_TMPDIR | Referenced temporary-path function | Can affect staging; complete fallback/precedence UNKNOWN; fixed trusted path required if adopted |
+| LLMMAN_TLS_CA | Static transport configuration interface | Trust configuration must not be repo-controlled; actual resolver interaction/priority UNKNOWN |
+| llmman.conf / sbx settings / feature flags | Configuration surfaces documented or statically present | Startup selection/loading/override precedence unclosed; no real contents inspected |
+| Existing cache / completion marker | Actual cache helper code | Can avoid downloading; provenance/reuse validation must be independently established |
+| Release API / pointer metadata | Actual network resolver paths | Remote metadata affects selection; tag URL alone does not freeze all returned bytes/URLs |
+
+Future policy must freeze the full argv, environment, working directory, PATH,
+config source and cache acceptance, and reject every repository-sourced runtime
+override. A configured source is not neutralized merely by stripping one variable.
+No current effective override absence or startup configuration is claimed.
+
+### R9. Cache/storage and preprovisioning qualification
+
+| Property | Classification / result |
+|---|---|
+| Default data-root category | STATICALLY_OBSERVED: data_root at VA 0x1001d7684 calls home_dir then joins .local, share, llmman |
+| Runtime cache layout | STATICALLY_OBSERVED: install_dir at VA 0x10032d6b4 joins data_root/llama.cpp/version/backend; this arm64 path uses metal |
+| Candidate category | Home-relative .local/share/llmman/llama.cpp/b10951/metal, not an inspected real directory |
+| Completion record | STATICALLY_OBSERVED: completed_binary at VA 0x1004f1ad4 tests .llmman-complete then delegates to find_binary |
+| Reuse across daemon starts | STATICALLY_OBSERVED reusable cache path; no current cache examined |
+| Reuse across sbx versions | Possible when root/tag/backend agree; observed key omits sbx version, not a live cross-version test |
+| Integrity on reuse | No pinned hash/signature/attestation check proved in completion helper; marker/file lookup is not authenticity proof |
+| Official preprovision support for sbx bootstrap | **UNKNOWN** |
+
+Internal cache layout and marker names are not a supported cache-population
+contract. Do not manually synthesize .llmman-complete or seed user state on this
+disassembly evidence. --runtime path is a static interface hint, but neither the
+official Docker models documentation nor this analysis establishes its safe,
+supported end-to-end use by sbx daemon bootstrap with fixed artifact verification.
+No preinstall, cache population, local path, download-disable setting or version
+override is executed. No real runtime/cache data is read, reset or deleted.
+
+### R10. Verification behavior and execution order
+
+The inspected **llama.cpp download path is TRANSPORT_ONLY at this scope**:
+download_to_file at VA 0x10032de18 requests the asset URL, checks HTTP response
+information and streams bytes to a file. No pinned digest, asset-digest,
+signature or attestation comparison was found in that complete bounded function.
+The presence of SHA/sigstore functions elsewhere in the binary does not establish
+they protect this path; some observed hash functions belong to the MLX backend.
+
+The download closure at VA 0x1002ce01c calls download_to_file at VA 0x1002ce088;
+the success branch updates status and directly calls extract at VA 0x1002ce14c,
+then removes staging data. There is no artifact-verification call between the
+successful download and extraction in that closure. The cache helper likewise
+does not prove cryptographic validation. A completed path becomes available to
+the higher-level runtime flow without a pinned-acceptance result established here.
+
+**End-to-end acceptance-before-execution classification: UNKNOWN**, not
+SAFE_ORDER_PROVEN. The complete eventual loader/execute chain and every inlined
+or higher-level acceptance check were not exhaustively proven. Accordingly this
+report does not assert a live UNSAFE_ORDER event or that absolutely no check can
+exist elsewhere. It does explicitly flag that the reviewed download/extract/reuse
+path fails to establish the required pinned authenticity gate. Treat potential
+execution of an unaccepted HTTPS-fetched artifact as BLOCKED, not safe by virtue
+of the updater's Docker signature. No downloaded or cached runtime was executed.
+
+### R11. Chain decision, sole recommendation and next gate
+
+**RUNTIME_RESOLVER_CHAIN_PARTIALLY_PROVEN** is selected because the candidate is
+strongly supported by executable-code references and upstream metadata, not just
+the old b10951 literal. It fails the full requirements: effective selection is
+configurable, fallback/override closure is incomplete, and a cryptographic
+acceptance barrier before reuse/execution is unproved. Some effective behavior
+could be runtime-observed, but observations alone cannot supply authenticity.
+
+**Recommendation: STOP_NATIVE_SBX_PATH under the unchanged provenance contract.**
+No supported verified preprovision interface is qualified, so that cannot be
+recommended as if ready. Trusting the signed updater without prelaunch artifact
+acceptance would consciously weaken the contract and is not approved by this
+task or by the earlier host-TCB acceptance. No daemon smoke is requested to
+work around either gap. This is one recommendation, not a fourth architecture
+option or an automatic policy exception.
+
+**Next gate:** Control Plane review of this resolver result and stop
+recommendation. Further continuation would need a new explicit architecture
+decision and evidence addressing the missing contract; do not launch, download,
+prepopulate cache, alter policy or uninstall anything as a follow-up action.
+No supplier message/issue is sent. Claude's built-in launcher remains
+**INCOMPATIBLE_WITH_COMMAND_CENTER_POLICY** with
+**--dangerously-skip-permissions**; no custom launcher/kit implementation occurs.
+Model weights/downloads, local/remote inference, Claude/Codex execution and
+provider forwarding remain outside scope.
+
+### R12. Documentation validation and safety
+
+Validation checks baseline identity, code-address/constant transcription,
+upstream metadata/subject agreement, evidence scope, section completeness,
+append-only history, Markdown/source/local links/fences, one-file scope and
+git diff --check. No full suite/build/runtime test is run or labelled CI.
+
+sbx executions 0; daemon operations 0; llmman executions 0; runtime executions 0;
+runtime artifact downloads 0; dynamic completion 0; auth/Keychain queries 0;
+credential contents inspected no; network mutation 0; sandbox/VM creation 0;
+provider execution calls 0; MCP/SSH auth 0; Orchestrator activation 0; merge/deploy
+no; Production/UAT/cloud changes no; governance unchanged. Only public release/
+attestation metadata and signed installed bytes were read. No runtime asset
+request or real user credential/state/cache inspection occurred.
+PR #22 remains OPEN / Draft / UNMERGED. No secret or personal absolute path is
+recorded. This report does not authorize bootstrap or weaken the provenance gate.
