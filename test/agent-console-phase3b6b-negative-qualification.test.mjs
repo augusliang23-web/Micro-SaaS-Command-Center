@@ -14,6 +14,7 @@ import {
   evaluateTaskDiff,
   inspectTaskTree,
   runBoundedSequence,
+  serializeQualificationCliOutput,
   validateTaskRelativePath,
 } from '../scripts/phase3b6bSyntheticNegativeQualification.mjs';
 
@@ -141,4 +142,27 @@ test('bounded sequence stops on first non-pass and never retries', async () => {
   assert.equal(result.callsUsed, 1);
   assert.equal(result.retries, 0);
   assert.equal(result.stopped, true);
+});
+
+test('CLI-facing serialized output omits child environment and synthetic host path values', () => {
+  const result = {
+    decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED',
+    preflight: {
+      state: 'PASS',
+      childEnv: {
+        HOME: '/synthetic/home-value',
+        USER: 'synthetic-user-value',
+        LOGNAME: 'synthetic-logname-value',
+        TMPDIR: '/synthetic/tmpdir-value',
+      },
+    },
+  };
+
+  const serialized = serializeQualificationCliOutput(result);
+
+  assert.equal(serialized.includes('childEnv'), false);
+  for (const value of Object.values(result.preflight.childEnv)) {
+    assert.equal(serialized.includes(value), false);
+  }
+  assert.deepEqual(JSON.parse(serialized).preflight, { state: 'PASS' });
 });

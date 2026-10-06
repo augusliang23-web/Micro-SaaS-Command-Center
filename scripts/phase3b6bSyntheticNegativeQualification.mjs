@@ -562,6 +562,14 @@ function saveEvidence(evidence, outputPath) {
   fs.chmodSync(outputPath, 0o600);
 }
 
+export function serializeQualificationCliOutput(result) {
+  const { childEnv, ...sanitizedPreflight } = result.preflight ?? {};
+  const sanitizedResult = result.preflight
+    ? { ...result, preflight: sanitizedPreflight }
+    : result;
+  return JSON.stringify(sanitizedResult, null, 2);
+}
+
 export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = process.cwd(), sourceEnv = process.env, evidencePath = path.join(repositoryRoot, 'docs/evidence/agent-console-phase3b6b-restricted-negative-proof.json') }) {
   const evidence = {
     schemaVersion: 1, observedAt: new Date().toISOString(), baseline: { main: '25692a9a1fdedaf82910630fb767589aa5dccddf', architecturePr: 23, architectureHead: 'ca965997623791c072a98c72ee664b243fde7897' },
@@ -688,9 +696,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.exitCode = 2;
   } else {
     const result = await runPhase3B6BQualification({ binaryPath: args[2] });
-    const { childEnv, ...sanitized } = result.preflight ?? {};
-    if (sanitized.preflight) result.preflight = sanitized.preflight;
-    console.log(JSON.stringify(result, null, 2));
+    console.log(serializeQualificationCliOutput(result));
     process.exitCode = result.decision === 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS' ? 0 : 1;
   }
 }
