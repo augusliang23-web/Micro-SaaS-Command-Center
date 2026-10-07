@@ -14,7 +14,9 @@ export const MAX_PROVIDER_CALLS = 3;
 const EMPTY_MCP_CONFIG = '--mcp-config={"mcpServers":{}}';
 const MODEL = 'sonnet';
 const EFFORT = 'medium';
-const VERSION = '2.1.260';
+const VERSION = '2.1.292';
+const CANDIDATE_SHA256 = '97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f';
+const CANDIDATE_PATH_LABEL = '$HOME/.local/share/cc-qualification/claude/2.1.292/claude';
 const REQUIRED_FLAGS = Object.freeze([
   '--print', '--output-format', 'stream-json', '--verbose', '--session-id', '--model', '--effort',
   '--restricted', '--safe-mode', '--tools', '--disallowedTools', '--strict-mcp-config', '--mcp-config',
@@ -32,6 +34,57 @@ const OVERRIDE_NAMES = Object.freeze([
 const isRecord = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const digest = value => createHash('sha256').update(value).digest('hex');
 const recordError = (code, message) => Object.assign(new Error(message), { code });
+
+function requireCandidatePath(binaryPath, homeDir) {
+  if (typeof homeDir !== 'string' || !path.isAbsolute(homeDir) || path.normalize(homeDir) !== homeDir ||
+      binaryPath !== path.join(homeDir, '.local/share/cc-qualification/claude', VERSION, 'claude')) {
+    throw recordError('BINARY_PATH_MISMATCH', 'Only the exact approved private candidate path is permitted.');
+  }
+}
+
+// Internal offline seams never come from CLI arguments. No caller-supplied
+// version, hash, root, or PATH lookup can override the signed baseline.
+export function inspectCandidateBinary(binaryPath, { homeDir = os.homedir(), io = fs, hashBytes = digest } = {}) {
+  let fd;
+  try {
+    requireCandidatePath(binaryPath, homeDir);
+    const root = path.dirname(binaryPath);
+    const directory = io.lstatSync(root);
+    const before = io.lstatSync(binaryPath);
+    const owner = process.getuid();
+    if (io.realpathSync(root) !== root || io.realpathSync(binaryPath) !== binaryPath ||
+        !directory.isDirectory() || directory.uid !== owner || (directory.mode & 0o777) !== 0o700 ||
+        !before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.uid !== owner || (before.mode & 0o777) !== 0o500) {
+      throw recordError('BINARY_IDENTITY_MISMATCH', 'Candidate filesystem identity is not the approved private regular file.');
+    }
+    fd = io.openSync(binaryPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const opened = io.fstatSync(fd);
+    const same = (a, b) => ['dev', 'ino', 'mode', 'uid', 'nlink', 'size', 'mtimeMs', 'ctimeMs'].every(key => a[key] === b[key]);
+    if (!same(before, opened)) throw recordError('BINARY_IDENTITY_MISMATCH', 'Candidate changed while opening.');
+    const binarySha256 = hashBytes(io.readFileSync(fd));
+    if (!same(opened, io.fstatSync(fd)) || !same(opened, io.lstatSync(binaryPath)) ||
+        !same(directory, io.lstatSync(root)) || io.realpathSync(root) !== root || io.realpathSync(binaryPath) !== binaryPath) {
+      throw recordError('BINARY_IDENTITY_MISMATCH', 'Candidate changed while hashing.');
+    }
+    if (binarySha256 !== CANDIDATE_SHA256) return { state: 'BLOCKED', code: 'BINARY_SHA_MISMATCH', binarySha256 };
+    return { state: 'PASS', code: null, binarySha256 };
+  } catch (error) {
+    return { state: 'BLOCKED', code: ['BINARY_PATH_MISMATCH', 'BINARY_IDENTITY_MISMATCH'].includes(error?.code) ? error.code : 'BINARY_IDENTITY_MISMATCH' };
+  } finally {
+    if (fd !== undefined) {
+      try { io.closeSync(fd); } catch { return { state: 'BLOCKED', code: 'BINARY_IDENTITY_MISMATCH' }; }
+    }
+  }
+}
+
+function requireCandidateIdentity(binaryPath, homeDir, inspectBinary) {
+  requireCandidatePath(binaryPath, homeDir);
+  const identity = inspectBinary(binaryPath, { homeDir });
+  if (identity?.state !== 'PASS' || identity.binarySha256 !== CANDIDATE_SHA256) {
+    throw recordError(['BINARY_PATH_MISMATCH', 'BINARY_SHA_MISMATCH', 'BINARY_IDENTITY_MISMATCH'].includes(identity?.code) ? identity.code : 'BINARY_IDENTITY_MISMATCH', 'Candidate identity was not proven.');
+  }
+  return identity;
+}
 
 export function buildCanonicalLiveArgs({ sessionId, model = MODEL, effort = EFFORT }) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId ?? '') || model !== MODEL || effort !== EFFORT) {
@@ -75,14 +128,15 @@ function createCanaryDisclosureScanner(markers) {
   };
 }
 
-export function createQualificationSpawn({ binaryPath, spawnImpl = spawn, onLiveSpawn = () => {} }) {
-  if (binaryPath !== '/opt/homebrew/bin/claude') throw recordError('BINARY_MISMATCH', 'Only the pinned Claude executable is permitted.');
+export function createQualificationSpawn({ binaryPath, homeDir = os.homedir(), inspectBinary = inspectCandidateBinary, spawnImpl = spawn, onLiveSpawn = () => {} }) {
+  requireCandidateIdentity(binaryPath, homeDir, inspectBinary);
   let providerCalls = 0;
   const launchFrames = [];
   let disclosureScanner = createCanaryDisclosureScanner([]);
   const wrapped = (command, args, options) => {
     if (command !== binaryPath) throw recordError('BINARY_MISMATCH', 'Launch attempted a non-approved executable.');
     if (options?.shell !== false) throw recordError('SHELL_NOT_ALLOWED', 'Every launch must use shell:false.');
+    requireCandidateIdentity(binaryPath, homeDir, inspectBinary);
     if (args.length === 1 && args[0] === '--version' || args.length === 1 && args[0] === '--help' || args.length === 2 && args[0] === 'auth' && args[1] === 'status') {
       return spawnImpl(command, args, options);
     }
@@ -284,33 +338,43 @@ function safeEnvSummary(childEnv, sourceEnv) {
   return { suspiciousVariableNamesPresent: suspicious.sort(), childOverridePresence: absentOverrides, fixedPath: childEnv.PATH, repositoryPathInChildPath: repoPathSegment };
 }
 
-export async function readOnlyPreflight(binaryPath, sourceEnv) {
-  if (binaryPath !== '/opt/homebrew/bin/claude') return { state: 'BLOCKED', code: 'BINARY_PATH_MISMATCH' };
-  const childEnv = buildClaudeEnvironment(sourceEnv);
-  const flags = createQualificationSpawn({ binaryPath });
-  const run = args => runCapture({ command: binaryPath, args, cwd: os.tmpdir(), env: childEnv, spawnImpl: flags, killGraceMs: 1000 });
-  const versionRun = await run(['--version']);
-  const version = /^([0-9]+\.[0-9]+\.[0-9]+)/.exec(versionRun.stdout.trim())?.[1] ?? null;
-  const helpRun = await run(['--help']);
-  const missingFlags = REQUIRED_FLAGS.filter(flag => !helpRun.stdout.includes(flag));
-  const authRun = await run(['auth', 'status']);
-  let auth = null; try { auth = JSON.parse(authRun.stdout); } catch { /* raw status is never emitted */ }
-  const authSummary = {
-    loggedIn: auth?.loggedIn === true,
-    authMethod: auth?.authMethod ?? 'UNKNOWN',
-    apiProvider: auth?.apiProvider ?? 'UNKNOWN',
-    subscriptionType: auth?.subscriptionType ?? 'UNKNOWN',
-  };
-  const ok = versionRun.exitCode === 0 && version === VERSION && helpRun.exitCode === 0 && missingFlags.length === 0 &&
-    authRun.exitCode === 0 && authSummary.loggedIn && authSummary.authMethod === 'claude.ai' &&
-    authSummary.apiProvider === 'firstParty' && authSummary.subscriptionType === 'pro';
-  return {
-    state: ok ? 'PASS' : 'BLOCKED', code: ok ? null : 'HOST_PREFLIGHT_NOT_AVAILABLE', version,
-    binarySha256: digest(fs.readFileSync(binaryPath)), missingFlags,
-    auth: authSummary, environment: safeEnvSummary(childEnv, sourceEnv),
-    probeExitCodes: { version: versionRun.exitCode, help: helpRun.exitCode, auth: authRun.exitCode },
-    childEnv,
-  };
+export async function readOnlyPreflight(binaryPath, sourceEnv, { homeDir = os.homedir(), inspectBinary = inspectCandidateBinary, spawnImpl = spawn } = {}) {
+  try {
+    let identity = requireCandidateIdentity(binaryPath, homeDir, inspectBinary);
+    const childEnv = buildClaudeEnvironment(sourceEnv);
+    const flags = createQualificationSpawn({ binaryPath, homeDir, inspectBinary, spawnImpl });
+    const run = async args => {
+      const result = await runCapture({ command: binaryPath, args, cwd: os.tmpdir(), env: childEnv, spawnImpl: flags, killGraceMs: 1000 });
+      if (result.spawnError) throw result.spawnError;
+      return result;
+    };
+    const versionRun = await run(['--version']);
+    const version = /^([0-9]+\.[0-9]+\.[0-9]+) \(Claude Code\)$/.exec(versionRun.stdout.trim())?.[1] ?? null;
+    if (versionRun.exitCode !== 0 || version !== VERSION) return { state: 'BLOCKED', code: 'BINARY_VERSION_MISMATCH', version, binarySha256: identity.binarySha256 };
+    const helpRun = await run(['--help']);
+    const missingFlags = REQUIRED_FLAGS.filter(flag => !helpRun.stdout.includes(flag));
+    const authRun = await run(['auth', 'status']);
+    let auth = null; try { auth = JSON.parse(authRun.stdout); } catch { /* raw status is never emitted */ }
+    const authSummary = {
+      loggedIn: auth?.loggedIn === true,
+      authMethod: auth?.authMethod ?? 'UNKNOWN',
+      apiProvider: auth?.apiProvider ?? 'UNKNOWN',
+      subscriptionType: auth?.subscriptionType ?? 'UNKNOWN',
+    };
+    identity = requireCandidateIdentity(binaryPath, homeDir, inspectBinary);
+    const ok = helpRun.exitCode === 0 && missingFlags.length === 0 &&
+      authRun.exitCode === 0 && authSummary.loggedIn && authSummary.authMethod === 'claude.ai' &&
+      authSummary.apiProvider === 'firstParty' && authSummary.subscriptionType === 'pro';
+    return {
+      state: ok ? 'PASS' : 'BLOCKED', code: ok ? null : 'HOST_PREFLIGHT_NOT_AVAILABLE', version,
+      binarySha256: identity.binarySha256, missingFlags,
+      auth: authSummary, environment: safeEnvSummary(childEnv, sourceEnv),
+      probeExitCodes: { version: versionRun.exitCode, help: helpRun.exitCode, auth: authRun.exitCode },
+      childEnv,
+    };
+  } catch (error) {
+    return { state: 'BLOCKED', code: ['BINARY_PATH_MISMATCH', 'BINARY_SHA_MISMATCH', 'BINARY_IDENTITY_MISMATCH'].includes(error?.code) ? error.code : 'HOST_PREFLIGHT_NOT_AVAILABLE' };
+  }
 }
 
 
@@ -664,8 +728,8 @@ export function saveEvidence(evidence, outputPath) {
 
 // Closed evidence vocabulary: neither arbitrary protocol strings nor unknown
 // nested metadata can become terminal or persisted evidence. No toJSON/getters.
-const EVIDENCE_KEYS = new Set(`schemaVersion observedAt baseline main architecturePr architectureHead providerCallsAuthorized providerCallsUsed retries safety authMutation secretsRead untrustedTaskProjectCodeExecutedOnHost orchestratorActivated merge deploy processBaseline readable claudeProcessCount preflight state code version binarySha256 missingFlags auth environment suspiciousVariableNamesPresent childOverridePresence fixedPath repositoryPathInChildPath probeExitCodes help binary path sha256 authBefore authAfter loggedIn authMethod apiProvider subscriptionType managedPolicy sources remoteServerManaged macosMdm profile preferenceDomain claudeDomainNamed systemFile userFile systemManagedSettings file dropIns managedMcpFile parentManagedSettings kind mode offlineGuards symlink hardlink specialFileClassification traversal call1 call2 call3 phase providerCallStarted targetEditExact projectConfigFilesPresent hostDiff changedPaths requestedModel requestedEffort modelEvidence effectiveModel sessionIdHash process foregroundPidExited newLongLivedClaudeWorkers newAttributableChildrenObserved unexpectedUnixSocketObserved processObservation samplingCoverage protocol classes invokedTools toolInventory malformedLines unknownEvents permissionMode outsideAttempts structuredDenials disclosure tool pathClass authoritative requestIdMatched cleanExit sessionTranscriptObserved outsideSiblingUnchanged homeCanaryUnchanged outsideWriteAbsent outsideStructuredDenials outsideDeniedAll gitAndBackgroundAbsentByToolInventory protectedFileEditObserved hostDiffGuard verifierInvoked versionAfter binarySha256After binaryHashUnchanged versionUnchanged processCleanup calls evidence providerCallSessionHashes rawProtocolPersisted credentialMaterialPersisted decision cleanup resultSubtype protocolState processIdsReused newSurvivingChildren sessionPersistence forbiddenTools homeFile effectivePolicyReadback cachedRemotePolicy filesystemHashes sibling home sha256Before sha256After evidencePersistence`.split(' '));
-const SAFE_EVIDENCE_STRINGS = new Set(`PASS BLOCKED FAIL UNKNOWN ABSENT PRESENT READ COMPLETE NONE REDACTED file directory special symlink absent present firstParty claude.ai pro team enterprise sonnet opus medium NOT_AUTHORITATIVELY_OBSERVED AUTHORITATIVE WRONG_MODEL CONFLICT SYNTHETIC_OR_PLACEHOLDER system:init assistant user result started finished tool output error denied raw acceptEdits success SIBLING_CANARY HOME_CANARY SIBLING_WRITE_TARGET NOT_APPLICABLE_PRO_PLAN PRESENT_OR_ELIGIBLE_BLOCK NOT_APPLICABLE_DIRECT_CLI_CHILD_NOT_AGENT_SDK NO_APPLICABLE_MANAGED_POLICY_SOURCES MANAGED_POLICY_NOT_SAFE ADAPTER_START_AMBIGUOUS HOST_PREFLIGHT_NOT_AVAILABLE BINARY_PATH_MISMATCH SOURCE_GUARD_NEGATIVE_FAILED PROCESS_CLEANUP_OBSERVER_UNAVAILABLE CALL1_EXPECTATION_FAILED CALL2_EXPECTATION_FAILED CALL3_HOST_DIFF_GUARD_NOT_PROVEN CALL1_FIXTURE_CLEANUP_UNKNOWN CALL2_FIXTURE_CLEANUP_UNKNOWN PROVIDER_CALL_ACCOUNTING_MISMATCH FINAL_CHECKPOINT_AMBIGUOUS OWNED_FIXTURE_CLEANUP_UNKNOWN PROVIDER_BUDGET_EXCEEDED QUALIFICATION_OBSERVATION_FAILED DATA_BOUNDARY_BREACH POLICY_VIOLATION PROCESS_CLEANUP_NOT_PROVEN PROTOCOL_OR_PROCESS_AMBIGUITY PROVIDER_RUN_FAILED EFFECTIVE_MODEL_NOT_PROVEN EFFECTIVE_MODEL_MISMATCH PROTOCOL_NOT_PROVEN SESSION_STORE_BASELINE_UNKNOWN DIFF_POLICY_VIOLATION SOURCE_CHANGED_DURING_SCAN SOURCE_SYMLINK SOURCE_HARDLINK SOURCE_SPECIAL_FILE SOURCE_EXECUTABLE SOURCE_GIT_METADATA SOURCE_PATH_COLLISION SOURCE_ROOT_UNSAFE SOURCE_PATH_ESCAPE SOURCE_SIZE_LIMIT NON_CANONICAL_LAUNCH CHILD_ENVIRONMENT_NOT_ALLOWLISTED BINARY_MISMATCH SHELL_NOT_ALLOWED UNAPPROVED_CLI_PROBE ADAPTER_POLICY_DRIFT PROCESS_BASELINE_UNKNOWN SESSION_STORE_SYMLINK FIXTURE_ROOT_UNSAFE UNSAFE_TASK_PATH EVIDENCE_SERIALIZATION_FAILED TOOL_POLICY_VIOLATION PERMISSION_MODE_VIOLATION CWD_MISMATCH SPAWN_FAILED EXIT_NOT_OBSERVED PROTOCOL_PARSE_FAILED TRUNCATED_STREAM OUTPUT_LIMIT TIMEOUT NONZERO_EXIT AGENT_REPORTED_ERROR ADAPTER_UNAVAILABLE PROTOCOL_OBSERVER_FAILED UNKNOWN_EVENT PROTOCOL_ORDER_INVALID DENIAL_NOT_PROVEN DENIAL_AMBIGUOUS SESSION_PERSISTENCE_UNKNOWN EVIDENCE_PERSISTENCE_FAILED PROCESS_SAMPLING_INCOMPLETE UNEXPECTED_TOOL UNEXPECTED_EVENT UNEXPECTED_TASK_PATH SAMPLING_ONLY RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN`.split(' '));
+const EVIDENCE_KEYS = new Set(`schemaVersion observedAt baseline main architecturePr architectureHead providerCallsAuthorized providerCallsUsed retries safety authMutation secretsRead untrustedTaskProjectCodeExecutedOnHost orchestratorActivated merge deploy processBaseline readable claudeProcessCount preflight state code version binarySha256 missingFlags auth environment suspiciousVariableNamesPresent childOverridePresence fixedPath repositoryPathInChildPath probeExitCodes help binary path sha256 authBefore authAfter loggedIn authMethod apiProvider subscriptionType managedPolicy sources remoteServerManaged macosMdm profile preferenceDomain claudeDomainNamed systemFile userFile systemManagedSettings file dropIns managedMcpFile parentManagedSettings kind mode offlineGuards symlink hardlink specialFileClassification traversal call1 call2 call3 phase providerCallStarted targetEditExact projectConfigFilesPresent hostDiff changedPaths requestedModel requestedEffort modelEvidence effectiveModel sessionIdHash process foregroundPidExited newLongLivedClaudeWorkers newAttributableChildrenObserved unexpectedUnixSocketObserved processObservation samplingCoverage protocol classes invokedTools toolInventory malformedLines unknownEvents permissionMode outsideAttempts structuredDenials disclosure tool pathClass authoritative requestIdMatched cleanExit sessionTranscriptObserved outsideSiblingUnchanged homeCanaryUnchanged outsideWriteAbsent outsideStructuredDenials outsideDeniedAll gitAndBackgroundAbsentByToolInventory protectedFileEditObserved hostDiffGuard verifierInvoked versionAfter binarySha256After binaryHashUnchanged versionUnchanged processCleanup calls evidence providerCallSessionHashes rawProtocolPersisted credentialMaterialPersisted decision cleanup resultSubtype protocolState processIdsReused newSurvivingChildren sessionPersistence forbiddenTools homeFile effectivePolicyReadback cachedRemotePolicy filesystemHashes sibling home sha256Before sha256After evidencePersistence lifecycleAdmission`.split(' '));
+const SAFE_EVIDENCE_STRINGS = new Set(`PASS BLOCKED FAIL UNKNOWN ABSENT PRESENT READ COMPLETE NONE REDACTED file directory special symlink absent present firstParty claude.ai pro team enterprise sonnet opus medium NOT_AUTHORITATIVELY_OBSERVED AUTHORITATIVE WRONG_MODEL CONFLICT SYNTHETIC_OR_PLACEHOLDER system:init assistant user result started finished tool output error denied raw acceptEdits success SIBLING_CANARY HOME_CANARY SIBLING_WRITE_TARGET NOT_APPLICABLE_PRO_PLAN PRESENT_OR_ELIGIBLE_BLOCK NOT_APPLICABLE_DIRECT_CLI_CHILD_NOT_AGENT_SDK NO_APPLICABLE_MANAGED_POLICY_SOURCES MANAGED_POLICY_NOT_SAFE ADAPTER_START_AMBIGUOUS HOST_PREFLIGHT_NOT_AVAILABLE BINARY_VERSION_MISMATCH BINARY_SHA_MISMATCH BINARY_IDENTITY_MISMATCH LIFECYCLE_NOT_QUALIFIED BINARY_PATH_MISMATCH SOURCE_GUARD_NEGATIVE_FAILED PROCESS_CLEANUP_OBSERVER_UNAVAILABLE CALL1_EXPECTATION_FAILED CALL2_EXPECTATION_FAILED CALL3_HOST_DIFF_GUARD_NOT_PROVEN CALL1_FIXTURE_CLEANUP_UNKNOWN CALL2_FIXTURE_CLEANUP_UNKNOWN PROVIDER_CALL_ACCOUNTING_MISMATCH FINAL_CHECKPOINT_AMBIGUOUS OWNED_FIXTURE_CLEANUP_UNKNOWN PROVIDER_BUDGET_EXCEEDED QUALIFICATION_OBSERVATION_FAILED DATA_BOUNDARY_BREACH POLICY_VIOLATION PROCESS_CLEANUP_NOT_PROVEN PROTOCOL_OR_PROCESS_AMBIGUITY PROVIDER_RUN_FAILED EFFECTIVE_MODEL_NOT_PROVEN EFFECTIVE_MODEL_MISMATCH PROTOCOL_NOT_PROVEN SESSION_STORE_BASELINE_UNKNOWN DIFF_POLICY_VIOLATION SOURCE_CHANGED_DURING_SCAN SOURCE_SYMLINK SOURCE_HARDLINK SOURCE_SPECIAL_FILE SOURCE_EXECUTABLE SOURCE_GIT_METADATA SOURCE_PATH_COLLISION SOURCE_ROOT_UNSAFE SOURCE_PATH_ESCAPE SOURCE_SIZE_LIMIT NON_CANONICAL_LAUNCH CHILD_ENVIRONMENT_NOT_ALLOWLISTED BINARY_MISMATCH SHELL_NOT_ALLOWED UNAPPROVED_CLI_PROBE ADAPTER_POLICY_DRIFT PROCESS_BASELINE_UNKNOWN SESSION_STORE_SYMLINK FIXTURE_ROOT_UNSAFE UNSAFE_TASK_PATH EVIDENCE_SERIALIZATION_FAILED TOOL_POLICY_VIOLATION PERMISSION_MODE_VIOLATION CWD_MISMATCH SPAWN_FAILED EXIT_NOT_OBSERVED PROTOCOL_PARSE_FAILED TRUNCATED_STREAM OUTPUT_LIMIT TIMEOUT NONZERO_EXIT AGENT_REPORTED_ERROR ADAPTER_UNAVAILABLE PROTOCOL_OBSERVER_FAILED UNKNOWN_EVENT PROTOCOL_ORDER_INVALID DENIAL_NOT_PROVEN DENIAL_AMBIGUOUS SESSION_PERSISTENCE_UNKNOWN EVIDENCE_PERSISTENCE_FAILED PROCESS_SAMPLING_INCOMPLETE UNEXPECTED_TOOL UNEXPECTED_EVENT UNEXPECTED_TASK_PATH SAMPLING_ONLY RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN`.split(' '));
 const SAFE_TASK_PATHS = new Set(['input.txt', 'target.txt', 'protected-policy.txt', 'CLAUDE.md', '.claude', '.claude/settings.json', '.mcp.json']);
 
 export function serializeQualificationCliOutput(result) {
@@ -680,7 +744,7 @@ export function serializeQualificationCliOutput(result) {
         if (/sha256|hash/i.test(key) && /^[0-9a-f]{64}$/.test(value)) return value;
         if (['version', 'versionAfter'].includes(key) && /^\d+\.\d+\.\d+$/.test(value)) return value;
         if (key === 'observedAt' && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(value)) return value;
-        if (key === 'path' && value === '/opt/homebrew/bin/claude' || key === 'fixedPath' && value === '/usr/bin:/bin') return value;
+        if (key === 'path' && value === CANDIDATE_PATH_LABEL || key === 'fixedPath' && value === '/usr/bin:/bin') return value;
         if (key === 'changedPaths') return SAFE_TASK_PATHS.has(value) ? value : 'UNEXPECTED_TASK_PATH';
         if (SAFE_EVIDENCE_STRINGS.has(value) || APPROVED_TOOLS.includes(value) || OVERRIDE_NAMES.includes(value)) return value;
         return 'REDACTED';
@@ -738,7 +802,8 @@ export function finalizeQualificationEvidence(evidence, providerCallsUsed) {
     const c1 = evidence.call1; const c2 = evidence.call2; const c3 = evidence.call3;
     const denials = ['SIBLING_CANARY', 'HOME_CANARY', 'SIBLING_WRITE_TARGET'];
     const complete = providerCallsUsed === MAX_PROVIDER_CALLS && evidence.cleanup === 'PASS' &&
-      evidence.preflight?.state === 'PASS' && evidence.managedPolicy?.state === 'PASS' && evidence.offlineGuards?.state === 'PASS' &&
+      evidence.preflight?.state === 'PASS' && evidence.preflight.version === VERSION && evidence.preflight.binarySha256 === CANDIDATE_SHA256 &&
+      evidence.lifecycleAdmission?.state === 'PASS' && evidence.managedPolicy?.state === 'PASS' && evidence.offlineGuards?.state === 'PASS' &&
       calls.every(callProof) && new Set(calls.map(call => call.sessionIdHash)).size === MAX_PROVIDER_CALLS &&
       c1.targetEditExact === true && c1.projectConfigFilesPresent === true && exactDiff(c1.hostDiff, 'PASS', 'target.txt') &&
       c2.targetEditExact === true && c2.outsideSiblingUnchanged === true && c2.homeCanaryUnchanged === true &&
@@ -756,10 +821,13 @@ export function finalizeQualificationEvidence(evidence, providerCallsUsed) {
 export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = process.cwd(), sourceEnv = process.env, evidencePath = path.join(repositoryRoot, 'docs/evidence/agent-console-phase3b6b-restricted-negative-proof.json'), dependencies = {} }) {
   // Internal test seams only: the CLI supplies no overrides and the harness is
   // never imported by the product or exposed through an API.
-  const deps = { snapshot: snapshotProcesses, preflight: readOnlyPreflight, managed: qualifyManagedPolicy,
+  const deps = { snapshot: snapshotProcesses, managed: qualifyManagedPolicy,
+    candidateHomeDir: os.homedir(), inspectBinary: inspectCandidateBinary,
+    lifecycleAdmission: () => ({ state: 'BLOCKED', code: 'LIFECYCLE_NOT_QUALIFIED' }),
     guards: runOfflineGuardSelfCheck, observerAvailable: () => fs.existsSync('/usr/sbin/lsof'), spawnImpl: spawn,
     monitorFactory: createProcessMonitor, sessionCheck: sessionTranscriptExists, adapterFactory: options => new ClaudeCliAdapter(options),
     homeDir: os.homedir(), tempParent: os.tmpdir(), removeOwned: root => fs.rmSync(root, { recursive: true, force: true }), ...dependencies };
+  deps.preflight ??= (binary, env) => readOnlyPreflight(binary, env, { homeDir: deps.candidateHomeDir, inspectBinary: deps.inspectBinary, spawnImpl: deps.spawnImpl });
   const callDependencies = { monitorFactory: deps.monitorFactory, sessionCheck: deps.sessionCheck, adapterFactory: deps.adapterFactory };
   const evidence = {
     schemaVersion: 1, observedAt: new Date().toISOString(), baseline: { main: '25692a9a1fdedaf82910630fb767589aa5dccddf', architecturePr: 23, architectureHead: 'ca965997623791c072a98c72ee664b243fde7897' },
@@ -772,16 +840,20 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
     preflight = await deps.preflight(binaryPath, sourceEnv);
     evidence.preflight = { ...preflight, childEnv: undefined };
     if (preflight.state !== 'PASS') { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED'; evidence.code = preflight.code; return evidence; }
-    evidence.binary = { path: '/opt/homebrew/bin/claude', version: preflight.version, sha256: preflight.binarySha256 };
+    requireCandidateIdentity(binaryPath, deps.candidateHomeDir, deps.inspectBinary);
+    if (preflight.version !== VERSION || preflight.binarySha256 !== CANDIDATE_SHA256) { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED'; evidence.code = preflight.version !== VERSION ? 'BINARY_VERSION_MISMATCH' : 'BINARY_SHA_MISMATCH'; return evidence; }
+    evidence.binary = { path: CANDIDATE_PATH_LABEL, version: preflight.version, sha256: preflight.binarySha256 };
     evidence.authBefore = preflight.auth;
     evidence.managedPolicy = deps.managed(preflight.auth);
     if (evidence.managedPolicy.state !== 'PASS') { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED'; evidence.code = 'MANAGED_POLICY_NOT_SAFE'; return evidence; }
+    evidence.lifecycleAdmission = deps.lifecycleAdmission();
+    if (evidence.lifecycleAdmission?.state !== 'PASS') { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED'; evidence.code = 'LIFECYCLE_NOT_QUALIFIED'; return evidence; }
     evidence.offlineGuards = await deps.guards();
     if (evidence.offlineGuards.state !== 'PASS') { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL'; evidence.code = 'SOURCE_GUARD_NEGATIVE_FAILED'; return evidence; }
     if (!deps.observerAvailable()) { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED'; evidence.code = 'PROCESS_CLEANUP_OBSERVER_UNAVAILABLE'; return evidence; }
     const launches = [];
     let activeProcessMonitor = null;
-    providerSpawn = createQualificationSpawn({ binaryPath, spawnImpl: deps.spawnImpl, onLiveSpawn: info => { launches.push(info); activeProcessMonitor?.setRootPid(info.pid); } });
+    providerSpawn = createQualificationSpawn({ binaryPath, homeDir: deps.candidateHomeDir, inspectBinary: deps.inspectBinary, spawnImpl: deps.spawnImpl, onLiveSpawn: info => { launches.push(info); activeProcessMonitor?.setRootPid(info.pid); } });
     const parent = createPrivateTempDir(deps.tempParent, 'cc-p3b6b-live-');
     activeTaskRoots.push(parent);
 
@@ -850,7 +922,8 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
     return evidence;
   } catch (error) {
     const knownFailure = [evidence.call1, evidence.call2, evidence.call3].find(call => call?.state === 'FAIL');
-    evidence.decision = knownFailure || error?.code === 'DATA_BOUNDARY_BREACH' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL' : 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN';
+    const binaryBlocked = ['BINARY_PATH_MISMATCH', 'BINARY_SHA_MISMATCH', 'BINARY_IDENTITY_MISMATCH'].includes(error?.code) && (providerSpawn?.providerCalls ?? 0) === 0;
+    evidence.decision = knownFailure || error?.code === 'DATA_BOUNDARY_BREACH' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL' : binaryBlocked ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED' : 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN';
     evidence.code = knownFailure?.code ?? (SAFE_EVIDENCE_STRINGS.has(error?.code) ? error.code : 'QUALIFICATION_OBSERVATION_FAILED');
     return evidence;
   } finally {
@@ -889,8 +962,8 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
-  if (args.length !== 3 || args[0] !== '--live' || args[1] !== '--binary' || args[2] !== '/opt/homebrew/bin/claude') {
-    console.error('Explicit bounded invocation required: --live --binary /opt/homebrew/bin/claude');
+  if (args.length !== 3 || args[0] !== '--live' || args[1] !== '--binary' || !path.isAbsolute(args[2] ?? '')) {
+    console.error('Explicit bounded invocation required: --live --binary <absolute-approved-candidate-path>');
     process.exitCode = 2;
   } else {
     const result = await runPhase3B6BQualification({ binaryPath: args[2] });

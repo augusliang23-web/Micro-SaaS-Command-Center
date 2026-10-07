@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -21,6 +22,15 @@ import {
   serializeQualificationCliOutput,
   validateTaskRelativePath,
 } from '../scripts/phase3b6bSyntheticNegativeQualification.mjs';
+
+const CANDIDATE_HOME = '/synthetic/home';
+const CANDIDATE_PATH = '/synthetic/home/.local/share/cc-qualification/claude/2.1.292/claude';
+const CANDIDATE_SHA = '97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f';
+// Fake host inspection only; the actual candidate is never executed by tests.
+const fakeBinaryInspection = () => ({ state: 'PASS', code: null, binarySha256: CANDIDATE_SHA });
+function offlineSpawn(options) {
+  return createQualificationSpawn({ homeDir: CANDIDATE_HOME, inspectBinary: fakeBinaryInspection, ...options });
+}
 
 const SESSION = '11111111-2222-4333-8444-555555555555';
 const BASE_ARGS = [
@@ -53,15 +63,15 @@ test('canonical live launcher is the frozen exact 17-argument Phase 3B6A0 vector
 
 test('qualification spawn preserves only approved probes and adds fixed empty MCP config to one live launch', () => {
   const launches = [];
-  const spawn = createQualificationSpawn({
-    binaryPath: '/opt/homebrew/bin/claude',
+  const spawn = offlineSpawn({
+    binaryPath: CANDIDATE_PATH,
     spawnImpl: (command, args, options) => { launches.push({ command, args, options }); return { pid: 123 }; },
   });
   const options = { cwd: '/tmp', env: { PATH: '/usr/bin:/bin' }, shell: false, stdio: ['pipe', 'pipe', 'pipe'] };
-  spawn('/opt/homebrew/bin/claude', ['--version'], options);
-  spawn('/opt/homebrew/bin/claude', ['--help'], options);
-  spawn('/opt/homebrew/bin/claude', ['auth', 'status'], options);
-  spawn('/opt/homebrew/bin/claude', BASE_ARGS, options);
+  spawn(CANDIDATE_PATH, ['--version'], options);
+  spawn(CANDIDATE_PATH, ['--help'], options);
+  spawn(CANDIDATE_PATH, ['auth', 'status'], options);
+  spawn(CANDIDATE_PATH, BASE_ARGS, options);
   assert.equal(launches.length, 4);
   assert.deepEqual(launches[3].args, CANONICAL_ARGS);
   assert.equal(launches.every(x => x.options.shell === false), true);
@@ -69,15 +79,16 @@ test('qualification spawn preserves only approved probes and adds fixed empty MC
 });
 
 test('qualification spawn rejects fallback probes, extra live flags, wrong binary and the fourth call', () => {
-  const spawn = createQualificationSpawn({ binaryPath: '/opt/homebrew/bin/claude', spawnImpl: () => ({ pid: 1 }) });
+  const spawn = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => ({ pid: 1 }) });
   const options = { cwd: '/tmp', env: { PATH: '/usr/bin:/bin' }, shell: false };
-  assert.throws(() => spawn('/opt/homebrew/bin/claude', ['doctor'], options), { code: 'UNAPPROVED_CLI_PROBE' });
+  assert.throws(() => spawn(CANDIDATE_PATH, ['doctor'], options), { code: 'UNAPPROVED_CLI_PROBE' });
   assert.throws(() => spawn('/tmp/other-claude', ['--version'], options), { code: 'BINARY_MISMATCH' });
-  for (let i = 0; i < 3; i += 1) spawn('/opt/homebrew/bin/claude', BASE_ARGS, options);
+  assert.equal(spawn.providerCalls, 0);
+  for (let i = 0; i < 3; i += 1) { spawn(CANDIDATE_PATH, BASE_ARGS, options); assert.equal(spawn.providerCalls, i + 1); }
   assert.equal(spawn.providerCalls, 3);
-  assert.throws(() => spawn('/opt/homebrew/bin/claude', BASE_ARGS, options), { code: 'PROVIDER_BUDGET_EXCEEDED' });
-  const second = createQualificationSpawn({ binaryPath: '/opt/homebrew/bin/claude', spawnImpl: () => ({ pid: 1 }) });
-  assert.throws(() => second('/opt/homebrew/bin/claude', [...BASE_ARGS, '--dangerously-skip-permissions'], options), { code: 'NON_CANONICAL_LAUNCH' });
+  assert.throws(() => spawn(CANDIDATE_PATH, BASE_ARGS, options), { code: 'PROVIDER_BUDGET_EXCEEDED' });
+  const second = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => ({ pid: 1 }) });
+  assert.throws(() => second(CANDIDATE_PATH, [...BASE_ARGS, '--dangerously-skip-permissions'], options), { code: 'NON_CANONICAL_LAUNCH' });
 });
 
 test('task relative paths reject traversal, absolute aliases, empty and non-canonical paths', () => {
@@ -173,18 +184,18 @@ test('CLI-facing serialized output omits child environment and synthetic host pa
 
 test('spawn rejects environment names outside the positive allowlist', () => {
   for (const name of ['DYLD_INSERT_LIBRARIES', 'LD_PRELOAD', 'NODE_PATH', 'BASH_ENV', 'ENV', 'SHELL', 'XDG_CONFIG_HOME', 'CLAUDE_NEW_OVERRIDE']) {
-    const guarded = createQualificationSpawn({ binaryPath: '/opt/homebrew/bin/claude', spawnImpl: () => ({ pid: 1 }) });
-    assert.throws(() => guarded('/opt/homebrew/bin/claude', BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin', [name]: 'synthetic' } }), { code: 'CHILD_ENVIRONMENT_NOT_ALLOWLISTED' }, name);
+    const guarded = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => ({ pid: 1 }) });
+    assert.throws(() => guarded(CANDIDATE_PATH, BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin', [name]: 'synthetic' } }), { code: 'CHILD_ENVIRONMENT_NOT_ALLOWLISTED' }, name);
     assert.equal(guarded.providerCalls, 0);
   }
 });
 
 test('failed spawns consume budget and the counter cannot be reset', () => {
-  const guarded = createQualificationSpawn({ binaryPath: '/opt/homebrew/bin/claude', spawnImpl: () => { throw new Error('synthetic spawn failure'); } });
-  for (let i = 0; i < 3; i += 1) assert.throws(() => guarded('/opt/homebrew/bin/claude', BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin' } }), /synthetic spawn failure/);
+  const guarded = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => { throw new Error('synthetic spawn failure'); } });
+  for (let i = 0; i < 3; i += 1) assert.throws(() => guarded(CANDIDATE_PATH, BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin' } }), /synthetic spawn failure/);
   assert.equal(guarded.providerCalls, 3);
   assert.throws(() => { guarded.providerCalls = 0; }, TypeError);
-  assert.throws(() => guarded('/opt/homebrew/bin/claude', BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin' } }), { code: 'PROVIDER_BUDGET_EXCEEDED' });
+  assert.throws(() => guarded(CANDIDATE_PATH, BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin' } }), { code: 'PROVIDER_BUDGET_EXCEEDED' });
 });
 
 test('diff authority forbids deletion and creation even for allowed edit paths', () => {
@@ -343,11 +354,11 @@ test('all argv expansions and alternate binaries are rejected before a live laun
   const extras = ['--add-dir=/synthetic', '--plugin-dir=/synthetic', '--agents={}', '--bg', '--cloud', '--remote-control', '--resume=x', '--continue', '--dangerously-skip-permissions', '--settings={}', '--fallback-model=opus', '--mcp-config={"mcpServers":{}}'];
   const variants = [...extras.map(flag => [...BASE_ARGS, flag]), BASE_ARGS.slice(1), [...BASE_ARGS, BASE_ARGS[4]], BASE_ARGS.map(arg => arg === '--model=sonnet' ? '--model=opus' : arg), BASE_ARGS.map(arg => arg === '--effort=medium' ? '--effort=high' : arg), BASE_ARGS.map(arg => arg.startsWith('--session-id=') ? '--session-id=not-a-uuid' : arg)];
   for (const args of variants) {
-    const guarded = createQualificationSpawn({ binaryPath: '/opt/homebrew/bin/claude', spawnImpl: () => { assert.fail('must not spawn'); } });
-    assert.throws(() => guarded('/opt/homebrew/bin/claude', args, { shell: false, env: { PATH: '/usr/bin:/bin' } }));
+    const guarded = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => { assert.fail('must not spawn'); } });
+    assert.throws(() => guarded(CANDIDATE_PATH, args, { shell: false, env: { PATH: '/usr/bin:/bin' } }));
     assert.equal(guarded.providerCalls, 0);
   }
-  assert.throws(() => createQualificationSpawn({ binaryPath: '/synthetic/claude' }), { code: 'BINARY_MISMATCH' });
+  assert.throws(() => offlineSpawn({ binaryPath: '/synthetic/claude' }), { code: 'BINARY_PATH_MISMATCH' });
 });
 
 test('positive environment builder strips all provider/helper/shell/config override classes', () => {
@@ -411,7 +422,7 @@ async function simulateSequence(options = {}) {
     let spawned = 0; let checkpoints = 0; let monitorCount = 0; let sessionChecks = 0;
     const completeProcess = { foregroundPidExited: true, processObservation: 'COMPLETE', newLongLivedClaudeWorkers: 0, newAttributableChildrenObserved: 0, unexpectedUnixSocketObserved: false };
     const fakeSpawn = (command, args, spec) => {
-      assert.equal(command, '/opt/homebrew/bin/claude'); assert.deepEqual(args, CANONICAL_ARGS.map(arg => arg.startsWith('--session-id=') ? args[3] : arg)); assert.equal(spec.shell, false);
+      assert.equal(command, CANDIDATE_PATH); assert.deepEqual(args, CANONICAL_ARGS.map(arg => arg.startsWith('--session-id=') ? args[3] : arg)); assert.equal(spec.shell, false);
       spawned += 1; const phase = spawned;
       if (options.spawnThrows) throw new Error('synthetic spawn error');
       const child = new EventEmitter(); child.pid = 10000 + phase; child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.exitCode = null;
@@ -453,18 +464,23 @@ async function simulateSequence(options = {}) {
       return child;
     };
     const dependencies = {
-      homeDir, tempParent: root, snapshot: () => new Map(), observerAvailable: () => true,
+      homeDir, candidateHomeDir: CANDIDATE_HOME, inspectBinary: fakeBinaryInspection,
+      lifecycleAdmission: () => ({ state: 'PASS', code: null }), tempParent: root, snapshot: () => new Map(), observerAvailable: () => true,
       managed: () => ({ state: 'PASS', code: null, sources: {} }), guards: async () => ({ state: options.sourceFail ? 'FAIL' : 'PASS' }),
-      preflight: async () => { checkpoints += 1; return { state: options.preflightBlock ? 'BLOCKED' : 'PASS', version: checkpoints > 1 && options.versionDrift ? '2.1.261' : '2.1.260', binarySha256: checkpoints > 1 && options.hashDrift ? 'b'.repeat(64) : 'a'.repeat(64), auth: { loggedIn: true, authMethod: checkpoints > 1 && options.authDrift ? 'api_key' : 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' } }; },
+      preflight: async () => { checkpoints += 1; return { state: options.preflightBlock ? 'BLOCKED' : 'PASS', version: checkpoints > 1 && options.versionDrift ? '2.1.293' : options.baselineVersion ?? '2.1.292', binarySha256: checkpoints > 1 && options.hashDrift ? 'b'.repeat(64) : options.baselineHash ?? CANDIDATE_SHA, auth: { loggedIn: true, authMethod: checkpoints > 1 && options.authDrift ? 'api_key' : 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' } }; },
       monitorFactory: () => { const phase = ++monitorCount; return { setRootPid() {}, finish: () => ({ ...completeProcess, processObservation: options.processUnknown === phase ? 'UNKNOWN' : 'COMPLETE' }) }; },
       sessionCheck: () => ++sessionChecks % 2 === 0 && options.sessionAfterUnknown ? 'UNKNOWN' : false,
       adapterFactory: config => { const adapter = new ClaudeCliAdapter(config); adapter.probe = async () => ({ available: true }); return adapter; },
       spawnImpl: fakeSpawn,
       removeOwned: entry => { if (options.cleanupFailure) throw new Error('synthetic cleanup failure'); fs.rmSync(entry, { recursive: true, force: true }); },
     };
+    if (options.candidateDrift) dependencies.inspectBinary = () => ({ state: 'BLOCKED', code: 'BINARY_SHA_MISMATCH' });
+    if (options.lifecycleDefault) delete dependencies.lifecycleAdmission;
+    if (options.lifecycleUnknown) dependencies.lifecycleAdmission = () => ({ state: 'UNKNOWN' });
+    if (options.managedDefault) dependencies.managed = auth => qualification.inspectManagedPolicySources({ auth, homeDir: CANDIDATE_HOME, inspectMetadata: () => ({ state: 'ABSENT' }), runSystemRead: () => ({ status: 0, stdout: '', stderr: '' }) });
     if (options.managedBlock) dependencies.managed = () => ({ state: 'BLOCKED', code: 'MANAGED_POLICY_NOT_SAFE' });
     const evidencePath = options.persistenceFailure ? root : path.join(root, 'offline-evidence.json');
-    const evidence = await qualification.runPhase3B6BQualification({ binaryPath: '/opt/homebrew/bin/claude', repositoryRoot: process.cwd(), sourceEnv: { HOME: homeDir, USER: 'synthetic', LOGNAME: 'synthetic' }, evidencePath, dependencies });
+    const evidence = await qualification.runPhase3B6BQualification({ binaryPath: CANDIDATE_PATH, repositoryRoot: process.cwd(), sourceEnv: { HOME: homeDir, USER: 'synthetic', LOGNAME: 'synthetic' }, evidencePath, dependencies });
     const persisted = options.persistenceFailure ? null : JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
     assert.equal(evidence.providerCallsUsed, spawned); if (persisted) assert.equal(persisted.providerCallsUsed, spawned); assert.equal(evidence.retries, 0);
     return { evidence, persisted, spawned };
@@ -475,14 +491,14 @@ test('full three-phase offline simulation uses real adapter and protected diff g
   const { evidence, spawned } = await simulateSequence();
   assert.equal(spawned, 3); assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
   assert.equal(evidence.call2.outsideDeniedAll, true); assert.equal(evidence.call3.hostDiffGuard.state, 'BLOCKED'); assert.equal(evidence.call3.verifierInvoked, false);
-  for (const mutate of [item => { item.call1.process.processObservation = 'UNKNOWN'; }, item => { item.managedPolicy.state = 'UNKNOWN'; }, item => { item.call2.outsideDeniedAll = false; }, item => { item.call1.protocol.protocolState = 'UNKNOWN'; }]) {
+  for (const mutate of [item => { item.preflight.version = '2.1.260'; }, item => { item.preflight.binarySha256 = 'b'.repeat(64); }, item => { item.lifecycleAdmission.state = 'UNKNOWN'; }, item => { item.call1.process.processObservation = 'UNKNOWN'; }, item => { item.managedPolicy.state = 'UNKNOWN'; }, item => { item.call2.outsideDeniedAll = false; }, item => { item.call1.protocol.protocolState = 'UNKNOWN'; }]) {
     const copy = structuredClone(evidence); mutate(copy); qualification.finalizeQualificationEvidence(copy, 3);
     assert.notEqual(copy.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
   }
 });
 
 test('preflight/managed/source rejection prevents all simulated provider launches', async () => {
-  for (const options of [{ preflightBlock: true }, { managedBlock: true }, { sourceFail: true }]) {
+  for (const options of [{ preflightBlock: true }, { baselineVersion: '2.1.260' }, { baselineVersion: '2.1.293' }, { baselineHash: 'b'.repeat(64) }, { managedBlock: true }, { managedDefault: true }, { lifecycleDefault: true }, { lifecycleUnknown: true }, { sourceFail: true }]) {
     const result = await simulateSequence(options); assert.equal(result.spawned, 0); assert.notEqual(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
   }
 });
@@ -543,3 +559,137 @@ test('known protocol FAIL survives a later filesystem observation error', async 
     assert.equal(evidence[`call${phase}`].state, 'FAIL');
   }
 });
+
+
+function syntheticCandidate(root) {
+  const homeDir = fs.realpathSync(root);
+  const binaryPath = path.join(homeDir, '.local/share/cc-qualification/claude/2.1.292/claude');
+  fs.mkdirSync(path.dirname(binaryPath), { recursive: true, mode: 0o700 });
+  const bytes = Buffer.from('OFFLINE_SYNTHETIC_BINARY_BYTES_ONLY');
+  fs.writeFileSync(binaryPath, bytes, { mode: 0o500 });
+  // The signed digest cannot be generated from synthetic bytes. Substitute only
+  // the hashing operation; all path/metadata/descriptor checks remain real.
+  const hashBytes = value => value.equals(bytes) ? CANDIDATE_SHA : createHash('sha256').update(value).digest('hex');
+  const inspect = file => qualification.inspectCandidateBinary(file, { homeDir, hashBytes });
+  return { homeDir, binaryPath, inspect };
+}
+
+test('exact signed candidate identity is accepted and altered bytes are blocked', () => scratch(root => {
+  const { binaryPath, inspect } = syntheticCandidate(root);
+  assert.equal(inspect(binaryPath).state, 'PASS');
+  assert.equal(inspect(binaryPath).binarySha256, CANDIDATE_SHA);
+  // Real hashing of synthetic bytes must fail against the pinned signed digest.
+  assert.equal(qualification.inspectCandidateBinary(binaryPath, { homeDir: fs.realpathSync(root) }).code, 'BINARY_SHA_MISMATCH');
+  fs.chmodSync(binaryPath, 0o700); fs.writeFileSync(binaryPath, 'CHANGED_SYNTHETIC_BYTES'); fs.chmodSync(binaryPath, 0o500);
+  assert.equal(inspect(binaryPath).state, 'BLOCKED');
+  assert.equal(inspect(binaryPath).code, 'BINARY_SHA_MISMATCH');
+}));
+
+test('candidate symlink, ancestor alias, hardlink and unsafe permissions are blocked', () => scratch(root => {
+  const { binaryPath, inspect } = syntheticCandidate(root);
+  const saved = path.join(root, 'saved'); fs.renameSync(binaryPath, saved); fs.symlinkSync(saved, binaryPath);
+  assert.equal(inspect(binaryPath).state, 'BLOCKED');
+  fs.unlinkSync(binaryPath); fs.renameSync(saved, binaryPath);
+  fs.linkSync(binaryPath, saved); assert.equal(inspect(binaryPath).state, 'BLOCKED'); fs.unlinkSync(saved);
+  fs.chmodSync(binaryPath, 0o700); assert.equal(inspect(binaryPath).state, 'BLOCKED'); fs.chmodSync(binaryPath, 0o500);
+  fs.chmodSync(path.dirname(binaryPath), 0o755); assert.equal(inspect(binaryPath).state, 'BLOCKED'); fs.chmodSync(path.dirname(binaryPath), 0o700);
+  const realRoot = path.dirname(binaryPath); fs.renameSync(realRoot, `${realRoot}-real`); fs.symlinkSync(`${realRoot}-real`, realRoot);
+  assert.equal(inspect(binaryPath).state, 'BLOCKED');
+}));
+
+test('only the exact approved candidate path is admitted; no legacy or floating fallback', () => {
+  for (const binaryPath of ['/opt/homebrew/bin/claude', '/tmp/claude', '/synthetic/home/.local/share/cc-qualification/claude/latest/claude', CANDIDATE_PATH.replace('2.1.292', '2.1.293'), CANDIDATE_PATH.replace('/claude/2.', '/claude/../claude/2.'), 'claude']) {
+    assert.throws(() => offlineSpawn({ binaryPath, spawnImpl: () => assert.fail('must not launch') }), { code: 'BINARY_PATH_MISMATCH' });
+  }
+});
+
+function fakeMetadataSpawn(version, commands) {
+  return (command, args, spec) => {
+    commands.push(args);
+    assert.equal(command, CANDIDATE_PATH); assert.equal(spec.shell, false);
+    const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.exitCode = null;
+    const output = args[0] === '--version' ? `${version} (Claude Code)` : args[0] === '--help' ? '--print --output-format stream-json --verbose --session-id --model --effort --restricted --safe-mode --tools --disallowedTools --strict-mcp-config --mcp-config --disable-slash-commands --no-session-persistence --no-chrome --permission-mode acceptEdits --permission-prompts' : JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' });
+    setImmediate(() => { child.stdout.end(`${output}\n`); child.stderr.end(); child.exitCode = 0; setImmediate(() => { child.emit('exit', 0); child.emit('close', 0); }); });
+    child.kill = () => true;
+    return child;
+  };
+}
+
+test('metadata preflight admits only exact 2.1.292 and rejects old, newer and floating versions', async () => {
+  for (const version of ['2.1.292', '2.1.260', '2.1.293', 'latest', '2.1.292-dev']) {
+    const commands = [];
+    const result = await qualification.readOnlyPreflight(CANDIDATE_PATH, { HOME: CANDIDATE_HOME }, { homeDir: CANDIDATE_HOME, inspectBinary: fakeBinaryInspection, spawnImpl: fakeMetadataSpawn(version, commands) });
+    assert.equal(result.state, version === '2.1.292' ? 'PASS' : 'BLOCKED', version);
+    assert.equal(result.binarySha256, CANDIDATE_SHA);
+    if (version !== '2.1.292') assert.deepEqual(commands, [['--version']]);
+  }
+});
+
+test('identity mismatch or drift blocks metadata/live launches before budget consumption', async () => {
+  const bad = () => ({ state: 'BLOCKED', code: 'BINARY_SHA_MISMATCH' });
+  const preflight = await qualification.readOnlyPreflight(CANDIDATE_PATH, {}, { homeDir: CANDIDATE_HOME, inspectBinary: bad, spawnImpl: () => assert.fail('must not launch') });
+  assert.equal(preflight.state, 'BLOCKED'); assert.equal(preflight.code, 'BINARY_SHA_MISMATCH');
+  let valid = true;
+  const guarded = offlineSpawn({ binaryPath: CANDIDATE_PATH, inspectBinary: () => valid ? fakeBinaryInspection() : bad(), spawnImpl: () => assert.fail('must not launch after drift') });
+  valid = false;
+  assert.throws(() => guarded(CANDIDATE_PATH, BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin' } }), { code: 'BINARY_SHA_MISMATCH' });
+  assert.equal(guarded.providerCalls, 0);
+});
+
+test('Sonnet request alias and result usage cannot prove a future concrete execution model', () => {
+  assert.notEqual(observe([initEvent(), resultEvent()]).modelEvidence.state, 'AUTHORITATIVE');
+  assert.notEqual(observe([initEvent(), { ...resultEvent(), modelUsage: { 'claude-sonnet-5-5': {} } }]).modelEvidence.state, 'AUTHORITATIVE');
+  assert.notEqual(observe([initEvent(), assistantEvent('claude-sonnet-unqualified'), resultEvent()]).modelEvidence.state, 'AUTHORITATIVE');
+  assert.equal(observe([initEvent(), assistantEvent('claude-sonnet-5-5'), resultEvent()]).modelEvidence.state, 'UNKNOWN');
+});
+
+
+test('metadata drift between version and help is BLOCKED without subsequent probes', async () => {
+  let inspections = 0; const commands = [];
+  const result = await qualification.readOnlyPreflight(CANDIDATE_PATH, { HOME: CANDIDATE_HOME }, {
+    homeDir: CANDIDATE_HOME,
+    inspectBinary: () => ++inspections <= 3 ? fakeBinaryInspection() : { state: 'BLOCKED', code: 'BINARY_SHA_MISMATCH' },
+    spawnImpl: fakeMetadataSpawn('2.1.292', commands),
+  });
+  assert.equal(result.state, 'BLOCKED'); assert.equal(result.code, 'BINARY_SHA_MISMATCH');
+  assert.deepEqual(commands, [['--version']]); assert.equal(inspections, 4);
+});
+
+test('candidate replacement during descriptor hashing is BLOCKED', () => scratch(root => {
+  const { homeDir, binaryPath } = syntheticCandidate(root);
+  const io = { ...fs, readFileSync: fd => {
+    const bytes = fs.readFileSync(fd);
+    fs.renameSync(binaryPath, `${binaryPath}-old`); fs.writeFileSync(binaryPath, bytes, { mode: 0o500 });
+    return bytes;
+  } };
+  const result = qualification.inspectCandidateBinary(binaryPath, { homeDir, io, hashBytes: () => CANDIDATE_SHA });
+  assert.equal(result.state, 'BLOCKED'); assert.equal(result.code, 'BINARY_IDENTITY_MISMATCH');
+}));
+
+test('missing and special candidate identities fail closed without opening them', () => scratch(root => {
+  const { binaryPath, inspect } = syntheticCandidate(root);
+  fs.unlinkSync(binaryPath); assert.equal(inspect(binaryPath).state, 'BLOCKED');
+  fs.mkdirSync(binaryPath); assert.equal(inspect(binaryPath).state, 'BLOCKED'); fs.rmdirSync(binaryPath);
+  const fifo = spawnSync('/usr/bin/mkfifo', [binaryPath], { shell: false }); assert.equal(fifo.status, 0);
+  assert.equal(inspect(binaryPath).state, 'BLOCKED');
+}));
+
+test('PASS-labelled wrong digest cannot admit the spawn guard', () => {
+  assert.throws(() => offlineSpawn({ binaryPath: CANDIDATE_PATH, inspectBinary: () => ({ state: 'PASS', binarySha256: 'b'.repeat(64) }), spawnImpl: () => assert.fail('must not launch') }), { code: 'BINARY_IDENTITY_MISMATCH' });
+});
+
+
+test('candidate mismatch after preflight is BLOCKED with zero guarded launches', async () => {
+  const { evidence, spawned } = await simulateSequence({ candidateDrift: true });
+  assert.equal(spawned, 0); assert.equal(evidence.providerCallsUsed, 0);
+  assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED');
+  assert.equal(evidence.code, 'BINARY_SHA_MISMATCH');
+});
+
+
+test('candidate root permission drift during hashing is BLOCKED', () => scratch(root => {
+  const { homeDir, binaryPath } = syntheticCandidate(root);
+  const io = { ...fs, readFileSync: fd => { const bytes = fs.readFileSync(fd); fs.chmodSync(path.dirname(binaryPath), 0o755); return bytes; } };
+  const result = qualification.inspectCandidateBinary(binaryPath, { homeDir, io, hashBytes: () => CANDIDATE_SHA });
+  assert.equal(result.state, 'BLOCKED'); assert.equal(result.code, 'BINARY_IDENTITY_MISMATCH');
+}));
