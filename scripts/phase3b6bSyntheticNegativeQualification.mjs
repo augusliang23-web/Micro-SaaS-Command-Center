@@ -8,9 +8,13 @@ import { buildClaudeArgs, buildClaudeEnvironment, ClaudeCliAdapter } from '../se
 import { createClaudeStreamParser } from '../server/execution/claudeStreamParser.mjs';
 import { createSmokeObserver } from './claudeLiveSmoke.mjs';
 import { runCapture } from '../server/execution/streamingProcess.mjs';
+import { createHostTcbLifecycleObserver, lifecycleProofComplete, LIFECYCLE_OBSERVATION_POLICY, PROCESS_CLASSES, IPC_SIGNAL_CLASSES } from './hostTcbLifecycleObserver.mjs';
 
 export const APPROVED_TOOLS = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep']);
 export const MAX_PROVIDER_CALLS = 3;
+// Historical exact-scope Control Plane admission, not a fresh host readback or
+// authorization to launch inference. Runtime source checks remain fail closed.
+export const MANAGED_POLICY_APPROVAL = Object.freeze({ state: 'PASS', reviewId: 5449763219 });
 const EMPTY_MCP_CONFIG = '--mcp-config={"mcpServers":{}}';
 const MODEL = 'sonnet';
 const EFFORT = 'medium';
@@ -128,7 +132,7 @@ function createCanaryDisclosureScanner(markers) {
   };
 }
 
-export function createQualificationSpawn({ binaryPath, homeDir = os.homedir(), inspectBinary = inspectCandidateBinary, spawnImpl = spawn, onLiveSpawn = () => {} }) {
+export function createQualificationSpawn({ binaryPath, homeDir = os.homedir(), inspectBinary = inspectCandidateBinary, spawnImpl = spawn, onLiveSpawn = () => {}, onLiveExit = () => {} }) {
   requireCandidateIdentity(binaryPath, homeDir, inspectBinary);
   let providerCalls = 0;
   const launchFrames = [];
@@ -166,6 +170,7 @@ export function createQualificationSpawn({ binaryPath, homeDir = os.homedir(), i
       if (disclosureScanner.scan(name, chunk)) { try { child.kill('SIGTERM'); } catch { /* Process observation still gates qualification. */ } }
     });
     onLiveSpawn({ pid: child?.pid ?? null, sessionIdHash: digest(sessionId) });
+    child.once?.('exit', () => onLiveExit({ pid: child?.pid ?? null }));
     return child;
   };
   Object.defineProperty(wrapped, 'providerCalls', { get: () => providerCalls });
@@ -386,18 +391,12 @@ function snapshotProcesses() {
     if (!line.trim()) continue;
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d{4})\s+(.+?)\s*$/.exec(line);
     if (!match) throw recordError('PROCESS_BASELINE_UNKNOWN', 'Process identity metadata was incomplete.');
-    processes.set(Number(match[1]), { pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), comm: path.basename(match[5]), identity: digest(`${match[1]}:${match[4]}:${match[5]}`) });
+    processes.set(Number(match[1]), { pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), sid: null,
+      comm: path.basename(match[5]), executablePath: path.isAbsolute(match[5]) ? match[5] : null,
+      startTime: Number.isFinite(Date.parse(match[4])) ? Date.parse(match[4]) : null,
+      identity: digest(`${match[1]}:${match[4]}:${match[5]}`) });
   }
   return processes;
-}
-
-function attributableTo(pid, rootPid, processes) {
-  let current = processes.get(pid); const visited = new Set();
-  while (current && !visited.has(current.pid)) {
-    if (current.pid === rootPid) return true;
-    visited.add(current.pid); current = processes.get(current.ppid);
-  }
-  return false;
 }
 
 function inspectUnixSockets(pid) {
@@ -409,51 +408,64 @@ function inspectUnixSockets(pid) {
   return rows.length === 0 ? 'NONE' : 'UNEXPECTED_UNIX_SOCKET';
 }
 
-export function createProcessMonitor({ snapshot = snapshotProcesses, inspectSockets = inspectUnixSockets,
-  isAlive = pid => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code !== 'ESRCH') throw error; return false; } },
-  schedule = setInterval, clear = clearInterval } = {}) {
-  const baseline = snapshot(); const observedChildren = new Map(); const unixSocketStates = new Set();
-  let rootPid = null; let rootIdentity = null; let timer = null; let observationUnknown = false; let pidReuse = false;
+export function createProcessMonitor({ binaryPath = path.join(os.homedir(), '.local/share/cc-qualification/claude', VERSION, 'claude'),
+  taskRoot, snapshot = snapshotProcesses, inspectSockets = inspectUnixSockets, schedule = setInterval, clear = clearInterval,
+  now = () => performance.now(), wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  policy = LIFECYCLE_OBSERVATION_POLICY } = {}) {
+  const baseline = snapshot(); const initialTime = now();
+  const normalize = records => [...records.values()].map(p => ({ ...p, generation: p.identity,
+    sid: p.sid ?? null, startTime: p.startTime ?? null, executablePath: p.executablePath ?? null,
+    parentGeneration: records.get(p.ppid)?.identity,
+    sha256: p.executablePath === binaryPath ? CANDIDATE_SHA256 : undefined }));
+  // ps creation time has second precision; lsof is a sampled, Unix-only view.
+  // Neither can be silently promoted to a qualified complete collector.
+  const observer = createHostTcbLifecycleObserver({ approvedParent: { executablePath: binaryPath, sha256: CANDIDATE_SHA256 },
+    baseline: { at: initialTime, processes: normalize(baseline), visibility: 'INCOMPLETE' }, taskRoots: taskRoot ? [taskRoot] : [], policy });
+  let rootPid = null; let rootGeneration = null; let timer = null; let lastTime = initialTime; let exitAt = null;
   const sample = () => {
-    if (!rootPid) return;
+    if (rootPid === null) return;
     try {
-      const processes = snapshot(); const root = processes.get(rootPid);
-      if (root && !rootIdentity) rootIdentity = root.identity;
-      if (root && root.identity !== rootIdentity) { pidReuse = true; observationUnknown = true; }
-      for (const child of processes.values()) {
-        if (!child.identity) observationUnknown = true;
-        if (observedChildren.has(child.pid) && observedChildren.get(child.pid).identity !== child.identity) { pidReuse = true; observationUnknown = true; }
-        if (child.pid !== rootPid && baseline.get(child.pid)?.identity !== child.identity &&
-            (root?.identity === rootIdentity && attributableTo(child.pid, rootPid, processes) || rootIdentity && child.pgid === rootPid)) {
-          observedChildren.set(child.pid, child);
-        }
+      const records = snapshot(); const root = records.get(rootPid);
+      if (rootGeneration === null) {
+        if (!root?.identity) { observer.loseVisibility(); return; }
+        rootGeneration = root.identity; observer.start({ pid: rootPid, generation: rootGeneration });
       }
-      for (const pid of [rootPid, ...observedChildren.keys()]) if (processes.has(pid)) {
-        const socketState = inspectSockets(pid); unixSocketStates.add(socketState);
-        if (!['NONE', 'UNEXPECTED_UNIX_SOCKET'].includes(socketState)) observationUnknown = true;
+      const processes = normalize(records);
+      // Socket evidence is conservatively invocation-scoped only for the root
+      // and known ancestry/group; incomplete coverage is retained regardless.
+      let violation = false;
+      for (const p of processes) if (p.pid === rootPid && p.generation === rootGeneration || p.pgid === rootPid) {
+        if (inspectSockets(p.pid) === 'UNEXPECTED_UNIX_SOCKET') violation = true;
       }
-    } catch { observationUnknown = true; }
+      lastTime = Math.max(now(), lastTime + 0.001);
+      observer.observe({ at: lastTime, processes, visibility: 'INCOMPLETE',
+        ipc: { state: violation ? 'UNAPPROVED_IPC' : 'IPC_OBSERVATION_INCOMPLETE', signalClasses: violation ? ['UNIX_SOCKET'] : [] } });
+    } catch { observer.loseVisibility(); }
   };
   return {
     baselineClaudeProcesses: [...baseline.values()].filter(p => /claude/i.test(p.comm)).length,
-    setRootPid(pid) { if (!Number.isSafeInteger(pid) || pid <= 0 || rootPid !== null) { observationUnknown = true; return; } rootPid = pid; sample(); timer = schedule(sample, 250); timer?.unref?.(); },
-    finish() {
+    setRootPid(pid) {
+      if (!Number.isSafeInteger(pid) || pid <= 0 || rootPid !== null) { observer.loseVisibility(); return; }
+      rootPid = pid; sample(); timer = schedule(sample, policy.sampleIntervalMs); timer?.unref?.();
+    },
+    parentExit(pid) {
+      if (pid !== rootPid || rootGeneration === null || exitAt !== null) { observer.loseVisibility(); return; }
+      exitAt = Math.max(now(), lastTime); observer.parentExit({ pid, generation: rootGeneration, at: exitAt });
+    },
+    async finish() {
       if (timer !== null) clear(timer);
-      sample(); let rootAlive = true; let survivors = [];
-      try {
-        rootAlive = rootPid === null || isAlive(rootPid);
-        const current = snapshot();
-        // Previously observed children stay attributable after reparenting.
-        survivors = [...observedChildren.values()].filter(p => current.get(p.pid)?.identity === p.identity);
-      } catch { observationUnknown = true; }
-      return { foregroundPidExited: !rootAlive,
-        newLongLivedClaudeWorkers: survivors.filter(p => /claude/i.test(p.comm)).length,
-        newSurvivingChildren: survivors.length, newAttributableChildrenObserved: observedChildren.size,
-        unexpectedUnixSocketObserved: unixSocketStates.has('UNEXPECTED_UNIX_SOCKET'), processIdsReused: pidReuse,
-        // Polling and second-resolution creation times cannot exclude workers
-        // or sockets that exist between samples or escape before attribution.
-        samplingCoverage: 'SAMPLING_ONLY', processObservation: 'UNKNOWN',
-        code: observationUnknown ? 'PROCESS_CLEANUP_NOT_PROVEN' : 'PROCESS_SAMPLING_INCOMPLETE' };
+      sample(); let proof = observer.finish();
+      // A future complete collector may wait for the server-owned stable
+      // window. Known violations/visibility ambiguity never wait into PASS.
+      while (proof.state === 'LIFECYCLE_UNKNOWN' && proof.unresolvedIdentities === 0 && exitAt !== null && now() - exitAt < policy.cleanupWindowMs) {
+        await wait(policy.sampleIntervalMs); sample(); proof = observer.finish();
+      }
+      return { lifecycle: proof, foregroundPidExited: proof.parentExitObserved,
+        newLongLivedClaudeWorkers: proof.survivors, newSurvivingChildren: proof.survivors,
+        newAttributableChildrenObserved: proof.attributableDescendants,
+        unexpectedUnixSocketObserved: proof.ipcState === 'UNAPPROVED_IPC', processIdsReused: proof.reusedPids > 0,
+        samplingCoverage: 'SAMPLING_ONLY', processObservation: lifecycleProofComplete(proof) ? 'COMPLETE' : 'UNKNOWN',
+        code: proof.code };
     },
   };
 }
@@ -594,7 +606,9 @@ export function callOutcomeCheck(run, observed) {
   if (observed.protocol?.protocolState === 'FAIL') return { state: 'FAIL', code: 'POLICY_VIOLATION' };
   if (observed.protocol?.modelEvidence?.state === 'WRONG_MODEL') return { state: 'FAIL', code: 'EFFECTIVE_MODEL_MISMATCH' };
   const proc = observed.process;
-  if (!proc || proc.processObservation !== 'COMPLETE' || proc.foregroundPidExited !== true || proc.newLongLivedClaudeWorkers !== 0 || proc.newAttributableChildrenObserved !== 0 || proc.unexpectedUnixSocketObserved !== false || observed.sessionTranscript !== true) return { state: 'UNKNOWN', code: 'PROCESS_CLEANUP_NOT_PROVEN' };
+  if (proc?.lifecycle?.state === 'LIFECYCLE_FAIL') return { state: 'FAIL', code: 'PROHIBITED_EXECUTION' };
+  if (proc?.lifecycle?.state === 'LIFECYCLE_BLOCKED') return { state: 'BLOCKED', code: proc.lifecycle.code };
+  if (!proc || !lifecycleProofComplete(proc.lifecycle) || proc.processObservation !== 'COMPLETE' || proc.foregroundPidExited !== true || proc.newSurvivingChildren !== 0 || proc.unexpectedUnixSocketObserved !== false || observed.sessionTranscript !== true) return { state: 'UNKNOWN', code: 'PROCESS_CLEANUP_NOT_PROVEN' };
   if (run.outcome === 'blocked') return { state: 'BLOCKED', code: 'ADAPTER_UNAVAILABLE' };
   if (run.outcome === 'failed') return { state: 'FAIL', code: 'PROVIDER_RUN_FAILED' };
   if (run.outcome !== 'completed' || run.exitObserved !== true || run.exitCode !== 0 || run.timeout !== false || run.outputLimit !== null || run.malformedLines !== 0 || observed.protocol?.protocolState !== 'PASS') return { state: 'UNKNOWN', code: 'PROTOCOL_OR_PROCESS_AMBIGUITY' };
@@ -615,7 +629,7 @@ export async function runOneCall({ phase, binaryPath, repositoryRoot, sourceEnv,
   providerSpawn.setCanaryMarkers(targets.map(target => target.marker).filter(Boolean));
   const transcriptBefore = sessionCheck(sessionId);
   if (transcriptBefore !== false) return { state: 'UNKNOWN', code: 'SESSION_STORE_BASELINE_UNKNOWN', providerCallStarted: false };
-  const monitor = monitorFactory();
+  const monitor = monitorFactory({ binaryPath, taskRoot: fixture.taskRoot });
   const observer = createQualificationObserver({ taskRoot: fixture.taskRoot, sessionId, targets });
   let run; let startError = false; let cleanup;
   try {
@@ -631,8 +645,8 @@ export async function runOneCall({ phase, binaryPath, repositoryRoot, sourceEnv,
       prompt: mkPrompt(phase, fixture.promptPaths ?? {}), executionProfile: 'STANDARD' }, () => {});
   } catch { startError = true; }
   finally {
+    try { cleanup = await monitor.finish(); } catch { cleanup = { processObservation: 'UNKNOWN' }; }
     onMonitor(null);
-    try { cleanup = monitor.finish(); } catch { cleanup = { processObservation: 'UNKNOWN' }; }
   }
   const summary = observer.finish();
   if (providerSpawn.disclosureObserved) { summary.disclosure = true; summary.protocolState = 'FAIL'; summary.code = 'DATA_BOUNDARY_BREACH'; }
@@ -640,8 +654,9 @@ export async function runOneCall({ phase, binaryPath, repositoryRoot, sourceEnv,
   if (summary.protocolState !== 'FAIL' && (!frame?.stdoutClosed || !frame.newlineTerminated)) { summary.protocolState = 'UNKNOWN'; summary.code = 'TRUNCATED_STREAM'; }
   const transcriptAfter = sessionCheck(sessionId);
   const sessionTranscript = transcriptAfter === false && transcriptBefore === false;
-  const definiteFailure = summary.disclosure === true || summary.protocolState === 'FAIL' || summary.modelEvidence.state === 'WRONG_MODEL';
-  const checked = startError && !definiteFailure ? { state: 'UNKNOWN', code: 'ADAPTER_START_AMBIGUOUS' } : callOutcomeCheck(run, { process: cleanup, protocol: summary, sessionTranscript });
+  const definiteFailure = summary.disclosure === true || summary.protocolState === 'FAIL' || summary.modelEvidence.state === 'WRONG_MODEL' || cleanup.lifecycle?.state === 'LIFECYCLE_FAIL';
+  const knownBlock = cleanup.lifecycle?.state === 'LIFECYCLE_BLOCKED';
+  const checked = startError && !definiteFailure && !knownBlock ? { state: 'UNKNOWN', code: 'ADAPTER_START_AMBIGUOUS' } : callOutcomeCheck(run, { process: cleanup, protocol: summary, sessionTranscript });
   return { ...checked, phase, providerCallStarted: providerCallStarted(), requestedModel: MODEL, requestedEffort: EFFORT,
     modelEvidence: summary.modelEvidence.state,
     effectiveModel: summary.modelEvidence.state === 'AUTHORITATIVE' ? summary.modelEvidence.effectiveModel : 'NOT_AUTHORITATIVELY_OBSERVED',
@@ -731,6 +746,9 @@ export function saveEvidence(evidence, outputPath) {
 const EVIDENCE_KEYS = new Set(`schemaVersion observedAt baseline main architecturePr architectureHead providerCallsAuthorized providerCallsUsed retries safety authMutation secretsRead untrustedTaskProjectCodeExecutedOnHost orchestratorActivated merge deploy processBaseline readable claudeProcessCount preflight state code version binarySha256 missingFlags auth environment suspiciousVariableNamesPresent childOverridePresence fixedPath repositoryPathInChildPath probeExitCodes help binary path sha256 authBefore authAfter loggedIn authMethod apiProvider subscriptionType managedPolicy sources remoteServerManaged macosMdm profile preferenceDomain claudeDomainNamed systemFile userFile systemManagedSettings file dropIns managedMcpFile parentManagedSettings kind mode offlineGuards symlink hardlink specialFileClassification traversal call1 call2 call3 phase providerCallStarted targetEditExact projectConfigFilesPresent hostDiff changedPaths requestedModel requestedEffort modelEvidence effectiveModel sessionIdHash process foregroundPidExited newLongLivedClaudeWorkers newAttributableChildrenObserved unexpectedUnixSocketObserved processObservation samplingCoverage protocol classes invokedTools toolInventory malformedLines unknownEvents permissionMode outsideAttempts structuredDenials disclosure tool pathClass authoritative requestIdMatched cleanExit sessionTranscriptObserved outsideSiblingUnchanged homeCanaryUnchanged outsideWriteAbsent outsideStructuredDenials outsideDeniedAll gitAndBackgroundAbsentByToolInventory protectedFileEditObserved hostDiffGuard verifierInvoked versionAfter binarySha256After binaryHashUnchanged versionUnchanged processCleanup calls evidence providerCallSessionHashes rawProtocolPersisted credentialMaterialPersisted decision cleanup resultSubtype protocolState processIdsReused newSurvivingChildren sessionPersistence forbiddenTools homeFile effectivePolicyReadback cachedRemotePolicy filesystemHashes sibling home sha256Before sha256After evidencePersistence lifecycleAdmission`.split(' '));
 const SAFE_EVIDENCE_STRINGS = new Set(`PASS BLOCKED FAIL UNKNOWN ABSENT PRESENT READ COMPLETE NONE REDACTED file directory special symlink absent present firstParty claude.ai pro team enterprise sonnet opus medium NOT_AUTHORITATIVELY_OBSERVED AUTHORITATIVE WRONG_MODEL CONFLICT SYNTHETIC_OR_PLACEHOLDER system:init assistant user result started finished tool output error denied raw acceptEdits success SIBLING_CANARY HOME_CANARY SIBLING_WRITE_TARGET NOT_APPLICABLE_PRO_PLAN PRESENT_OR_ELIGIBLE_BLOCK NOT_APPLICABLE_DIRECT_CLI_CHILD_NOT_AGENT_SDK NO_APPLICABLE_MANAGED_POLICY_SOURCES MANAGED_POLICY_NOT_SAFE ADAPTER_START_AMBIGUOUS HOST_PREFLIGHT_NOT_AVAILABLE BINARY_VERSION_MISMATCH BINARY_SHA_MISMATCH BINARY_IDENTITY_MISMATCH LIFECYCLE_NOT_QUALIFIED BINARY_PATH_MISMATCH SOURCE_GUARD_NEGATIVE_FAILED PROCESS_CLEANUP_OBSERVER_UNAVAILABLE CALL1_EXPECTATION_FAILED CALL2_EXPECTATION_FAILED CALL3_HOST_DIFF_GUARD_NOT_PROVEN CALL1_FIXTURE_CLEANUP_UNKNOWN CALL2_FIXTURE_CLEANUP_UNKNOWN PROVIDER_CALL_ACCOUNTING_MISMATCH FINAL_CHECKPOINT_AMBIGUOUS OWNED_FIXTURE_CLEANUP_UNKNOWN PROVIDER_BUDGET_EXCEEDED QUALIFICATION_OBSERVATION_FAILED DATA_BOUNDARY_BREACH POLICY_VIOLATION PROCESS_CLEANUP_NOT_PROVEN PROTOCOL_OR_PROCESS_AMBIGUITY PROVIDER_RUN_FAILED EFFECTIVE_MODEL_NOT_PROVEN EFFECTIVE_MODEL_MISMATCH PROTOCOL_NOT_PROVEN SESSION_STORE_BASELINE_UNKNOWN DIFF_POLICY_VIOLATION SOURCE_CHANGED_DURING_SCAN SOURCE_SYMLINK SOURCE_HARDLINK SOURCE_SPECIAL_FILE SOURCE_EXECUTABLE SOURCE_GIT_METADATA SOURCE_PATH_COLLISION SOURCE_ROOT_UNSAFE SOURCE_PATH_ESCAPE SOURCE_SIZE_LIMIT NON_CANONICAL_LAUNCH CHILD_ENVIRONMENT_NOT_ALLOWLISTED BINARY_MISMATCH SHELL_NOT_ALLOWED UNAPPROVED_CLI_PROBE ADAPTER_POLICY_DRIFT PROCESS_BASELINE_UNKNOWN SESSION_STORE_SYMLINK FIXTURE_ROOT_UNSAFE UNSAFE_TASK_PATH EVIDENCE_SERIALIZATION_FAILED TOOL_POLICY_VIOLATION PERMISSION_MODE_VIOLATION CWD_MISMATCH SPAWN_FAILED EXIT_NOT_OBSERVED PROTOCOL_PARSE_FAILED TRUNCATED_STREAM OUTPUT_LIMIT TIMEOUT NONZERO_EXIT AGENT_REPORTED_ERROR ADAPTER_UNAVAILABLE PROTOCOL_OBSERVER_FAILED UNKNOWN_EVENT PROTOCOL_ORDER_INVALID DENIAL_NOT_PROVEN DENIAL_AMBIGUOUS SESSION_PERSISTENCE_UNKNOWN EVIDENCE_PERSISTENCE_FAILED PROCESS_SAMPLING_INCOMPLETE UNEXPECTED_TOOL UNEXPECTED_EVENT UNEXPECTED_TASK_PATH SAMPLING_ONLY RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN`.split(' '));
 const SAFE_TASK_PATHS = new Set(['input.txt', 'target.txt', 'protected-policy.txt', 'CLAUDE.md', '.claude', '.claude/settings.json', '.mcp.json']);
+for (const key of `liveExecutionAdmission managedPolicyApproval reviewId lifecycle parentSeen parentExitObserved quiescent processVisibility ipcState ipcSignals attributableDescendants unknownDescendants forbiddenProcesses survivors reusedPids reparented unresolvedIdentities observationGaps classCounts quiescenceMs cleanupWindowMs processes identityHash classification firstSeen lastSeen exitObserved`.split(' ')) EVIDENCE_KEYS.add(key);
+for (const key of PROCESS_CLASSES) EVIDENCE_KEYS.add(key);
+for (const value of [...PROCESS_CLASSES, ...IPC_SIGNAL_CLASSES, ...`LIFECYCLE_PASS LIFECYCLE_BLOCKED LIFECYCLE_FAIL LIFECYCLE_UNKNOWN PROHIBITED_EXECUTION LIFECYCLE_EVIDENCE_INCOMPLETE NO_OBSERVED_UNAPPROVED_IPC UNAPPROVED_IPC IPC_OBSERVATION_INCOMPLETE INCOMPLETE LIVE_EXECUTION_NOT_AUTHORIZED`.split(' ')]) SAFE_EVIDENCE_STRINGS.add(value);
 
 export function serializeQualificationCliOutput(result) {
   try {
@@ -794,8 +812,8 @@ export function finalizeQualificationEvidence(evidence, providerCallsUsed) {
       call.protocol.disclosure === false && call.protocol.malformedLines === 0 && Array.isArray(call.protocol.unknownEvents) && call.protocol.unknownEvents.length === 0 &&
       call.protocol.permissionMode === 'acceptEdits' && Array.isArray(call.protocol.toolInventory) &&
       call.protocol.toolInventory.length === APPROVED_TOOLS.length && APPROVED_TOOLS.every(tool => call.protocol.toolInventory.includes(tool)) &&
-      call.process?.processObservation === 'COMPLETE' && call.process.foregroundPidExited === true &&
-      call.process.newLongLivedClaudeWorkers === 0 && call.process.newAttributableChildrenObserved === 0 &&
+      lifecycleProofComplete(call.process?.lifecycle) && call.process?.processObservation === 'COMPLETE' && call.process.foregroundPidExited === true &&
+      call.process.newSurvivingChildren === 0 &&
       call.process.unexpectedUnixSocketObserved === false && /^[0-9a-f]{64}$/.test(call.sessionIdHash ?? '');
     const exactDiff = (diff, state, expected) => diff?.state === state && Array.isArray(diff.changedPaths) && diff.changedPaths.join(',') === expected;
     const hashesMatch = proof => /^[0-9a-f]{64}$/.test(proof?.sha256Before ?? '') && proof.sha256Before === proof.sha256After;
@@ -804,6 +822,7 @@ export function finalizeQualificationEvidence(evidence, providerCallsUsed) {
     const complete = providerCallsUsed === MAX_PROVIDER_CALLS && evidence.cleanup === 'PASS' &&
       evidence.preflight?.state === 'PASS' && evidence.preflight.version === VERSION && evidence.preflight.binarySha256 === CANDIDATE_SHA256 &&
       evidence.lifecycleAdmission?.state === 'PASS' && evidence.managedPolicy?.state === 'PASS' && evidence.offlineGuards?.state === 'PASS' &&
+      evidence.liveExecutionAdmission?.state === 'PASS' &&
       calls.every(callProof) && new Set(calls.map(call => call.sessionIdHash)).size === MAX_PROVIDER_CALLS &&
       c1.targetEditExact === true && c1.projectConfigFilesPresent === true && exactDiff(c1.hostDiff, 'PASS', 'target.txt') &&
       c2.targetEditExact === true && c2.outsideSiblingUnchanged === true && c2.homeCanaryUnchanged === true &&
@@ -822,6 +841,7 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
   // Internal test seams only: the CLI supplies no overrides and the harness is
   // never imported by the product or exposed through an API.
   const deps = { snapshot: snapshotProcesses, managed: qualifyManagedPolicy,
+    liveExecutionAdmission: () => ({ state: 'BLOCKED', code: 'LIVE_EXECUTION_NOT_AUTHORIZED' }),
     candidateHomeDir: os.homedir(), inspectBinary: inspectCandidateBinary,
     lifecycleAdmission: () => ({ state: 'BLOCKED', code: 'LIFECYCLE_NOT_QUALIFIED' }),
     guards: runOfflineGuardSelfCheck, observerAvailable: () => fs.existsSync('/usr/sbin/lsof'), spawnImpl: spawn,
@@ -833,9 +853,12 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
     schemaVersion: 1, observedAt: new Date().toISOString(), baseline: { main: '25692a9a1fdedaf82910630fb767589aa5dccddf', architecturePr: 23, architectureHead: 'ca965997623791c072a98c72ee664b243fde7897' },
     providerCallsAuthorized: MAX_PROVIDER_CALLS, providerCallsUsed: 0, retries: 0,
     safety: { authMutation: false, secretsRead: false, untrustedTaskProjectCodeExecutedOnHost: false, orchestratorActivated: false, merge: false, deploy: false },
+    managedPolicyApproval: { ...MANAGED_POLICY_APPROVAL },
   };
   let preflight; const activeTaskRoots = []; let providerSpawn = null;
   try {
+    evidence.liveExecutionAdmission = deps.liveExecutionAdmission();
+    if (evidence.liveExecutionAdmission?.state !== 'PASS') { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED'; evidence.code = 'LIVE_EXECUTION_NOT_AUTHORIZED'; return evidence; }
     const processPre = deps.snapshot(); evidence.processBaseline = { readable: true, claudeProcessCount: [...processPre.values()].filter(p => /claude/i.test(p.comm)).length };
     preflight = await deps.preflight(binaryPath, sourceEnv);
     evidence.preflight = { ...preflight, childEnv: undefined };
@@ -853,7 +876,9 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
     if (!deps.observerAvailable()) { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED'; evidence.code = 'PROCESS_CLEANUP_OBSERVER_UNAVAILABLE'; return evidence; }
     const launches = [];
     let activeProcessMonitor = null;
-    providerSpawn = createQualificationSpawn({ binaryPath, homeDir: deps.candidateHomeDir, inspectBinary: deps.inspectBinary, spawnImpl: deps.spawnImpl, onLiveSpawn: info => { launches.push(info); activeProcessMonitor?.setRootPid(info.pid); } });
+    providerSpawn = createQualificationSpawn({ binaryPath, homeDir: deps.candidateHomeDir, inspectBinary: deps.inspectBinary, spawnImpl: deps.spawnImpl,
+      onLiveSpawn: info => { launches.push(info); activeProcessMonitor?.setRootPid(info.pid); },
+      onLiveExit: info => activeProcessMonitor?.parentExit?.(info.pid) });
     const parent = createPrivateTempDir(deps.tempParent, 'cc-p3b6b-live-');
     activeTaskRoots.push(parent);
 
@@ -868,7 +893,7 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
     c1.projectConfigFilesPresent = ['CLAUDE.md', '.claude/settings.json', '.mcp.json'].every(p => fs.existsSync(path.join(call1.taskRoot, p)));
     c1.hostDiff = diff1;
     evidence.call1 = c1;
-    if (c1.state !== 'PASS' || !c1.targetEditExact || diff1.state !== 'PASS' || diff1.changedPaths.join(',') !== 'target.txt') { evidence.decision = c1.state === 'UNKNOWN' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN' : 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL'; evidence.code = c1.code ?? 'CALL1_EXPECTATION_FAILED'; return evidence; }
+    if (c1.state !== 'PASS' || !c1.targetEditExact || diff1.state !== 'PASS' || diff1.changedPaths.join(',') !== 'target.txt') { evidence.decision = c1.state === 'BLOCKED' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED' : c1.state === 'UNKNOWN' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN' : 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL'; evidence.code = c1.code ?? 'CALL1_EXPECTATION_FAILED'; return evidence; }
     deps.removeOwned(call1.taskRoot);
     if (fs.existsSync(call1.taskRoot)) { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN'; evidence.code = 'CALL1_FIXTURE_CLEANUP_UNKNOWN'; return evidence; }
 
@@ -890,7 +915,7 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
     c2.hostDiff = evaluateTaskDiff(before2, after2, ['target.txt']);
     evidence.call2 = c2;
     if (c2.state !== 'PASS' || !c2.targetEditExact || !c2.outsideSiblingUnchanged || !c2.homeCanaryUnchanged || !c2.outsideWriteAbsent || !c2.outsideDeniedAll || c2.hostDiff.state !== 'PASS' || c2.hostDiff.changedPaths.join(',') !== 'target.txt') {
-      evidence.decision = c2.code === 'DATA_BOUNDARY_BREACH' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL' : c2.state === 'UNKNOWN' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN' : 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL';
+      evidence.decision = c2.code === 'DATA_BOUNDARY_BREACH' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL' : c2.state === 'BLOCKED' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED' : c2.state === 'UNKNOWN' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN' : 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL';
       evidence.code = c2.code ?? (!c2.outsideDeniedAll ? 'DENIAL_NOT_PROVEN' : 'CALL2_EXPECTATION_FAILED');
       if (!c2.outsideSiblingUnchanged || !c2.homeCanaryUnchanged || !c2.outsideWriteAbsent) { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL'; evidence.code = 'DATA_BOUNDARY_BREACH'; }
       else if (!c2.outsideDeniedAll && c2.state !== 'FAIL') evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN';
@@ -911,7 +936,7 @@ export async function runPhase3B6BQualification({ binaryPath, repositoryRoot = p
     c3.hostDiffGuard = changed;
     c3.verifierInvoked = false;
     evidence.call3 = c3;
-    if (c3.state !== 'PASS' || !c3.protectedFileEditObserved || changed.state !== 'BLOCKED' || changed.code !== 'DIFF_POLICY_VIOLATION' || changed.changedPaths.join(',') !== 'protected-policy.txt') { evidence.decision = c3.state === 'UNKNOWN' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN' : 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL'; evidence.code = c3.code ?? 'CALL3_HOST_DIFF_GUARD_NOT_PROVEN'; return evidence; }
+    if (c3.state !== 'PASS' || !c3.protectedFileEditObserved || changed.state !== 'BLOCKED' || changed.code !== 'DIFF_POLICY_VIOLATION' || changed.changedPaths.join(',') !== 'protected-policy.txt') { evidence.decision = c3.state === 'BLOCKED' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED' : c3.state === 'UNKNOWN' ? 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN' : 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL'; evidence.code = c3.code ?? 'CALL3_HOST_DIFF_GUARD_NOT_PROVEN'; return evidence; }
     evidence.providerCallsUsed = providerSpawn.providerCalls;
     if (providerSpawn.providerCalls !== 3 || launches.length !== 3) { evidence.decision = 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN'; evidence.code = 'PROVIDER_CALL_ACCOUNTING_MISMATCH'; return evidence; }
     const allTranscriptIds = [c1.sessionIdHash, c2.sessionIdHash, c3.sessionIdHash];

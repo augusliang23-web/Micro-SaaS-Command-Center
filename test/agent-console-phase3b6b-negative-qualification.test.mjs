@@ -10,6 +10,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import * as qualification from '../scripts/phase3b6bSyntheticNegativeQualification.mjs';
 import { buildClaudeEnvironment, ClaudeCliAdapter } from '../server/execution/claudeCliAdapter.mjs';
+import { createHostTcbLifecycleObserver } from '../scripts/hostTcbLifecycleObserver.mjs';
 import {
   APPROVED_TOOLS,
   buildCanonicalLiveArgs,
@@ -327,25 +328,26 @@ test('session metadata scans only fake HOME and blocks symlinks/unreadable/speci
   assert.equal(qualification.sessionTranscriptExists(SESSION, home), 'UNKNOWN');
 }));
 
-test('process sampling never claims complete coverage and counts reparented survivors', () => {
+test('process sampling never claims complete coverage and counts reparented survivors', async () => {
   const proc = (pid, ppid, identity, comm = 'claude') => ({ pid, ppid, pgid: 100, identity, comm });
   let records = new Map([[50, proc(50, 1, 'preexisting')]]);
   const monitor = qualification.createProcessMonitor({ snapshot: () => records, inspectSockets: () => 'NONE', isAlive: () => false, schedule: () => 1, clear: () => {} });
   records = new Map([...records, [100, proc(100, 1, 'root')], [101, proc(101, 100, 'child')]]);
   monitor.setRootPid(100);
+  monitor.parentExit(100);
   records = new Map([[50, proc(50, 1, 'preexisting')], [101, proc(101, 1, 'child')]]);
-  const observation = monitor.finish();
+  const observation = await monitor.finish();
   assert.equal(observation.newLongLivedClaudeWorkers, 1);
   assert.equal(observation.processObservation, 'UNKNOWN');
   assert.equal(observation.samplingCoverage, 'SAMPLING_ONLY');
 });
 
-test('PID reuse and unknown socket visibility block process qualification', () => {
+test('PID reuse and unknown socket visibility block process qualification', async () => {
   let records = new Map();
   const monitor = qualification.createProcessMonitor({ snapshot: () => records, inspectSockets: () => 'UNKNOWN', isAlive: () => false, schedule: () => 1, clear: () => {} });
   records = new Map([[100, { pid: 100, ppid: 1, pgid: 100, identity: 'first', comm: 'claude' }]]); monitor.setRootPid(100);
   records = new Map([[100, { pid: 100, ppid: 1, pgid: 100, identity: 'second', comm: 'unrelated' }]]);
-  const observation = monitor.finish();
+  const observation = await monitor.finish();
   assert.equal(observation.processIdsReused, true);
   assert.equal(observation.processObservation, 'UNKNOWN');
 });
@@ -420,7 +422,6 @@ async function simulateSequence(options = {}) {
   return scratch(async temporary => {
     const root = fs.realpathSync(temporary); const homeDir = path.join(root, 'fake-home'); fs.mkdirSync(homeDir);
     let spawned = 0; let checkpoints = 0; let monitorCount = 0; let sessionChecks = 0;
-    const completeProcess = { foregroundPidExited: true, processObservation: 'COMPLETE', newLongLivedClaudeWorkers: 0, newAttributableChildrenObserved: 0, unexpectedUnixSocketObserved: false };
     const fakeSpawn = (command, args, spec) => {
       assert.equal(command, CANDIDATE_PATH); assert.deepEqual(args, CANONICAL_ARGS.map(arg => arg.startsWith('--session-id=') ? args[3] : arg)); assert.equal(spec.shell, false);
       spawned += 1; const phase = spawned;
@@ -465,17 +466,40 @@ async function simulateSequence(options = {}) {
     };
     const dependencies = {
       homeDir, candidateHomeDir: CANDIDATE_HOME, inspectBinary: fakeBinaryInspection,
+      liveExecutionAdmission: () => ({ state: 'PASS' }),
       lifecycleAdmission: () => ({ state: 'PASS', code: null }), tempParent: root, snapshot: () => new Map(), observerAvailable: () => true,
       managed: () => ({ state: 'PASS', code: null, sources: {} }), guards: async () => ({ state: options.sourceFail ? 'FAIL' : 'PASS' }),
       preflight: async () => { checkpoints += 1; return { state: options.preflightBlock ? 'BLOCKED' : 'PASS', version: checkpoints > 1 && options.versionDrift ? '2.1.293' : options.baselineVersion ?? '2.1.292', binarySha256: checkpoints > 1 && options.hashDrift ? 'b'.repeat(64) : options.baselineHash ?? CANDIDATE_SHA, auth: { loggedIn: true, authMethod: checkpoints > 1 && options.authDrift ? 'api_key' : 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' } }; },
-      monitorFactory: () => { const phase = ++monitorCount; return { setRootPid() {}, finish: () => ({ ...completeProcess, processObservation: options.processUnknown === phase ? 'UNKNOWN' : 'COMPLETE' }) }; },
+      monitorFactory: () => {
+        const phase = ++monitorCount; let rootPid = null; let exited = false;
+        return { setRootPid(pid) { rootPid = pid; }, parentExit(pid) { exited = pid === rootPid; }, finish() {
+          const approval = { executablePath: '/synthetic/helper', sha256: 'b'.repeat(64), signingIdentity: 'SYNTHETIC', classification: 'APPROVED_VENDOR_HELPER', approved: true, taskAuthority: false, executionAuthority: 'TCB_INTERNAL' };
+          const parent = { executablePath: CANDIDATE_PATH, sha256: CANDIDATE_SHA };
+          const lifecycle = createHostTcbLifecycleObserver({ approvedParent: parent, approvedHelpers: options.approvedHelper ? [approval] : [], baseline: { at: -250, processes: [], visibility: 'COMPLETE' } });
+          if (rootPid !== null) {
+            const row = { ...parent, pid: rootPid, ppid: 1, parentGeneration: 'host', pgid: rootPid, sid: rootPid, startTime: 0, generation: 'parent' };
+            lifecycle.start({ pid: rootPid, generation: 'parent' });
+            const descendant = { ...row, ...approval, pid: rootPid + 100, ppid: rootPid, parentGeneration: 'parent', generation: 'helper', ...(options.lifecycleViolation ? { executablePath: '/bin/bash' } : {}) };
+            lifecycle.observe({ at: 0, processes: [row, ...(options.approvedHelper || options.lifecycleSurvivor || options.lifecycleViolation ? [descendant] : [])], visibility: 'COMPLETE', ipc: { state: options.lifecycleIpc ? 'UNAPPROVED_IPC' : 'NO_OBSERVED_UNAPPROVED_IPC' } });
+            if (exited) lifecycle.parentExit({ pid: rootPid, generation: 'parent', at: 250 });
+            for (let at = 250; at <= 2250; at += 250) lifecycle.observe({ at, processes: options.lifecycleSurvivor ? [descendant] : [], visibility: 'COMPLETE', ipc: { state: 'NO_OBSERVED_UNAPPROVED_IPC' } });
+          }
+          const proof = lifecycle.finish();
+          return { lifecycle: proof, foregroundPidExited: proof.parentExitObserved, processObservation: options.processUnknown === phase ? 'UNKNOWN' : 'COMPLETE', newLongLivedClaudeWorkers: 0, newSurvivingChildren: proof.survivors, newAttributableChildrenObserved: proof.attributableDescendants, unexpectedUnixSocketObserved: false };
+        } };
+      },
       sessionCheck: () => ++sessionChecks % 2 === 0 && options.sessionAfterUnknown ? 'UNKNOWN' : false,
-      adapterFactory: config => { const adapter = new ClaudeCliAdapter(config); adapter.probe = async () => ({ available: true }); return adapter; },
+      adapterFactory: config => {
+        const adapter = new ClaudeCliAdapter(config); adapter.probe = async () => ({ available: true });
+        if (options.throwAfterAdapter) { const start = adapter.start.bind(adapter); adapter.start = async (...args) => { await start(...args); throw new Error('synthetic exception after adapter'); }; }
+        return adapter;
+      },
       spawnImpl: fakeSpawn,
       removeOwned: entry => { if (options.cleanupFailure) throw new Error('synthetic cleanup failure'); fs.rmSync(entry, { recursive: true, force: true }); },
     };
     if (options.candidateDrift) dependencies.inspectBinary = () => ({ state: 'BLOCKED', code: 'BINARY_SHA_MISMATCH' });
     if (options.lifecycleDefault) delete dependencies.lifecycleAdmission;
+    if (options.liveDefault) delete dependencies.liveExecutionAdmission;
     if (options.lifecycleUnknown) dependencies.lifecycleAdmission = () => ({ state: 'UNKNOWN' });
     if (options.managedDefault) dependencies.managed = auth => qualification.inspectManagedPolicySources({ auth, homeDir: CANDIDATE_HOME, inspectMetadata: () => ({ state: 'ABSENT' }), runSystemRead: () => ({ status: 0, stdout: '', stderr: '' }) });
     if (options.managedBlock) dependencies.managed = () => ({ state: 'BLOCKED', code: 'MANAGED_POLICY_NOT_SAFE' });
@@ -494,6 +518,46 @@ test('full three-phase offline simulation uses real adapter and protected diff g
   for (const mutate of [item => { item.preflight.version = '2.1.260'; }, item => { item.preflight.binarySha256 = 'b'.repeat(64); }, item => { item.lifecycleAdmission.state = 'UNKNOWN'; }, item => { item.call1.process.processObservation = 'UNKNOWN'; }, item => { item.managedPolicy.state = 'UNKNOWN'; }, item => { item.call2.outsideDeniedAll = false; }, item => { item.call1.protocol.protocolState = 'UNKNOWN'; }]) {
     const copy = structuredClone(evidence); mutate(copy); qualification.finalizeQualificationEvidence(copy, 3);
     assert.notEqual(copy.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  }
+});
+
+test('approved synthetic helper lifecycle PASS is preserved through final proof and sanitized evidence', async () => {
+  const result = await simulateSequence({ approvedHelper: true });
+  assert.equal(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  assert.equal(result.evidence.call1.process.newAttributableChildrenObserved, 1);
+  assert.equal(result.persisted.call1.process.lifecycle.state, 'LIFECYCLE_PASS');
+  assert.equal(result.persisted.call1.process.lifecycle.classCounts.APPROVED_VENDOR_HELPER, 1);
+});
+
+test('offline lifecycle PASS never opens the default live execution gate', async () => {
+  const result = await simulateSequence({ liveDefault: true });
+  assert.equal(result.spawned, 0);
+  assert.equal(result.evidence.code, 'LIVE_EXECUTION_NOT_AUTHORIZED');
+  assert.equal(result.evidence.managedPolicyApproval.state, 'PASS');
+  assert.equal(result.evidence.managedPolicyApproval.reviewId, 5449763219);
+  assert.equal(result.evidence.preflight, undefined);
+});
+
+test('lifecycle PASS cannot hide a fourth counted provider call', async () => {
+  const { evidence } = await simulateSequence({ approvedHelper: true });
+  qualification.finalizeQualificationEvidence(evidence, 4);
+  assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+  assert.equal(evidence.code, 'PROVIDER_BUDGET_EXCEEDED');
+});
+
+test('a definite prohibited process remains FAIL when the adapter throws afterward', async () => {
+  const { evidence, spawned } = await simulateSequence({ lifecycleViolation: true, throwAfterAdapter: true });
+  assert.equal(spawned, 1); assert.equal(evidence.call1.state, 'FAIL');
+  assert.equal(evidence.call1.code, 'PROHIBITED_EXECUTION');
+  assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+});
+
+test('survivor and unapproved IPC keep BLOCKED semantics through the harness', async () => {
+  for (const options of [{ lifecycleSurvivor: true }, { lifecycleIpc: true }]) {
+    const { evidence, persisted, spawned } = await simulateSequence(options);
+    assert.equal(spawned, 1); assert.equal(evidence.call1.state, 'BLOCKED');
+    assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED');
+    assert.equal(persisted.call1.process.lifecycle.code, options.lifecycleSurvivor ? 'SURVIVOR' : 'UNAPPROVED_IPC');
   }
 });
 
