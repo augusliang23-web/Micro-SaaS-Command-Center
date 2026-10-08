@@ -475,17 +475,17 @@ async function simulateSequence(options = {}) {
         return { setRootPid(pid) { rootPid = pid; }, parentExit(pid) { exited = pid === rootPid; }, finish() {
           const approval = { executablePath: '/synthetic/helper', sha256: 'b'.repeat(64), signingIdentity: 'SYNTHETIC', classification: 'APPROVED_VENDOR_HELPER', approved: true, taskAuthority: false, executionAuthority: 'TCB_INTERNAL' };
           const parent = { executablePath: CANDIDATE_PATH, sha256: CANDIDATE_SHA };
-          const lifecycle = createHostTcbLifecycleObserver({ approvedParent: parent, approvedHelpers: options.approvedHelper ? [approval] : [], baseline: { at: -250, processes: [], visibility: 'COMPLETE' } });
+          const lifecycle = createHostTcbLifecycleObserver({ approvedParent: parent, approvedHelpers: options.approvedHelper ? [approval] : [], baseline: { at: -250, processes: [], inspectionState: 'PASS' } });
           if (rootPid !== null) {
             const row = { ...parent, pid: rootPid, ppid: 1, parentGeneration: 'host', pgid: rootPid, sid: rootPid, startTime: 0, generation: 'parent' };
             lifecycle.start({ pid: rootPid, generation: 'parent' });
             const descendant = { ...row, ...approval, pid: rootPid + 100, ppid: rootPid, parentGeneration: 'parent', generation: 'helper', ...(options.lifecycleViolation ? { executablePath: '/bin/bash' } : {}) };
-            lifecycle.observe({ at: 0, processes: [row, ...(options.approvedHelper || options.lifecycleSurvivor || options.lifecycleViolation ? [descendant] : [])], visibility: 'COMPLETE', ipc: { state: options.lifecycleIpc ? 'UNAPPROVED_IPC' : 'NO_OBSERVED_UNAPPROVED_IPC' } });
+            lifecycle.observe({ at: 0, processes: [row, ...(options.approvedHelper || options.lifecycleSurvivor || options.lifecycleViolation ? [descendant] : [])], visibility: 'COMPLETE', ipc: { state:'TRANSIENT_TCB_IPC' } });
             if (exited) lifecycle.parentExit({ pid: rootPid, generation: 'parent', at: 250 });
-            for (let at = 250; at <= 2250; at += 250) lifecycle.observe({ at, processes: options.lifecycleSurvivor ? [descendant] : [], visibility: 'COMPLETE', ipc: { state: 'NO_OBSERVED_UNAPPROVED_IPC' } });
+            for (let at = 250; at <= 2250; at += 250) lifecycle.observe({ at, processes: options.lifecycleSurvivor ? [descendant] : [], visibility: 'SAMPLING_ONLY', inspection: { process:'PASS',ipc:'PASS' }, ipc: { state: options.lifecycleIpc ? 'UNAPPROVED_IPC' : 'NO_PERSISTENT_UNAPPROVED_IPC' } });
           }
           const proof = lifecycle.finish();
-          return { lifecycle: proof, foregroundPidExited: proof.parentExitObserved, processObservation: options.processUnknown === phase ? 'UNKNOWN' : 'COMPLETE', newLongLivedClaudeWorkers: 0, newSurvivingChildren: proof.survivors, newAttributableChildrenObserved: proof.attributableDescendants, unexpectedUnixSocketObserved: false };
+          return { lifecycle: proof, foregroundPidExited: proof.parentExitObserved, processObservation: options.processUnknown === phase ? 'UNKNOWN' : 'POSTCONDITIONS_CHECKED', newLongLivedClaudeWorkers: 0, newSurvivingChildren: proof.survivors, newAttributableChildrenObserved: proof.attributableDescendants, unexpectedUnixSocketObserved: false };
         } };
       },
       sessionCheck: () => ++sessionChecks % 2 === 0 && options.sessionAfterUnknown ? 'UNKNOWN' : false,
@@ -526,7 +526,7 @@ test('approved synthetic helper lifecycle PASS is preserved through final proof 
   assert.equal(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
   assert.equal(result.evidence.call1.process.newAttributableChildrenObserved, 1);
   assert.equal(result.persisted.call1.process.lifecycle.state, 'LIFECYCLE_PASS');
-  assert.equal(result.persisted.call1.process.lifecycle.classCounts.APPROVED_VENDOR_HELPER, 1);
+  assert.equal(result.persisted.call1.process.lifecycle.classCounts.TCB_INTERNAL_TRANSIENT, 1);
 });
 
 test('offline lifecycle PASS never opens the default live execution gate', async () => {
@@ -545,6 +545,16 @@ test('lifecycle PASS cannot hide a fourth counted provider call', async () => {
   assert.equal(evidence.code, 'PROVIDER_BUDGET_EXCEEDED');
 });
 
+test('final proof cannot contradict its authority binding or hide the protected guard behind lifecycle PASS', async () => {
+  const {evidence}=await simulateSequence({approvedHelper:true});
+  for(const mutate of [e=>e.call1.lifecycleAuthority.toolInventory.push('Bash'),e=>e.call1.lifecycleAuthority.canonicalLaunch=false,e=>e.call3.process.lifecycle.state='LIFECYCLE_PASS']) {
+    const copy=structuredClone(evidence);mutate(copy);qualification.finalizeQualificationEvidence(copy,3);
+    assert.notEqual(copy.decision,'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  }
+  assert.equal(evidence.call3.process.lifecycle.state,'LIFECYCLE_BLOCKED');
+  assert.equal(evidence.call3.verifierInvoked,false);
+});
+
 test('a definite prohibited process remains FAIL when the adapter throws afterward', async () => {
   const { evidence, spawned } = await simulateSequence({ lifecycleViolation: true, throwAfterAdapter: true });
   assert.equal(spawned, 1); assert.equal(evidence.call1.state, 'FAIL');
@@ -557,7 +567,7 @@ test('survivor and unapproved IPC keep BLOCKED semantics through the harness', a
     const { evidence, persisted, spawned } = await simulateSequence(options);
     assert.equal(spawned, 1); assert.equal(evidence.call1.state, 'BLOCKED');
     assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED');
-    assert.equal(persisted.call1.process.lifecycle.code, options.lifecycleSurvivor ? 'SURVIVOR' : 'UNAPPROVED_IPC');
+    assert.equal(persisted.call1.process.lifecycle.code, options.lifecycleSurvivor ? 'PERSISTENT_SURVIVOR' : 'UNAPPROVED_IPC');
   }
 });
 
@@ -757,3 +767,70 @@ test('candidate root permission drift during hashing is BLOCKED', () => scratch(
   const result = qualification.inspectCandidateBinary(binaryPath, { homeDir, io, hashBytes: () => CANDIDATE_SHA });
   assert.equal(result.state, 'BLOCKED'); assert.equal(result.code, 'BINARY_IDENTITY_MISMATCH');
 }));
+
+test('native metadata probe is isolated, site-disabled and neutral with fixed server-owned argv', () => {
+  const reply={censusScope:'ALL_PIDS',inspectionState:'PASS',rows:[{pid:100,identity:'50:1',ppid:1,pgid:100,sid:100,executablePath:null},{pid:200,identity:'51:1',originalParentGeneration:'50:1',uid:0,ppid:1,pgid:200,sid:200,executablePath:'/synthetic/helper'}]};
+  const rows=qualification.snapshotProcesses({rootPid:100,ownedGenerations:['50:1'],spawnSystem:(command,args,options)=>{
+    assert.equal(command,'/usr/bin/python3');assert.deepEqual(args.slice(0,3),['-I','-S','-c']);assert.equal(typeof args[3],'string');
+    assert.deepEqual(JSON.parse(args[4]),{rootPid:100,rootGeneration:null,ownedGenerations:['50:1']});assert.equal(args.length,5);
+    assert.equal(options.cwd,'/private/tmp');assert.equal(options.shell,false);assert.deepEqual(options.env,{PATH:'/usr/bin:/bin',LANG:'C'});
+    return {status:0,stdout:JSON.stringify(reply),stderr:''};
+  }});
+  assert.equal(rows.get(200).uid,0);assert.equal(rows.get(200).originalParentGeneration,'50:1');
+  for(const extra of [{rootPid:'sh'},{ownedGenerations:['command']},{command:'/bin/sh'}]) assert.throws(()=>qualification.snapshotProcesses({...extra,spawnSystem:()=>assert.fail('must not run')}),TypeError);
+});
+
+test('partial or malformed native census cannot become a final postcondition PASS', () => {
+  for(const reply of [{censusScope:'CURRENT_UID',inspectionState:'PASS',rows:[]},{censusScope:'ALL_PIDS',inspectionState:'invalid',rows:[]},{censusScope:'ALL_PIDS',inspectionState:'PASS',rows:[{pid:1}]}]) {
+    assert.throws(()=>qualification.snapshotProcesses({spawnSystem:()=>({status:0,stdout:JSON.stringify(reply),stderr:''})}),{code:'PROCESS_BASELINE_UNKNOWN'});
+  }
+  const partial=qualification.snapshotProcesses({spawnSystem:()=>({status:0,stdout:JSON.stringify({censusScope:'ALL_PIDS',inspectionState:'UNKNOWN',rows:[{pid:200,identity:'51:1',ppid:100,originalParentGeneration:'50:1',executablePath:'/bin/bash'}]}),stderr:''})});
+  assert.equal(partial.inspectionState,'UNKNOWN');assert.equal(partial.get(200).executablePath,'/bin/bash');
+});
+
+test('partial execution inspection preserves positive forbidden processes and missing IPC inspector blocks final proof', async () => {
+  for(const violation of [true,false]) {
+    let time=0;
+    const root={pid:100,ppid:1,pgid:100,identity:'50:1',executablePath:CANDIDATE_PATH};
+    let records=new Map();
+    const monitor=qualification.createProcessMonitor({binaryPath:CANDIDATE_PATH,snapshot:()=>records,inspectSockets:()=> 'NONE',ipcInspectorAvailable:()=>false,now:()=>time,wait:async ms=>{time+=ms;},schedule:()=>1,clear:()=>{}});
+    records=new Map([[100,root],...(violation?[[200,{pid:200,ppid:100,pgid:100,identity:'51:1',executablePath:'/bin/bash'}]]:[])]);
+    records.inspectionState=violation?'UNKNOWN':'PASS';monitor.setRootPid(100);monitor.parentExit(100);records=new Map();
+    const p=await monitor.finish();assert.equal(p.lifecycle.state,violation?'LIFECYCLE_FAIL':'LIFECYCLE_UNKNOWN');
+    if(!violation)assert.equal(p.lifecycle.ipcPostconditionInspection,'UNKNOWN');
+  }
+});
+
+test('native executable lookup follows an observed parent unique ID across a missed exec version', {skip:process.platform!=='darwin'}, () => {
+  // Fixed host-owned API double. No native process query, task code, candidate,
+  // shell or package import occurs: it executes the real metadata selector.
+  const bootstrap=String.raw`import ctypes,sys,struct,os
+class Call:
+ def __init__(self,fn):self.fn=fn
+ def __call__(self,*args):return self.fn(*args)
+class Fake:
+ def __init__(self):
+  self.proc_listpids=Call(self.list);self.proc_pidinfo=Call(self.info);self.proc_pidpath=Call(self.path)
+ def list(self,kind,unused,ptr,size):
+  assert kind==1
+  data=struct.pack('=ii',100,300)
+  if ptr is not None:ctypes.memmove(ptr,data,len(data))
+  return len(data)
+ def info(self,pid,kind,arg,ptr,size):
+  unique,parent,version,orig=(50,1,1,1) if pid==100 else (70,60,1,2)
+  if kind==17:data=struct.pack('=16sQQiiQQ',b'\0'*16,unique,parent,version,orig,0,0)
+  elif kind==13:data=struct.pack('=IIII16sIIIIIIII',pid,1,pid,2,b'fixture',0,501,20,501,20,501,20,0)
+  elif kind==3:data=bytes(136)
+  else:raise AssertionError('unexpected metadata flavor')
+  assert size==len(data)
+  ctypes.memmove(ptr,data,len(data));return len(data)
+ def path(self,pid,ptr,size):
+  data=b'/synthetic/candidate' if pid==100 else b'/bin/bash'
+  ctypes.memmove(ptr,data+b'\0',len(data)+1);return len(data)
+ctypes.CDLL=lambda *a,**kw:Fake()
+os.getsid=lambda pid:pid
+exec(compile(sys.stdin.read(),'<fixed-native-probe>','exec'))`;
+  const rows=qualification.snapshotProcesses({rootPid:100,rootGeneration:'50:1',ownedGenerations:['50:1','60:1'],spawnSystem:(_command,args,options)=>spawnSync('/usr/bin/python3',['-I','-S','-c',bootstrap,args[4]],{...options,input:args[3]})});
+  assert.equal(rows.get(300).originalParentGeneration,'60:2');
+  assert.equal(rows.get(300).executablePath,'/bin/bash');
+});
