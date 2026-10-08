@@ -11,6 +11,8 @@ import { ClaudeCliAdapter } from '../server/execution/claudeCliAdapter.mjs';
 import { createHostTcbLifecycleObserver } from '../scripts/hostTcbLifecycleObserver.mjs';
 import * as threeCall from '../scripts/phase3b6bSyntheticNegativeQualification.mjs';
 import * as smoke from '../scripts/phase3b6bOneCallSmoke.mjs';
+import * as controls from '../scripts/phase3b6bOneCallControls.mjs';
+import { createHash } from 'node:crypto';
 
 // Offline only. Every executable is a function-valued fake; the qualification candidate is never executed and the
 // synthetic candidate home below does not exist on disk. Real provider calls in this whole file: 0.
@@ -21,6 +23,16 @@ const CANDIDATE_PATH = '/synthetic/home/.local/share/cc-qualification/claude/2.1
 const CANDIDATE_SHA = '97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f';
 const PASS_ADMISSION = smoke.MANAGED_POLICY_RUNTIME_ADMISSION_PASS;
 const TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep'];
+const NOW = Date.parse('2026-10-09T00:00:00Z');
+const goodAttestation = (overrides = {}) => ({ schema: 'cc.managed-policy-runtime-attestation/1', attestationId: 'SYNTHETIC-ATT-1', host: { id: 'SYNTHETIC_HOST' },
+  candidate: { version: '2.1.292', sha256: CANDIDATE_SHA }, scope: { id: 'phase3b6b.one-call-smoke.v1' }, effectivePolicy: { result: 'EFFECTIVE_POLICY_ABSENT' },
+  issuer: { id: 'SYNTHETIC_ISSUER' }, issuedAt: '2026-10-08T00:00:00Z', validity: { notBefore: '2026-10-08T00:00:00Z', notAfter: '2026-10-10T00:00:00Z' },
+  invalidation: { conditions: ['HOST_CHANGE', 'CANDIDATE_CHANGE', 'POLICY_CHANGE', 'REVOCATION'] }, ...overrides });
+const goodPermit = (overrides = {}) => ({ schema: 'cc.one-call-launch-permit/1', permitId: 'SYNTHETIC-PERMIT-1', maxProviderCalls: 1, host: { id: 'SYNTHETIC_HOST' },
+  candidate: { version: '2.1.292', sha256: CANDIDATE_SHA }, scope: { id: 'phase3b6b.one-call-smoke.v1' }, issuer: { id: 'SYNTHETIC_ISSUER' },
+  issuedAt: '2026-10-08T00:00:00Z', validity: { notBefore: '2026-10-08T00:00:00Z', notAfter: '2026-10-10T00:00:00Z' }, ...overrides });
+const trustPolicy = (overrides = {}) => ({ hostId: 'SYNTHETIC_HOST', trustedIssuers: ['SYNTHETIC_ISSUER'], verifyAuthenticity: () => true, checkRevocation: () => 'NOT_REVOKED', now: () => NOW, ...overrides });
+const privateDir = dir => { fs.mkdirSync(dir, { mode: 0o700, recursive: true }); fs.chmodSync(dir, 0o700); return dir; };
 const fakeBinaryInspection = () => ({ state: 'PASS', code: null, binarySha256: CANDIDATE_SHA });
 let strayCommands = 0; // any fake spawn handed a command other than the synthetic candidate
 
@@ -33,11 +45,12 @@ async function scratch(fn) {
 async function simulate(options = {}) {
   return scratch(async root => {
     const homeDir = path.join(root, 'fake-home'); fs.mkdirSync(homeDir);
+    const ledger = privateDir(path.join(root, 'ledger'));
     const counts = { spawned: 0, adapterStarts: 0, preflights: 0, admissionCalls: [], fixtureRoots: [], monitors: 0 };
     const fakeSpawn = (command, args, spec) => {
       if (command !== CANDIDATE_PATH) strayCommands += 1;
       assert.equal(spec.shell, false);
-      counts.spawned += 1;
+      counts.spawned += 1; counts.markerAtSpawn = fs.readdirSync(options.ledgerDir ?? ledger).length;
       if (options.spawnThrows) throw new Error('synthetic spawn failure');
       const child = new EventEmitter(); child.pid = 20000 + counts.spawned;
       child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.exitCode = null;
@@ -68,7 +81,7 @@ async function simulate(options = {}) {
     };
     const auth = (n, drift) => ({ loggedIn: true, authMethod: drift && n > 1 ? 'api_key' : 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' });
     const dependencies = {
-      managedPolicyRuntimeAdmission: input => { counts.admissionCalls.push(input.stage); return options.admission ? options.admission(input) : { state: PASS_ADMISSION }; },
+      managedPolicyRuntimeAdmission: input => { counts.admissionCalls.push(input.stage); return options.admission ? options.admission(input) : { state: PASS_ADMISSION, attestation: goodAttestation(options.attestation ?? {}) }; },
       liveExecutionAuthorized: () => (Object.hasOwn(options, 'live') ? options.live : true),
       spawnImpl: fakeSpawn, candidateHomeDir: CANDIDATE_HOME, inspectBinary: fakeBinaryInspection, tempParent: root, snapshot: () => new Map(),
       observerAvailable: () => true,
@@ -106,12 +119,16 @@ async function simulate(options = {}) {
       removeOwned: entry => { if (options.cleanupFailure) throw new Error('synthetic cleanup failure'); fs.rmSync(entry, { recursive: true, force: true }); },
     };
     counts.sessionChecks = 0;
+    Object.assign(dependencies, { attestationPolicy: trustPolicy(options.trust ?? {}), launchPermit: () => (Object.hasOwn(options, 'permit') ? options.permit : goodPermit()), permitLedgerDir: Object.hasOwn(options, 'ledgerDir') ? options.ledgerDir : ledger, ...(options.runIdFactory ? { runIdFactory: options.runIdFactory } : {}) });
     for (const key of options.omit ?? []) delete dependencies[key];
-    const evidencePath = options.evidencePath === undefined ? path.join(root, 'evidence.json') : options.evidencePath;
+    const evidenceDirectory = Object.hasOwn(options, 'evidenceDirectory') ? options.evidenceDirectory : privateDir(path.join(root, 'evidence'));
     const evidence = await smoke.runOneCallSmoke({ binaryPath: CANDIDATE_PATH, repositoryRoot: process.cwd(), sourceEnv: { HOME: homeDir, USER: 'synthetic', LOGNAME: 'synthetic' },
-      evidencePath: evidencePath === null ? undefined : evidencePath, dependencies });
-    const persisted = evidencePath && fs.existsSync(evidencePath) && fs.statSync(evidencePath).isFile() ? JSON.parse(fs.readFileSync(evidencePath, 'utf8')) : null;
-    return { evidence, persisted, counts, root };
+      evidenceDirectory, dependencies });
+    const file = evidenceDirectory && evidence.runIdentity ? path.join(evidenceDirectory, `${evidence.runIdentity.runId}.json`) : null;
+    const persisted = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+    const persistedText = file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+    const ledgerFiles = fs.existsSync(ledger) ? fs.readdirSync(ledger) : [];
+    return { evidence, persisted, persistedText, counts, root, evidenceDirectory, ledger, ledgerFiles, file };
   });
 }
 
@@ -218,7 +235,7 @@ test('F: the full three-call budget and contract are unchanged and independent o
 
 // ---- G/H/I/J. gates ------------------------------------------------------------------------------------------------------
 async function blockedWithoutCandidateAccess(options) {
-  const { evidence, counts } = await simulate({ ...options, evidencePath: null });
+  const { evidence, counts } = await simulate({ ...options, evidenceDirectory: undefined });
   assert.equal(evidence.decision, D.BLOCKED, JSON.stringify([options, evidence.code]));
   assert.equal(counts.spawned, 0); assert.equal(counts.preflights, 0, 'the candidate was not touched'); assert.equal(counts.monitors, 0);
   assert.equal(counts.fixtureRoots.length, 0); assert.equal(evidence.providerCallsUsed, 0);
@@ -234,14 +251,14 @@ test('G: runtime managed-policy admission UNKNOWN, missing, throwing or malforme
 
 test('H: a managed-policy contradiction (at any checkpoint) blocks; a late contradiction never reaches the spawn', async () => {
   await blockedWithoutCandidateAccess({ admission: () => ({ state: 'MANAGED_POLICY_RUNTIME_ADMISSION_CONTRADICTED' }) });
-  const late = await simulate({ admission: ({ stage }) => ({ state: stage === 'PRE_LAUNCH' ? 'MANAGED_POLICY_RUNTIME_ADMISSION_CONTRADICTED' : PASS_ADMISSION }), evidencePath: null });
+  const late = await simulate({ admission: ({ stage }) => ({ state: stage === 'PRE_LAUNCH' ? 'MANAGED_POLICY_RUNTIME_ADMISSION_CONTRADICTED' : PASS_ADMISSION, attestation: goodAttestation() }), evidenceDirectory: undefined });
   assert.equal(late.evidence.decision, D.BLOCKED); assert.equal(late.counts.spawned, 0); assert.equal(late.counts.fixtureRoots.length, 0);
-  const swapped = await simulate({ admission: ({ stage }) => ({ state: PASS_ADMISSION, attestationId: stage === 'PRE_LAUNCH' ? 'other' : 'a' }), evidencePath: null });
+  const swapped = await simulate({ admission: ({ stage }) => ({ state: PASS_ADMISSION, attestation: goodAttestation({ attestationId: stage === 'PRE_LAUNCH' ? 'other' : 'a' }) }), evidenceDirectory: undefined });
   assert.equal(swapped.evidence.decision, D.BLOCKED, 'a changed attestation identity is a contradiction'); assert.equal(swapped.counts.spawned, 0);
 });
 
 test('H: admission drift after the run (post-run checkpoint) can only make the outcome UNKNOWN, never PASS', async () => {
-  const { evidence, counts } = await simulate({ admission: ({ stage }) => ({ state: stage === 'POST_RUN' ? 'MANAGED_POLICY_RUNTIME_ADMISSION_CONTRADICTED' : PASS_ADMISSION }) });
+  const { evidence, counts } = await simulate({ admission: ({ stage }) => ({ state: stage === 'POST_RUN' ? 'MANAGED_POLICY_RUNTIME_ADMISSION_CONTRADICTED' : PASS_ADMISSION, attestation: goodAttestation() }) });
   assert.equal(counts.spawned, 1); assert.equal(evidence.decision, D.UNKNOWN); assert.equal(evidence.code, 'ADMISSION_DRIFT');
 });
 
@@ -263,7 +280,8 @@ test('J: the production defaults are constant-BLOCKED and never touch the candid
 
 test('J: injected seams are refused unless every one points away from the real host (a fake PASS cannot authorize a real launch)', async () => {
   const realCandidate = path.join(os.homedir(), '.local/share/cc-qualification/claude/2.1.292/claude');
-  const pass = { managedPolicyRuntimeAdmission: () => ({ state: PASS_ADMISSION }), liveExecutionAuthorized: () => true };
+  const pass = { managedPolicyRuntimeAdmission: () => ({ state: PASS_ADMISSION, attestation: goodAttestation() }), liveExecutionAuthorized: () => true,
+    attestationPolicy: trustPolicy(), launchPermit: () => goodPermit(), permitLedgerDir: os.tmpdir(), runIdFactory: controls.defaultRunId };
   const attempts = [
     ['no spawn override', realCandidate, { ...pass }],
     ['real child_process.spawn', realCandidate, { ...pass, spawnImpl: realSpawn, candidateHomeDir: CANDIDATE_HOME }],
@@ -329,7 +347,7 @@ test('M: a forbidden process observed by the lifecycle observer FAILs and stays 
   assert.equal(f.evidence.decision, D.FAIL, 'an exception while binding the lifecycle cannot soften an observed violation');
   const g = await simulate({ poisonLifecycle: true });
   assert.equal(g.evidence.decision, D.UNKNOWN, 'the same exception without a violation never PASSes');
-  const d = await simulate({ lifecycleViolation: true, evidencePath: '/' });
+  const d = await simulate({ lifecycleViolation: true, evidenceDirectory: '/' });
   assert.equal(d.evidence.decision, D.FAIL, 'persistence failure cannot hide it'); assert.equal(d.evidence.evidencePersistence, 'UNKNOWN');
 });
 
@@ -408,9 +426,9 @@ test('S: symlinks, hardlinks, special files and executables created by the agent
 test('U: an evidence serialization or persistence failure cannot PASS (and cannot hide a violation)', async () => {
   const serialization = await simulate({ preflightExtra: { code: Number.NaN } });
   assert.equal(serialization.evidence.decision, D.UNKNOWN); assert.equal(serialization.evidence.code, 'EVIDENCE_SERIALIZATION_FAILED');
-  const persistence = await simulate({ evidencePath: os.tmpdir() });
+  const persistence = await simulate({ evidenceDirectory: path.join(os.tmpdir(), 'cc-p3b6b9b-missing-dir-never-created') });
   assert.equal(persistence.evidence.decision, D.UNKNOWN); assert.equal(persistence.evidence.code, 'EVIDENCE_PERSISTENCE_FAILED');
-  const none = await simulate({ evidencePath: null });
+  const none = await simulate({ evidenceDirectory: undefined });
   assert.equal(none.evidence.decision, D.UNKNOWN, 'a PASS needs a persisted record');
   const cleanup = await simulate({ cleanupFailure: true });
   assert.equal(cleanup.evidence.decision, D.UNKNOWN); assert.equal(cleanup.evidence.code, 'FIXTURE_CLEANUP_UNKNOWN');
@@ -461,4 +479,318 @@ test('V: no real provider call or candidate execution happened anywhere in this 
   assert.equal(strayCommands, 0, 'every fake spawn only ever saw the synthetic candidate path');
   assert.equal(fs.existsSync(CANDIDATE_HOME), false, 'the synthetic candidate home is not a real directory');
   assert.equal(SOURCE.includes("'-p'") && /spawnSync|execFile|exec\(/.test(SOURCE), false, 'the module has no direct process launcher of its own');
+});
+
+// =====================================================================================================================
+// Phase 3B6B.9B — pre-live evidence integrity, attestation contract, single-use permit (offline fakes only)
+// =====================================================================================================================
+const sha = v => createHash('sha256').update(v).digest('hex');
+const shared = async fn => scratch(async root => fn({ root, ledger: privateDir(path.join(root, 'ledger')), evidence: privateDir(path.join(root, 'evidence')) }));
+const RUN_A = 'OCS-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const RUN_B = 'OCS-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const cleanSim = { ledgerDir: undefined };
+
+// ---- evidence: atomic, no-overwrite, run-bound ------------------------------------------------------------------------
+function countingIo(failAt, mutate = {}) {
+  let n = 0; const io = { ...fs };
+  for (const name of ['openSync', 'writeFileSync', 'fsyncSync', 'closeSync', 'linkSync', 'unlinkSync', 'readFileSync', 'fstatSync', 'lstatSync', 'realpathSync']) {
+    io[name] = (...a) => { n += 1; if (n === failAt) throw Object.assign(new Error(`synthetic crash at ${name}`), { code: 'EIO' }); return (mutate[name] ?? fs[name])(...a); };
+  }
+  return io;
+}
+test('evidence: a crash at ANY step of publication leaves either no record or the complete record, never a partial one', async () => shared(async ({ evidence }) => {
+  const text = JSON.stringify({ decision: 'ONE_CALL_SMOKE_PASS', padding: 'x'.repeat(5000) });
+  let completed = 0;
+  for (let step = 1; step <= 40; step += 1) {
+    const runId = `OCS-${String(step).padStart(8, '0')}-0000-4000-8000-000000000000`;
+    const result = controls.writeEvidenceAtomically(text, evidence, runId, { io: countingIo(step) });
+    const final = path.join(evidence, `${runId}.json`);
+    if (fs.existsSync(final)) { assert.equal(fs.readFileSync(final, 'utf8'), `${text}\n`, `step ${step}: a published record is always complete`); if (result.ok) completed += 1; }
+    else assert.equal(result.ok, false, `step ${step}`);
+    if (!result.ok && !result.residualRecord) assert.equal(fs.existsSync(final), false, `step ${step}: a failed publication leaves no authoritative record`);
+  }
+  assert.ok(completed > 0, 'later steps (beyond the last io call) succeed');
+}));
+
+test('evidence: a partial write (half the bytes, then failure) publishes nothing and removes its temp file', async () => shared(async ({ evidence }) => {
+  const text = 'x'.repeat(4096);
+  const io = { ...fs, writeFileSync: (fd, data) => { fs.writeSync(fd, data.slice(0, 100)); throw Object.assign(new Error('synthetic disk full'), { code: 'ENOSPC' }); } };
+  const result = controls.writeEvidenceAtomically(text, evidence, RUN_A, { io });
+  assert.equal(result.ok, false); assert.deepEqual(fs.readdirSync(evidence), []);
+}));
+
+test('evidence: persistence failing after the temp write (link / fsync / readback) leaves no PASS record', async () => shared(async ({ evidence }) => {
+  for (const [name, patch] of Object.entries({
+    link: { linkSync: () => { throw Object.assign(new Error('synthetic'), { code: 'EMLINK' }); } },
+    readback: { readFileSync: () => 'tampered' },
+  })) {
+    const result = controls.writeEvidenceAtomically('{"decision":"ONE_CALL_SMOKE_PASS"}', evidence, RUN_A, { io: { ...fs, ...patch } });
+    assert.equal(result.ok, false, name); assert.equal(fs.existsSync(path.join(evidence, `${RUN_A}.json`)), false, name);
+    assert.deepEqual(fs.readdirSync(evidence), [], `${name}: no temp residue`);
+  }
+}));
+
+test('evidence: never overwrites — an existing record, a destination symlink or a dangling symlink is refused and left untouched', async () => shared(async ({ root, evidence }) => {
+  const final = path.join(evidence, `${RUN_A}.json`);
+  fs.writeFileSync(final, 'HISTORICAL-PASS\n');
+  assert.equal(controls.writeEvidenceAtomically('{"new":1}', evidence, RUN_A).code, 'EVIDENCE_ALREADY_EXISTS');
+  assert.equal(fs.readFileSync(final, 'utf8'), 'HISTORICAL-PASS\n');
+  const outside = path.join(root, 'outside.txt'); fs.writeFileSync(outside, 'OUTSIDE');
+  fs.symlinkSync(outside, path.join(evidence, `${RUN_B}.json`));
+  assert.equal(controls.writeEvidenceAtomically('{"new":1}', evidence, RUN_B).ok, false);
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'OUTSIDE');
+  const RUN_C = 'OCS-cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  fs.symlinkSync(path.join(root, 'missing-target'), path.join(evidence, `${RUN_C}.json`));
+  assert.equal(controls.writeEvidenceAtomically('{"new":1}', evidence, RUN_C).ok, false);
+  assert.equal(fs.existsSync(path.join(root, 'missing-target')), false, 'a dangling symlink is not followed');
+}));
+
+test('evidence: a symlinked, group-writable, non-owned, relative or missing directory is refused', async () => shared(async ({ root, evidence }) => {
+  const link = path.join(root, 'evidence-link'); fs.symlinkSync(evidence, link);
+  const open = path.join(root, 'open'); fs.mkdirSync(open); fs.chmodSync(open, 0o777);
+  for (const dir of [link, open, '/', 'relative/dir', path.join(root, 'missing')]) {
+    assert.equal(controls.writeEvidenceAtomically('{"x":1}', dir, RUN_A).ok, false, dir);
+  }
+  assert.deepEqual(fs.readdirSync(evidence), []);
+}));
+
+test('evidence: a run identity is generated, validated and bound; invalid identities block before any gate or spawn', async () => {
+  for (const runIdFactory of [() => 'bad', () => null, () => undefined, () => { throw new Error('x'); }, () => RUN_A.toUpperCase(), () => `${RUN_A}x`, () => '../../escape']) {
+    const { evidence, counts } = await simulate({ runIdFactory });
+    assert.equal(evidence.decision, D.BLOCKED); assert.equal(evidence.code, 'INVALID_RUN_IDENTITY');
+    assert.equal(counts.spawned, 0); assert.deepEqual(counts.admissionCalls, []);
+  }
+  const { evidence, persisted, persistedText, counts, file } = await simulate();
+  assert.ok(controls.isValidRunId(evidence.runIdentity.runId)); assert.equal(path.basename(file), `${evidence.runIdentity.runId}.json`);
+  assert.deepEqual([persisted.runIdentity.scopeId, persisted.runIdentity.attemptBudget, persisted.runIdentity.candidate.sha256], ['phase3b6b.one-call-smoke.v1', 1, CANDIDATE_SHA]);
+  assert.equal(persisted.runIdentity.attestationIdSha256, sha('SYNTHETIC-ATT-1')); assert.equal(persisted.runIdentity.permitIdSha256, sha('SYNTHETIC-PERMIT-1'));
+  const text = persistedText;
+  for (const raw of ['SYNTHETIC-ATT-1', 'SYNTHETIC-PERMIT-1', 'SYNTHETIC_HOST', 'SYNTHETIC_ISSUER']) assert.equal(text.includes(raw), false, `${raw} must not be persisted`);
+  assert.equal(counts.spawned, 1);
+  const verdict = controls.verifyOneCallEvidenceRecord(text, { runId: evidence.runIdentity.runId, candidate: { version: '2.1.292', sha256: CANDIDATE_SHA }, attestationIdSha256: sha('SYNTHETIC-ATT-1') });
+  assert.deepEqual([verdict.ok, verdict.decision], [true, D.PASS]);
+});
+
+test('evidence: a stale PASS record cannot be replayed — foreign run, tampering, wrong candidate/budget/attestation and re-persistence are all rejected', async () => {
+  const { evidence, persistedText } = await simulate();
+  const text = persistedText; const id = evidence.runIdentity.runId; const cand = { version: '2.1.292', sha256: CANDIDATE_SHA };
+  assert.equal(controls.verifyOneCallEvidenceRecord(text, { runId: RUN_B, candidate: cand }).code, 'STALE_OR_FOREIGN_RECORD');
+  const mutate = fn => { const r = JSON.parse(text); fn(r); return JSON.stringify(r); };
+  assert.equal(controls.verifyOneCallEvidenceRecord(mutate(r => { r.decision = 'ONE_CALL_SMOKE_FAIL'; }), { runId: id, candidate: cand }).code, 'BINDING_MISMATCH');
+  assert.equal(controls.verifyOneCallEvidenceRecord(mutate(r => { r.call.state = 'FAIL'; }), { runId: id, candidate: cand }).code, 'BINDING_MISMATCH');
+  assert.equal(controls.verifyOneCallEvidenceRecord(mutate(r => { r.runIdentity.attemptBudget = 3; }), { runId: id, candidate: cand }).code, 'SCOPE_OR_BUDGET_MISMATCH');
+  assert.equal(controls.verifyOneCallEvidenceRecord(mutate(r => { delete r.bindingSha256; }), { runId: id, candidate: cand }).code, 'BINDING_MISMATCH');
+  assert.equal(controls.verifyOneCallEvidenceRecord(text, { runId: id, candidate: { version: '2.1.293', sha256: CANDIDATE_SHA } }).code, 'CANDIDATE_MISMATCH');
+  assert.equal(controls.verifyOneCallEvidenceRecord(text, { runId: id, candidate: cand, attestationIdSha256: sha('OTHER') }).code, 'ATTESTATION_IDENTITY_MISMATCH');
+  assert.equal(controls.verifyOneCallEvidenceRecord('not json', { runId: id, candidate: cand }).code, 'RECORD_UNREADABLE');
+});
+
+test('evidence: a second run that reuses an earlier run identity cannot overwrite its PASS record and is itself never PASS', async () => shared(async ({ evidence, ledger }) => {
+  const first = await simulate({ evidenceDirectory: evidence, ledgerDir: ledger, runIdFactory: () => RUN_A });
+  assert.equal(first.evidence.decision, D.PASS);
+  const before = fs.readFileSync(path.join(evidence, `${RUN_A}.json`), 'utf8');
+  const second = await simulate({ evidenceDirectory: evidence, ledgerDir: ledger, runIdFactory: () => RUN_A, permit: goodPermit({ permitId: 'SYNTHETIC-PERMIT-2' }) });
+  assert.equal(second.evidence.decision, D.UNKNOWN); assert.equal(second.evidence.code, 'EVIDENCE_PERSISTENCE_FAILED');
+  assert.equal(fs.readFileSync(path.join(evidence, `${RUN_A}.json`), 'utf8'), before, 'the earlier record is untouched');
+  assert.deepEqual(fs.readdirSync(evidence).filter(n => n.endsWith('.tmp')), []);
+}));
+
+test('evidence: persistence / serialization failure never produces a record, and a known FAIL stays FAIL in memory', async () => {
+  const unsafe = await simulate({ evidenceDirectory: '/' });
+  assert.equal(unsafe.evidence.decision, D.UNKNOWN); assert.equal(unsafe.persisted, null);
+  const serialization = await simulate({ preflightExtra: { code: Number.NaN } });
+  assert.equal(serialization.evidence.code, 'EVIDENCE_SERIALIZATION_FAILED'); assert.deepEqual(fs.existsSync(serialization.file), false);
+  for (const extra of [{ evidenceDirectory: '/' }, { preflightExtra: { code: Number.NaN } }, { evidenceDirectory: path.join(os.tmpdir(), 'cc-p3b6b9b-nope') }]) {
+    const { evidence } = await simulate({ lifecycleViolation: true, ...extra });
+    assert.equal(evidence.decision, D.FAIL, JSON.stringify(Object.keys(extra)));
+  }
+});
+
+// ---- attestation consumer contract -------------------------------------------------------------------------------------------
+async function attestationBlocked(admission, extra = {}) {
+  const { evidence, counts } = await simulate({ admission, ...extra });
+  assert.equal(evidence.decision, D.BLOCKED, JSON.stringify(evidence.gates?.attestation)); assert.equal(counts.spawned, 0); assert.equal(counts.preflights, 0); assert.equal(evidence.providerCallsUsed, 0);
+  return evidence;
+}
+const withAtt = overrides => () => ({ state: PASS_ADMISSION, attestation: goodAttestation(overrides) });
+
+test('attestation: a PASS state without a verified, non-null attestation identity never admits (null id cannot match null id)', async () => {
+  for (const admission of [() => ({ state: PASS_ADMISSION }), () => ({ state: PASS_ADMISSION, attestationId: null }), () => ({ state: PASS_ADMISSION, attestationId: 'legacy-top-level-id' }),
+    withAtt({ attestationId: null }), withAtt({ attestationId: '' }), withAtt({ attestationId: 42 }), withAtt({ attestationId: undefined }), () => ({ state: PASS_ADMISSION, attestation: null }),
+    () => ({ state: PASS_ADMISSION, attestation: 'text' }), () => ({ state: PASS_ADMISSION, attestation: [] })]) {
+    const e = await attestationBlocked(admission);
+    assert.equal(e.gates.managedPolicyRuntimeAdmission.state, 'MANAGED_POLICY_RUNTIME_ADMISSION_BLOCKED');
+  }
+});
+
+test('attestation: wrong host / candidate / scope / issuer, missing or invalid validity, expiry and missing invalidation conditions all BLOCK', async () => {
+  const cases = {
+    'wrong host': [{ host: { id: 'OTHER_HOST' } }, 'HOST_MISMATCH'], 'no host': [{ host: undefined }, 'HOST_MISMATCH'],
+    'wrong version': [{ candidate: { version: '2.1.293', sha256: CANDIDATE_SHA } }, 'CANDIDATE_MISMATCH'], 'wrong hash': [{ candidate: { version: '2.1.292', sha256: 'b'.repeat(64) } }, 'CANDIDATE_MISMATCH'],
+    'no candidate': [{ candidate: undefined }, 'CANDIDATE_MISMATCH'], 'wrong scope': [{ scope: { id: 'phase3b6b.three-call' } }, 'SCOPE_MISMATCH'], 'no scope': [{ scope: undefined }, 'SCOPE_MISMATCH'],
+    'untrusted issuer': [{ issuer: { id: 'ROGUE' } }, 'ISSUER_NOT_TRUSTED'], 'no issuer': [{ issuer: undefined }, 'ISSUER_NOT_TRUSTED'],
+    'wrong schema': [{ schema: 'other/1' }, 'ATTESTATION_MISSING'], 'effective policy present': [{ effectivePolicy: { result: 'EFFECTIVE_POLICY_PRESENT' } }, 'EFFECTIVE_POLICY_NOT_ABSENT'],
+    'effective policy unknown': [{ effectivePolicy: { result: 'UNKNOWN' } }, 'EFFECTIVE_POLICY_NOT_ABSENT'], 'no effective policy': [{ effectivePolicy: undefined }, 'EFFECTIVE_POLICY_NOT_ABSENT'],
+    'no validity': [{ validity: undefined }, 'VALIDITY_MISSING'], 'bad validity date': [{ validity: { notBefore: 'yesterday', notAfter: '2026-10-10T00:00:00Z' } }, 'VALIDITY_MISSING'],
+    'inverted validity': [{ validity: { notBefore: '2026-10-10T00:00:00Z', notAfter: '2026-10-08T00:00:00Z' } }, 'VALIDITY_INVALID'],
+    'expired': [{ validity: { notBefore: '2026-10-01T00:00:00Z', notAfter: '2026-10-08T00:00:00Z' } }, 'EXPIRED'],
+    'not yet valid': [{ validity: { notBefore: '2026-10-09T12:00:00Z', notAfter: '2026-10-10T00:00:00Z' } }, 'NOT_YET_VALID'], 'issued in future': [{ issuedAt: '2026-10-09T06:00:00Z' }, 'NOT_YET_VALID'],
+    'no invalidation': [{ invalidation: undefined }, 'INVALIDATION_CONDITIONS_MISSING'], 'empty invalidation': [{ invalidation: { conditions: [] } }, 'INVALIDATION_CONDITIONS_MISSING'],
+    'no revocation condition': [{ invalidation: { conditions: ['HOST_CHANGE', 'CANDIDATE_CHANGE', 'POLICY_CHANGE'] } }, 'INVALIDATION_CONDITIONS_MISSING'],
+  };
+  for (const [name, [overrides, code]] of Object.entries(cases)) {
+    const e = await attestationBlocked(withAtt(overrides));
+    assert.equal(e.gates.attestation.state, code, name);
+  }
+});
+
+test('attestation: unverifiable, revoked, revocation-unknown and policy-less attestations BLOCK; the default policy trusts nothing', async () => {
+  assert.equal((await attestationBlocked(undefined, { trust: { verifyAuthenticity: () => false } })).gates.attestation.state, 'ATTESTATION_UNVERIFIABLE');
+  assert.equal((await attestationBlocked(undefined, { trust: { verifyAuthenticity: () => 'true' } })).gates.attestation.state, 'ATTESTATION_UNVERIFIABLE');
+  assert.equal((await attestationBlocked(undefined, { trust: { verifyAuthenticity: () => { throw new Error('x'); } } })).gates.attestation.state, 'ATTESTATION_UNVERIFIABLE');
+  for (const checkRevocation of [() => 'REVOKED', () => 'UNKNOWN', () => undefined, () => true]) {
+    assert.equal((await attestationBlocked(undefined, { trust: { checkRevocation } })).gates.attestation.state, 'ATTESTATION_REVOKED_OR_UNKNOWN');
+  }
+  assert.ok(['ATTESTATION_UNVERIFIABLE', 'ATTESTATION_REVOKED_OR_UNKNOWN'].includes((await attestationBlocked(undefined, { trust: { checkRevocation: () => { throw new Error('x'); } } })).gates.attestation.state));
+  assert.equal((await attestationBlocked(undefined, { omit: ['attestationPolicy'] })).gates.attestation.state, 'HOST_MISMATCH');
+  assert.equal((await attestationBlocked(undefined, { trust: { hostId: null } })).gates.attestation.state, 'HOST_MISMATCH');
+  assert.equal((await attestationBlocked(undefined, { trust: { trustedIssuers: [] } })).gates.attestation.state, 'ISSUER_NOT_TRUSTED');
+  assert.equal((await attestationBlocked(undefined, { trust: { now: undefined } })).gates.attestation.state, 'ATTESTATION_UNVERIFIABLE');
+});
+
+test('attestation: a changed identity or a later revocation/expiry (pre-launch or post-run) can never PASS', async () => {
+  const swapped = await simulate({ admission: ({ stage }) => ({ state: PASS_ADMISSION, attestation: goodAttestation({ attestationId: stage === 'PRE_LAUNCH' ? 'ANOTHER' : 'SYNTHETIC-ATT-1' }) }) });
+  assert.equal(swapped.evidence.decision, D.BLOCKED); assert.equal(swapped.counts.spawned, 0);
+  const post = await simulate({ admission: ({ stage }) => ({ state: PASS_ADMISSION, attestation: goodAttestation({ attestationId: stage === 'POST_RUN' ? 'ANOTHER' : 'SYNTHETIC-ATT-1' }) }) });
+  assert.equal(post.evidence.decision, D.UNKNOWN); assert.equal(post.counts.spawned, 1);
+  let calls = 0;
+  const revokedLate = await simulate({ trust: { checkRevocation: () => (++calls >= 3 ? 'REVOKED' : 'NOT_REVOKED') } });
+  assert.equal(revokedLate.evidence.decision, D.UNKNOWN); assert.equal(revokedLate.evidence.code, 'ADMISSION_DRIFT');
+  let t = NOW;
+  const expiresMidRun = await simulate({ trust: { now: () => (t += 6 * 3600 * 1000) } });
+  assert.notEqual(expiresMidRun.evidence.decision, D.PASS);
+});
+
+test('attestation: current MDM UNKNOWN stays BLOCKED, the default admission is BLOCKED, and a fake PASS needs the fake seams', async () => {
+  const unknown = await attestationBlocked(() => ({ state: 'MANAGED_POLICY_RUNTIME_ADMISSION_UNKNOWN', attestation: goodAttestation() }));
+  assert.equal(unknown.gates.managedPolicyRuntimeAdmission.state, 'MANAGED_POLICY_RUNTIME_ADMISSION_UNKNOWN');
+  const real = await smoke.runOneCallSmoke({ binaryPath: path.join(os.homedir(), '.local/share/cc-qualification/claude/2.1.292/claude'), sourceEnv: { HOME: os.homedir() } });
+  assert.equal(real.decision, D.BLOCKED); assert.equal(real.gates.managedPolicyRuntimeAdmission.state, 'MANAGED_POLICY_RUNTIME_ADMISSION_BLOCKED');
+  assert.equal(real.gates.launchPermit.state, 'NOT_CONSUMED'); assert.equal(real.providerCallsUsed, 0);
+});
+
+// ---- single-use launch permit ---------------------------------------------------------------------------------------------------
+async function permitBlocked(extra) {
+  const { evidence, counts, ledgerFiles } = await simulate(extra);
+  assert.equal(evidence.decision, D.BLOCKED, JSON.stringify([evidence.code, evidence.gates?.launchPermit]));
+  assert.equal(counts.spawned, 0); assert.equal(counts.preflights, 0, 'no candidate access before the permit is valid'); assert.equal(evidence.providerCallsUsed, 0);
+  return { evidence, ledgerFiles, counts };
+}
+
+test('permit: missing, malformed, mis-bound, expired, unverifiable or multi-call permits BLOCK before any candidate access', async () => {
+  const cases = {
+    missing: [undefined, 'PERMIT_MISSING'], null: [null, 'PERMIT_MISSING'], 'wrong schema': [goodPermit({ schema: 'x' }), 'PERMIT_MISSING'], 'no id': [goodPermit({ permitId: '' }), 'PERMIT_MALFORMED'],
+    'two calls': [goodPermit({ maxProviderCalls: 2 }), 'PERMIT_MALFORMED'], 'no budget': [goodPermit({ maxProviderCalls: undefined }), 'PERMIT_MALFORMED'],
+    'wrong host': [goodPermit({ host: { id: 'OTHER' } }), 'HOST_MISMATCH'], 'wrong candidate': [goodPermit({ candidate: { version: '2.1.292', sha256: 'c'.repeat(64) } }), 'CANDIDATE_MISMATCH'],
+    'wrong scope': [goodPermit({ scope: { id: 'phase3b6b.three-call' } }), 'SCOPE_MISMATCH'], 'untrusted issuer': [goodPermit({ issuer: { id: 'ROGUE' } }), 'ISSUER_NOT_TRUSTED'],
+    expired: [goodPermit({ validity: { notBefore: '2026-10-01T00:00:00Z', notAfter: '2026-10-08T00:00:00Z' } }), 'EXPIRED'], 'no validity': [goodPermit({ validity: undefined }), 'VALIDITY_MISSING'],
+    'not yet valid': [goodPermit({ validity: { notBefore: '2026-10-09T12:00:00Z', notAfter: '2026-10-10T00:00:00Z' } }), 'NOT_YET_VALID'],
+  };
+  for (const [name, [permit, code]] of Object.entries(cases)) {
+    const { evidence, ledgerFiles } = await permitBlocked({ permit });
+    assert.equal(evidence.gates.launchPermit.state, code, name); assert.deepEqual(ledgerFiles, [], `${name}: nothing was consumed`);
+    assert.equal(evidence.code, 'LAUNCH_PERMIT_NOT_VALID', name);
+  }
+  const unverifiable = await permitBlocked({ trust: { verifyAuthenticity: (doc) => doc.schema !== 'cc.one-call-launch-permit/1' } });
+  assert.equal(unverifiable.evidence.gates.launchPermit.state, 'PERMIT_UNVERIFIABLE');
+});
+
+test('permit: an unsafe or missing ledger blocks and never launches', async () => scratch(async root => {
+  const loose = path.join(root, 'loose'); fs.mkdirSync(loose, { mode: 0o755 }); fs.chmodSync(loose, 0o755);
+  const real = privateDir(path.join(root, 'real')); const link = path.join(root, 'link'); fs.symlinkSync(real, link);
+  const file = path.join(root, 'file'); fs.writeFileSync(file, 'x');
+  for (const ledgerDir of [null, undefined, loose, link, file, 'relative', path.join(root, 'missing'), '/']) {
+    const { evidence, counts } = await simulate({ ledgerDir: ledgerDir === undefined ? null : ledgerDir });
+    assert.equal(evidence.decision, D.BLOCKED, String(ledgerDir)); assert.equal(evidence.code, 'PERMIT_LEDGER_UNSAFE'); assert.equal(counts.spawned, 0);
+  }
+  assert.deepEqual(fs.readdirSync(real), []);
+}));
+
+test('permit: consumed atomically BEFORE the guarded launch, bound to its hash, and a reused permit blocks (no second launch)', async () => shared(async ({ ledger, evidence }) => {
+  const first = await simulate({ ledgerDir: ledger, evidenceDirectory: evidence });
+  assert.equal(first.evidence.decision, D.PASS); assert.equal(first.counts.markerAtSpawn, 1, 'the marker already existed when the spawn happened');
+  assert.equal(first.evidence.gates.launchPermit.state, 'CONSUMED');
+  const markers = fs.readdirSync(ledger); assert.deepEqual(markers, [`${sha('SYNTHETIC-PERMIT-1')}.consumed`]);
+  assert.equal(fs.readFileSync(path.join(ledger, markers[0]), 'utf8').includes('SYNTHETIC-PERMIT-1'), false, 'only the permit hash is stored');
+  assert.equal(fs.statSync(path.join(ledger, markers[0])).mode & 0o777, 0o600);
+  const replay = await simulate({ ledgerDir: ledger, evidenceDirectory: evidence });
+  assert.equal(replay.evidence.decision, D.BLOCKED); assert.equal(replay.evidence.code, 'PERMIT_ALREADY_CONSUMED'); assert.equal(replay.counts.spawned, 0);
+  const other = await simulate({ ledgerDir: ledger, evidenceDirectory: evidence, permit: goodPermit({ permitId: 'SYNTHETIC-PERMIT-2' }) });
+  assert.equal(other.evidence.decision, D.PASS, 'a distinct permit is an independent single use');
+}));
+
+test('permit: a failed spawn consumes the permit; it can never be reused, and the one-call budget is spent too', async () => shared(async ({ ledger }) => {
+  const failed = await simulate({ ledgerDir: ledger, spawnThrows: true });
+  assert.notEqual(failed.evidence.decision, D.PASS); assert.equal(failed.counts.spawned, 1); assert.equal(failed.evidence.providerCallsUsed, 1);
+  assert.equal(failed.counts.markerAtSpawn, 1); assert.equal(fs.readdirSync(ledger).length, 1);
+  const retry = await simulate({ ledgerDir: ledger });
+  assert.equal(retry.evidence.code, 'PERMIT_ALREADY_CONSUMED'); assert.equal(retry.counts.spawned, 0);
+}));
+
+test('permit: a crash after the marker was created (empty / partial marker) still counts as spent', async () => shared(async ({ ledger }) => {
+  fs.writeFileSync(path.join(ledger, `${sha('SYNTHETIC-PERMIT-1')}.consumed`), '', { mode: 0o600 });
+  const { evidence, counts } = await simulate({ ledgerDir: ledger });
+  assert.equal(evidence.code, 'PERMIT_ALREADY_CONSUMED'); assert.equal(counts.spawned, 0);
+}));
+
+test('permit: a ledger that rejects creation (read-only) blocks and does not launch; a half-failed consume burns the permit', async () => shared(async ({ ledger }) => {
+  fs.chmodSync(ledger, 0o500);
+  try {
+    const { evidence, counts } = await simulate({ ledgerDir: ledger });
+    assert.equal(evidence.decision, D.BLOCKED); assert.equal(evidence.code, 'PERMIT_CONSUMPTION_FAILED'); assert.equal(counts.spawned, 0);
+  } finally { fs.chmodSync(ledger, 0o700); }
+  const io = { ...fs, fsyncSync: () => { throw Object.assign(new Error('synthetic'), { code: 'EIO' }); } };
+  const burned = controls.consumeLaunchPermit('SYNTHETIC-PERMIT-9', ledger, { runId: RUN_A, io });
+  assert.deepEqual([burned.ok, burned.burned], [false, true]);
+  assert.equal(controls.consumeLaunchPermit('SYNTHETIC-PERMIT-9', ledger, { runId: RUN_B }).code, 'PERMIT_ALREADY_CONSUMED');
+}));
+
+const CONSUME_SCRIPT = (ledger, id) => `import('${new URL('../scripts/phase3b6bOneCallControls.mjs', import.meta.url).href}').then(m => { const r = m.consumeLaunchPermit(${JSON.stringify(id)}, ${JSON.stringify(ledger)}, { runId: m.defaultRunId() }); console.log(r.ok ? 'CONSUMED' : r.code); });`;
+const runChild = (ledger, id) => new Promise(resolve => {
+  const child = realSpawn(process.execPath, ['--input-type=module', '-e', CONSUME_SCRIPT(ledger, id)], { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } });
+  let out = ''; child.stdout.on('data', c => { out += c; }); child.on('close', () => resolve(out.trim()));
+});
+
+test('permit: concurrent consumption across processes — exactly one winner; a restarted process cannot replay it', async () => shared(async ({ ledger }) => {
+  const results = await Promise.all(Array.from({ length: 12 }, () => runChild(ledger, 'SYNTHETIC-PERMIT-CONCURRENT')));
+  assert.equal(results.filter(r => r === 'CONSUMED').length, 1, JSON.stringify(results));
+  assert.equal(results.filter(r => r === 'PERMIT_ALREADY_CONSUMED').length, 11, JSON.stringify(results));
+  assert.equal(fs.readdirSync(ledger).length, 1);
+  assert.equal(await runChild(ledger, 'SYNTHETIC-PERMIT-CONCURRENT'), 'PERMIT_ALREADY_CONSUMED', 'a fresh process after the first winner');
+  assert.equal(controls.consumeLaunchPermit('SYNTHETIC-PERMIT-CONCURRENT', ledger, { runId: RUN_A }).code, 'PERMIT_ALREADY_CONSUMED', 'and the parent process');
+  assert.equal(await runChild(ledger, 'SYNTHETIC-PERMIT-OTHER'), 'CONSUMED');
+}));
+
+test('permit: a permit consumed by another process blocks the full harness (restart replay), with zero spawns', async () => shared(async ({ ledger }) => {
+  assert.equal(await runChild(ledger, 'SYNTHETIC-PERMIT-1'), 'CONSUMED');
+  const { evidence, counts } = await simulate({ ledgerDir: ledger });
+  assert.equal(evidence.code, 'PERMIT_ALREADY_CONSUMED'); assert.equal(counts.spawned, 0);
+}));
+
+test('permit: consumption refuses malformed ids and run identities, and defaults authorize nothing', async () => shared(async ({ ledger }) => {
+  for (const [id, runId] of [['', RUN_A], [undefined, RUN_A], ['p', 'bad'], ['p', undefined]]) assert.equal(controls.consumeLaunchPermit(id, ledger, { runId }).code, 'PERMIT_MALFORMED');
+  assert.deepEqual(fs.readdirSync(ledger), []);
+  assert.equal(controls.DEFAULT_TRUST_POLICY.hostId, null); assert.deepEqual([...controls.DEFAULT_TRUST_POLICY.trustedIssuers], []);
+  assert.equal(controls.DEFAULT_TRUST_POLICY.verifyAuthenticity({}), false); assert.equal(controls.DEFAULT_TRUST_POLICY.checkRevocation('x'), 'UNKNOWN');
+  assert.equal(controls.validateLaunchPermit(goodPermit(), { ...controls.DEFAULT_TRUST_POLICY, candidate: { version: '2.1.292', sha256: CANDIDATE_SHA } }).ok, false);
+  assert.equal(controls.validateAttestation(goodAttestation(), { ...controls.DEFAULT_TRUST_POLICY, candidate: { version: '2.1.292', sha256: CANDIDATE_SHA } }).ok, false);
+}));
+
+test('budgets and gates are unchanged: one-call 1, three-call 3, live default false, no live switch, seams cannot be smuggled', () => {
+  assert.equal(smoke.MAX_SMOKE_PROVIDER_CALLS, 1); assert.equal(threeCall.MAX_PROVIDER_CALLS, 3);
+  const CONTROLS = fs.readFileSync(fileURLToPath(new URL('../scripts/phase3b6bOneCallControls.mjs', import.meta.url)), 'utf8');
+  assert.equal(CONTROLS.includes('process.env'), false); assert.equal(SOURCE.includes('process.env.'), false);
+  assert.equal(/const defaultLiveExecutionAuthorized = \(\) => false;/.test(SOURCE), true);
+  assert.equal(/ttl|timeToLive|expiresIn|maxAge/i.test(CONTROLS + SOURCE), false, 'no invented TTL');
+  assert.equal(/\b(spawn|spawnSync|execFile|exec)\(/.test(CONTROLS), false, 'the controls module cannot launch anything');
 });
