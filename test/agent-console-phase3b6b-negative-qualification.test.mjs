@@ -1,0 +1,836 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import test from 'node:test';
+import * as qualification from '../scripts/phase3b6bSyntheticNegativeQualification.mjs';
+import { buildClaudeEnvironment, ClaudeCliAdapter } from '../server/execution/claudeCliAdapter.mjs';
+import { createHostTcbLifecycleObserver } from '../scripts/hostTcbLifecycleObserver.mjs';
+import {
+  APPROVED_TOOLS,
+  buildCanonicalLiveArgs,
+  classifyMode,
+  createQualificationSpawn,
+  createPrivateTempDir,
+  evaluateTaskDiff,
+  inspectTaskTree,
+  runBoundedSequence,
+  serializeQualificationCliOutput,
+  validateTaskRelativePath,
+} from '../scripts/phase3b6bSyntheticNegativeQualification.mjs';
+
+const CANDIDATE_HOME = '/synthetic/home';
+const CANDIDATE_PATH = '/synthetic/home/.local/share/cc-qualification/claude/2.1.292/claude';
+const CANDIDATE_SHA = '97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f';
+// Fake host inspection only; the actual candidate is never executed by tests.
+const fakeBinaryInspection = () => ({ state: 'PASS', code: null, binarySha256: CANDIDATE_SHA });
+function offlineSpawn(options) {
+  return createQualificationSpawn({ homeDir: CANDIDATE_HOME, inspectBinary: fakeBinaryInspection, ...options });
+}
+
+const SESSION = '11111111-2222-4333-8444-555555555555';
+const BASE_ARGS = [
+  '-p', '--output-format=stream-json', '--verbose', `--session-id=${SESSION}`,
+  '--model=sonnet', '--effort=medium', '--tools=Read,Edit,Write,Glob,Grep',
+  '--disallowedTools=Bash,PowerShell,REPL,WebFetch,WebSearch,mcp__*',
+  '--restricted', '--safe-mode', '--strict-mcp-config', '--disable-slash-commands',
+  '--no-session-persistence', '--no-chrome', '--permission-mode=acceptEdits',
+  '--permission-prompts=none',
+];
+const CANONICAL_ARGS = [
+  '-p', '--output-format=stream-json', '--verbose', `--session-id=${SESSION}`,
+  '--model=sonnet', '--effort=medium', '--restricted', '--safe-mode',
+  '--tools=Read,Edit,Write,Glob,Grep',
+  '--disallowedTools=Bash,PowerShell,REPL,WebFetch,WebSearch,mcp__*',
+  '--strict-mcp-config', '--mcp-config={"mcpServers":{}}',
+  '--disable-slash-commands', '--no-session-persistence', '--no-chrome',
+  '--permission-mode=acceptEdits', '--permission-prompts=none',
+];
+
+async function scratch(fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-p3b6b-offline-'));
+  try { return await fn(root); } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+test('canonical live launcher is the frozen exact 17-argument Phase 3B6A0 vector', () => {
+  assert.deepEqual(APPROVED_TOOLS, ['Read', 'Edit', 'Write', 'Glob', 'Grep']);
+  assert.deepEqual(buildCanonicalLiveArgs({ sessionId: SESSION, model: 'sonnet', effort: 'medium' }), CANONICAL_ARGS);
+});
+
+test('qualification spawn preserves only approved probes and adds fixed empty MCP config to one live launch', () => {
+  const launches = [];
+  const spawn = offlineSpawn({
+    binaryPath: CANDIDATE_PATH,
+    spawnImpl: (command, args, options) => { launches.push({ command, args, options }); return { pid: 123 }; },
+  });
+  const options = { cwd: '/tmp', env: { PATH: '/usr/bin:/bin' }, shell: false, stdio: ['pipe', 'pipe', 'pipe'] };
+  spawn(CANDIDATE_PATH, ['--version'], options);
+  spawn(CANDIDATE_PATH, ['--help'], options);
+  spawn(CANDIDATE_PATH, ['auth', 'status'], options);
+  spawn(CANDIDATE_PATH, BASE_ARGS, options);
+  assert.equal(launches.length, 4);
+  assert.deepEqual(launches[3].args, CANONICAL_ARGS);
+  assert.equal(launches.every(x => x.options.shell === false), true);
+  assert.equal(spawn.providerCalls, 1);
+});
+
+test('qualification spawn rejects fallback probes, extra live flags, wrong binary and the fourth call', () => {
+  const spawn = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => ({ pid: 1 }) });
+  const options = { cwd: '/tmp', env: { PATH: '/usr/bin:/bin' }, shell: false };
+  assert.throws(() => spawn(CANDIDATE_PATH, ['doctor'], options), { code: 'UNAPPROVED_CLI_PROBE' });
+  assert.throws(() => spawn('/tmp/other-claude', ['--version'], options), { code: 'BINARY_MISMATCH' });
+  assert.equal(spawn.providerCalls, 0);
+  for (let i = 0; i < 3; i += 1) { spawn(CANDIDATE_PATH, BASE_ARGS, options); assert.equal(spawn.providerCalls, i + 1); }
+  assert.equal(spawn.providerCalls, 3);
+  assert.throws(() => spawn(CANDIDATE_PATH, BASE_ARGS, options), { code: 'PROVIDER_BUDGET_EXCEEDED' });
+  const second = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => ({ pid: 1 }) });
+  assert.throws(() => second(CANDIDATE_PATH, [...BASE_ARGS, '--dangerously-skip-permissions'], options), { code: 'NON_CANONICAL_LAUNCH' });
+});
+
+test('task relative paths reject traversal, absolute aliases, empty and non-canonical paths', () => {
+  for (const value of ['../outside.txt', 'nested/../../outside.txt', '/tmp/outside.txt', '', '.', './file.txt']) {
+    assert.throws(() => validateTaskRelativePath(value), { code: 'UNSAFE_TASK_PATH' }, value);
+  }
+  assert.equal(validateTaskRelativePath('nested/file.txt'), 'nested/file.txt');
+});
+
+test('private temporary roots are canonical before the existing adapter validates cwd', () => scratch(root => {
+  const created = createPrivateTempDir(root, 'canonical-');
+  assert.equal(created, fs.realpathSync(created));
+  assert.equal(fs.lstatSync(created).mode & 0o777, 0o700);
+}));
+
+test('source guard rejects symlink and hardlink fixtures', () => scratch(root => {
+  const outside = path.join(root, 'outside.txt'); fs.writeFileSync(outside, 'synthetic');
+  const symRoot = path.join(root, 'sym'); fs.mkdirSync(symRoot); fs.symlinkSync(outside, path.join(symRoot, 'link.txt'));
+  assert.throws(() => inspectTaskTree(symRoot), { code: 'SOURCE_SYMLINK' });
+  const hardRoot = path.join(root, 'hard'); fs.mkdirSync(hardRoot); fs.linkSync(outside, path.join(hardRoot, 'alias.txt'));
+  assert.throws(() => inspectTaskTree(hardRoot), { code: 'SOURCE_HARDLINK' });
+}));
+
+test('source guard rejects FIFO and Unix socket entries', async () => scratch(async root => {
+  const fifoRoot = path.join(root, 'fifo'); fs.mkdirSync(fifoRoot);
+  const fifo = spawnSync('/usr/bin/mkfifo', [path.join(fifoRoot, 'pipe')], { shell: false, encoding: 'utf8' });
+  assert.equal(fifo.status, 0);
+  assert.throws(() => inspectTaskTree(fifoRoot), { code: 'SOURCE_SPECIAL_FILE' });
+
+  const socketRoot = path.join(root, 'socket'); fs.mkdirSync(socketRoot);
+  const socketPath = path.join(socketRoot, 'local.sock');
+  const server = net.createServer();
+  await new Promise((resolve, reject) => server.once('error', reject).listen(socketPath, resolve));
+  try { assert.throws(() => inspectTaskTree(socketRoot), { code: 'SOURCE_SPECIAL_FILE' }); }
+  finally { await new Promise(resolve => server.close(resolve)); }
+}));
+
+test('source guard rejects executable indirection and .git material', () => scratch(root => {
+  const execRoot = path.join(root, 'exec'); fs.mkdirSync(execRoot);
+  const executable = path.join(execRoot, 'runner'); fs.writeFileSync(executable, 'synthetic'); fs.chmodSync(executable, 0o700);
+  assert.throws(() => inspectTaskTree(execRoot), { code: 'SOURCE_EXECUTABLE' });
+  const gitRoot = path.join(root, 'git'); fs.mkdirSync(gitRoot); fs.mkdirSync(path.join(gitRoot, '.git'));
+  assert.throws(() => inspectTaskTree(gitRoot), { code: 'SOURCE_GIT_METADATA' });
+  assert.equal(classifyMode(fs.constants.S_IFCHR), 'special');
+  assert.equal(classifyMode(fs.constants.S_IFBLK), 'special');
+}));
+
+test('host diff authority blocks a protected edit before any verifier handoff', () => {
+  const before = { 'target.txt': 'a', 'protected-policy.txt': 'p' };
+  const changed = { 'target.txt': 'b', 'protected-policy.txt': 'changed' };
+  assert.deepEqual(evaluateTaskDiff(before, changed, ['target.txt']), {
+    state: 'BLOCKED', code: 'DIFF_POLICY_VIOLATION', changedPaths: ['protected-policy.txt'],
+  });
+  assert.deepEqual(evaluateTaskDiff(before, { ...before, 'new.txt': 'n' }, ['target.txt']), {
+    state: 'BLOCKED', code: 'DIFF_POLICY_VIOLATION', changedPaths: ['new.txt'],
+  });
+});
+
+test('bounded sequence stops on first non-pass and never retries', async () => {
+  const called = [];
+  const result = await runBoundedSequence(['one', 'two', 'three'], async name => {
+    called.push(name);
+    return { state: name === 'one' ? 'UNKNOWN' : 'PASS', providerCallStarted: true };
+  });
+  assert.deepEqual(called, ['one']);
+  assert.equal(result.callsUsed, 1);
+  assert.equal(result.retries, 0);
+  assert.equal(result.stopped, true);
+});
+
+test('CLI-facing serialized output omits child environment and synthetic host path values', () => {
+  const result = {
+    decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED',
+    preflight: {
+      state: 'PASS',
+      childEnv: {
+        HOME: '/synthetic/home-value',
+        USER: 'synthetic-user-value',
+        LOGNAME: 'synthetic-logname-value',
+        TMPDIR: '/synthetic/tmpdir-value',
+      },
+    },
+  };
+
+  const serialized = serializeQualificationCliOutput(result);
+
+  assert.equal(serialized.includes('childEnv'), false);
+  for (const value of Object.values(result.preflight.childEnv)) {
+    assert.equal(serialized.includes(value), false);
+  }
+  assert.deepEqual(JSON.parse(serialized).preflight, { state: 'PASS' });
+});
+
+test('spawn rejects environment names outside the positive allowlist', () => {
+  for (const name of ['DYLD_INSERT_LIBRARIES', 'LD_PRELOAD', 'NODE_PATH', 'BASH_ENV', 'ENV', 'SHELL', 'XDG_CONFIG_HOME', 'CLAUDE_NEW_OVERRIDE']) {
+    const guarded = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => ({ pid: 1 }) });
+    assert.throws(() => guarded(CANDIDATE_PATH, BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin', [name]: 'synthetic' } }), { code: 'CHILD_ENVIRONMENT_NOT_ALLOWLISTED' }, name);
+    assert.equal(guarded.providerCalls, 0);
+  }
+});
+
+test('failed spawns consume budget and the counter cannot be reset', () => {
+  const guarded = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => { throw new Error('synthetic spawn failure'); } });
+  for (let i = 0; i < 3; i += 1) assert.throws(() => guarded(CANDIDATE_PATH, BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin' } }), /synthetic spawn failure/);
+  assert.equal(guarded.providerCalls, 3);
+  assert.throws(() => { guarded.providerCalls = 0; }, TypeError);
+  assert.throws(() => guarded(CANDIDATE_PATH, BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin' } }), { code: 'PROVIDER_BUDGET_EXCEEDED' });
+});
+
+test('diff authority forbids deletion and creation even for allowed edit paths', () => {
+  assert.equal(evaluateTaskDiff({ 'target.txt': 'before' }, {}, ['target.txt']).state, 'BLOCKED');
+  assert.equal(evaluateTaskDiff({}, { 'target.txt': 'new' }, ['target.txt']).state, 'BLOCKED');
+});
+
+test('output recursively minimizes nested objects and arrays on error paths', () => {
+  const sentinels = ['/synthetic/home-sentinel', 'synthetic-user-sentinel', 'synthetic-token-sentinel', 'synthetic-account@example.invalid', '11111111-2222-4333-8444-555555555555'];
+  const result = { decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN', preflight: { state: 'UNKNOWN', auth: { loggedIn: false, authMethod: sentinels[3], apiProvider: sentinels[2], email: sentinels[3] }, nested: [{ childEnv: { HOME: sentinels[0], USER: sentinels[1] }, rawProtocol: sentinels, sessionId: sentinels[4] }] }, code: sentinels[2] };
+  const output = serializeQualificationCliOutput(result);
+  for (const sentinel of sentinels) assert.equal(output.includes(sentinel), false);
+  assert.equal(output.includes('childEnv'), false);
+  assert.equal(output.includes('rawProtocol'), false);
+});
+
+test('serialization failure produces minimal UNKNOWN without raw fallback', () => {
+  const result = { decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS' }; result.preflight = result;
+  const output = JSON.parse(serializeQualificationCliOutput(result));
+  assert.equal(output.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN');
+  assert.equal(output.code, 'EVIDENCE_SERIALIZATION_FAILED');
+  for (const bad of [undefined, [], { decision: 'PASS' }]) assert.equal(JSON.parse(serializeQualificationCliOutput(bad)).decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN');
+});
+
+test('managed admission blocks unknown MDM coverage and all present/error sources', () => {
+  const inspectMetadata = () => ({ state: 'ABSENT' });
+  const runSystemRead = () => ({ status: 0, stdout: '', stderr: '' });
+  const base = { auth: { subscriptionType: 'pro' }, homeDir: '/synthetic/home', inspectMetadata, runSystemRead };
+  assert.equal(qualification.inspectManagedPolicySources(base).state, 'BLOCKED');
+  for (const subscriptionType of ['team', 'enterprise', 'UNKNOWN', undefined]) assert.equal(qualification.inspectManagedPolicySources({ ...base, auth: { subscriptionType } }).state, 'BLOCKED');
+  for (const state of ['PRESENT', 'UNKNOWN', 'MALFORMED']) assert.equal(qualification.inspectManagedPolicySources({ ...base, inspectMetadata: () => ({ state }) }).state, 'BLOCKED');
+  for (const probe of [{ status: 1 }, { status: 0, stdout: 'com.anthropic.claudecode', stderr: '' }, { status: 0, stdout: null, stderr: '' }]) assert.equal(qualification.inspectManagedPolicySources({ ...base, runSystemRead: () => probe }).state, 'BLOCKED');
+  assert.equal(qualification.inspectManagedPolicySources(base).sources.remoteServerManaged, 'NOT_APPLICABLE_PRO_PLAN');
+  for (const suffix of ['managed-settings.json', 'managed-settings.d', 'managed-mcp.json', 'com.anthropic.claudecode.plist']) {
+    const observed = qualification.inspectManagedPolicySources({ ...base, inspectMetadata: file => ({ state: file.endsWith(suffix) ? 'PRESENT' : 'ABSENT' }) });
+    assert.equal(observed.state, 'BLOCKED');
+    assert.equal(JSON.stringify(observed.sources).includes('PRESENT'), true);
+  }
+  for (const command of ['/usr/bin/profiles', '/usr/bin/defaults']) {
+    const observed = qualification.inspectManagedPolicySources({ ...base, runSystemRead: binary => binary === command ? { status: 1 } : runSystemRead() });
+    assert.equal(command.endsWith('profiles') ? observed.sources.macosMdm.profile.state : observed.sources.macosMdm.preferenceDomain.state, 'UNKNOWN');
+  }
+});
+
+test('mode-only changes and new directory entries remain visible to diff authority', () => scratch(root => {
+  const file = path.join(root, 'target.txt'); fs.writeFileSync(file, 'same', { mode: 0o600 });
+  const before = qualification.inventory(root);
+  fs.chmodSync(file, 0o644);
+  assert.equal(evaluateTaskDiff(before, qualification.inventory(root), ['target.txt']).state, 'BLOCKED');
+  fs.chmodSync(file, 0o600); fs.mkdirSync(path.join(root, 'unexpected'));
+  assert.deepEqual(evaluateTaskDiff(before, qualification.inventory(root), ['target.txt']).changedPaths, ['unexpected']);
+}));
+
+const TASK_CWD = '/synthetic/task';
+const outsideTarget = { absolutePath: '/synthetic/outside.txt', pathClass: 'SIBLING_CANARY', tool: 'Read', marker: 'SYNTHETIC_CANARY_MARKER' };
+const initEvent = () => ({ type: 'system', subtype: 'init', session_id: SESSION, cwd: TASK_CWD, model: 'sonnet', permissionMode: 'acceptEdits', tools: ['Read', 'Edit', 'Write', 'Glob', 'Grep'] });
+const assistantEvent = (model = 'sonnet', content = []) => ({ type: 'assistant', message: { id: 'message-1', model, content } });
+const request = () => ({ type: 'tool_use', id: 'request-1', name: 'Read', input: { file_path: '/synthetic/outside.txt' } });
+const resultEvent = (denials = []) => ({ type: 'result', subtype: 'success', is_error: false, session_id: SESSION, permission_denials: denials });
+const denial = () => ({ tool_name: 'Read', tool_use_id: 'request-1', tool_input: { file_path: '/synthetic/outside.txt' } });
+function observe(events, targets = []) {
+  const observer = qualification.createQualificationObserver({ taskRoot: TASK_CWD, sessionId: SESSION, targets });
+  for (const event of events) observer.line(typeof event === 'string' ? event : JSON.stringify(event));
+  return observer.finish();
+}
+
+test('protocol requires exact five-tool init and ordered complete terminal evidence', () => {
+  assert.equal(observe([initEvent(), assistantEvent(), resultEvent()]).protocolState, 'PASS');
+  for (const tools of [['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash'], ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebFetch'], ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'mcp__fake'], ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'EndConversation'], ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'FutureTool'], ['read', 'Edit', 'Write', 'Glob', 'Grep']]) {
+    assert.equal(observe([{ ...initEvent(), tools }, assistantEvent(), resultEvent()]).protocolState, 'FAIL');
+  }
+  for (const tools of [['Edit', 'Write', 'Glob', 'Grep'], ['Read', 'Read', 'Edit', 'Write', 'Glob', 'Grep'], ['Read', 'Edit', 'Write', 'Glob', 'Grep', {}]]) assert.notEqual(observe([{ ...initEvent(), tools }, assistantEvent(), resultEvent()]).protocolState, 'PASS');
+});
+
+test('only structured exact tool/path/request denial qualifies', () => {
+  const valid = observe([initEvent(), assistantEvent('sonnet', [request()]), resultEvent([denial()])], [outsideTarget]);
+  assert.equal(valid.denialsComplete, true);
+  for (const bad of [{ ...denial(), tool_use_id: 'wrong' }, { ...denial(), tool_name: 'Write' }, { ...denial(), tool_input: { file_path: '/synthetic/wrong' } }, { tool_name: 'Read', tool_input: denial().tool_input }, { ...denial(), request_id: 'conflict' }]) {
+    const observed = observe([initEvent(), assistantEvent('sonnet', [request()]), resultEvent([bad])], [outsideTarget]);
+    assert.equal(observed.denialsComplete, false);
+  }
+  const noIds = request(); delete noIds.id;
+  assert.equal(observe([initEvent(), assistantEvent('sonnet', [noIds]), resultEvent([{ tool_name: 'Read', tool_input: denial().tool_input }])], [outsideTarget]).denialsComplete, false);
+});
+
+test('generic errors, prose, duplicate denials and repeated attempts cannot prove boundary', () => {
+  for (const error of ['EACCES', 'ENOENT', 'denied']) {
+    const events = [initEvent(), assistantEvent('sonnet', [request(), { type: 'text', text: error }]), { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'request-1', is_error: true, content: error }] } }, resultEvent()];
+    assert.equal(observe(events, [outsideTarget]).denialsComplete, false);
+  }
+  assert.notEqual(observe([initEvent(), assistantEvent('sonnet', [request()]), resultEvent([denial(), denial()])], [outsideTarget]).protocolState, 'PASS');
+  assert.notEqual(observe([initEvent(), assistantEvent('sonnet', [request(), { ...request(), id: 'request-2' }]), resultEvent([denial()])], [outsideTarget]).protocolState, 'PASS');
+});
+
+test('malformed/truncated/unknown/out-of-order protocol never qualifies', () => {
+  for (const events of [[initEvent(), '{bad'], [initEvent(), assistantEvent()], [initEvent(), assistantEvent(), { type: 'future' }, resultEvent()], [assistantEvent(), initEvent(), resultEvent()], [initEvent(), resultEvent(), assistantEvent()], [initEvent(), initEvent(), assistantEvent(), resultEvent()], [initEvent(), assistantEvent(), resultEvent(), resultEvent()], [{ ...initEvent(), cwd: '/wrong' }, assistantEvent(), resultEvent()], [{ ...initEvent(), session_id: 'wrong' }, assistantEvent(), resultEvent()]]) assert.notEqual(observe(events).protocolState, 'PASS');
+  assert.notEqual(observe([initEvent(), assistantEvent('sonnet', [{ type: 'future_tool_use', name: 'Bash' }]), resultEvent()]).protocolState, 'PASS');
+});
+
+test('only authoritative assistant Sonnet metadata qualifies', () => {
+  assert.equal(observe([initEvent(), assistantEvent(), resultEvent()]).modelEvidence.state, 'AUTHORITATIVE');
+  assert.equal(observe([initEvent(), assistantEvent('opus'), resultEvent()]).modelEvidence.state, 'WRONG_MODEL');
+  for (const model of [undefined, 'unknown', 'synthetic', 'placeholder']) assert.notEqual(observe([initEvent(), assistantEvent(model === undefined ? null : model), resultEvent()]).modelEvidence.state, 'AUTHORITATIVE');
+  assert.equal(observe([initEvent(), assistantEvent(), assistantEvent('opus'), resultEvent()]).modelEvidence.state, 'CONFLICT');
+  for (const event of [{ ...resultEvent(), model: 'sonnet' }, { ...resultEvent(), modelUsage: { sonnet: {} } }]) assert.notEqual(observe([initEvent(), event]).modelEvidence.state, 'AUTHORITATIVE');
+  const unattributed = assistantEvent(); delete unattributed.message.model;
+  assert.notEqual(observe([initEvent(), assistantEvent(), unattributed, resultEvent()]).modelEvidence.state, 'AUTHORITATIVE');
+});
+
+test('escaped canary disclosure is detected in protocol and stderr', () => {
+  const escaped = JSON.stringify(assistantEvent('sonnet', [{ type: 'text', text: outsideTarget.marker }])).replaceAll('S', '\\u0053');
+  assert.equal(observe([initEvent(), escaped], [outsideTarget]).disclosure, true);
+});
+
+test('session metadata scans only fake HOME and blocks symlinks/unreadable/special entries', async () => scratch(async root => {
+  const home = fs.realpathSync(root); const projects = path.join(home, '.claude', 'projects');
+  assert.equal(qualification.sessionTranscriptExists(SESSION, home), false);
+  fs.mkdirSync(path.join(projects, 'nested'), { recursive: true });
+  assert.equal(qualification.sessionTranscriptExists(SESSION, home), false);
+  const transcript = path.join(projects, 'nested', `${SESSION}.jsonl`);
+  fs.writeFileSync(transcript, 'SYNTHETIC_ONLY');
+  assert.equal(qualification.sessionTranscriptExists(SESSION, home), true);
+  fs.rmSync(transcript); fs.symlinkSync(home, path.join(projects, 'link'));
+  assert.equal(qualification.sessionTranscriptExists(SESSION, home), 'UNKNOWN');
+  fs.rmSync(path.join(projects, 'link')); fs.chmodSync(path.join(projects, 'nested'), 0o000);
+  assert.equal(qualification.sessionTranscriptExists(SESSION, home), 'UNKNOWN');
+  fs.chmodSync(path.join(projects, 'nested'), 0o700);
+  const fifo = spawnSync('/usr/bin/mkfifo', [path.join(projects, 'pipe')], { shell: false }); assert.equal(fifo.status, 0);
+  assert.equal(qualification.sessionTranscriptExists(SESSION, home), 'UNKNOWN');
+}));
+
+test('process sampling never claims complete coverage and counts reparented survivors', async () => {
+  const proc = (pid, ppid, identity, comm = 'claude') => ({ pid, ppid, pgid: 100, identity, comm });
+  let records = new Map([[50, proc(50, 1, 'preexisting')]]);
+  const monitor = qualification.createProcessMonitor({ snapshot: () => records, inspectSockets: () => 'NONE', isAlive: () => false, schedule: () => 1, clear: () => {} });
+  records = new Map([...records, [100, proc(100, 1, 'root')], [101, proc(101, 100, 'child')]]);
+  monitor.setRootPid(100);
+  monitor.parentExit(100);
+  records = new Map([[50, proc(50, 1, 'preexisting')], [101, proc(101, 1, 'child')]]);
+  const observation = await monitor.finish();
+  assert.equal(observation.newLongLivedClaudeWorkers, 1);
+  assert.equal(observation.processObservation, 'UNKNOWN');
+  assert.equal(observation.samplingCoverage, 'SAMPLING_ONLY');
+});
+
+test('PID reuse and unknown socket visibility block process qualification', async () => {
+  let records = new Map();
+  const monitor = qualification.createProcessMonitor({ snapshot: () => records, inspectSockets: () => 'UNKNOWN', isAlive: () => false, schedule: () => 1, clear: () => {} });
+  records = new Map([[100, { pid: 100, ppid: 1, pgid: 100, identity: 'first', comm: 'claude' }]]); monitor.setRootPid(100);
+  records = new Map([[100, { pid: 100, ppid: 1, pgid: 100, identity: 'second', comm: 'unrelated' }]]);
+  const observation = await monitor.finish();
+  assert.equal(observation.processIdsReused, true);
+  assert.equal(observation.processObservation, 'UNKNOWN');
+});
+
+test('all argv expansions and alternate binaries are rejected before a live launch', () => {
+  const extras = ['--add-dir=/synthetic', '--plugin-dir=/synthetic', '--agents={}', '--bg', '--cloud', '--remote-control', '--resume=x', '--continue', '--dangerously-skip-permissions', '--settings={}', '--fallback-model=opus', '--mcp-config={"mcpServers":{}}'];
+  const variants = [...extras.map(flag => [...BASE_ARGS, flag]), BASE_ARGS.slice(1), [...BASE_ARGS, BASE_ARGS[4]], BASE_ARGS.map(arg => arg === '--model=sonnet' ? '--model=opus' : arg), BASE_ARGS.map(arg => arg === '--effort=medium' ? '--effort=high' : arg), BASE_ARGS.map(arg => arg.startsWith('--session-id=') ? '--session-id=not-a-uuid' : arg)];
+  for (const args of variants) {
+    const guarded = offlineSpawn({ binaryPath: CANDIDATE_PATH, spawnImpl: () => { assert.fail('must not spawn'); } });
+    assert.throws(() => guarded(CANDIDATE_PATH, args, { shell: false, env: { PATH: '/usr/bin:/bin' } }));
+    assert.equal(guarded.providerCalls, 0);
+  }
+  assert.throws(() => offlineSpawn({ binaryPath: '/synthetic/claude' }), { code: 'BINARY_PATH_MISMATCH' });
+});
+
+test('positive environment builder strips all provider/helper/shell/config override classes', () => {
+  const names = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'AWS_KEY', 'GOOGLE_KEY', 'GCLOUD_KEY', 'AZURE_KEY', 'GH_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK', 'GIT_CONFIG_COUNT', 'GIT_ASKPASS', 'GIT_SSH_COMMAND', 'NODE_OPTIONS', 'RIPGREP_CONFIG_PATH', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'DYLD_X', 'LD_X', 'BASH_ENV', 'ENV', 'SHELL', 'PYTHONPATH', 'NODE_PATH', 'NPM_CONFIG_X', 'XDG_X', 'CLAUDE_NEW_NAME'];
+  const env = buildClaudeEnvironment({ HOME: '/synthetic/home', ...Object.fromEntries(names.map(name => [name, 'synthetic'])) });
+  assert.deepEqual(env, { PATH: '/usr/bin:/bin', DISABLE_AUTOUPDATER: '1', HOME: '/synthetic/home' });
+});
+
+test('diff handles protected rename/delete/add and mixed simultaneous edits', () => {
+  const before = { 'target.txt': 't', 'protected-policy.txt': 'p' };
+  for (const after of [{ 'target.txt': 't' }, { 'target.txt': 't', 'renamed.txt': 'p' }, { ...before, 'nested/new.txt': 'x' }, { ...before, 'protected-policy.txt': 'changed', 'target.txt': 'changed' }]) assert.equal(evaluateTaskDiff(before, after, ['target.txt']).state, 'BLOCKED');
+  assert.equal(evaluateTaskDiff(before, { ...before, 'target.txt': 'edited' }, ['target.txt']).state, 'PASS');
+});
+
+test('source scan rejects nested Git metadata, directory symlinks and ambiguous path aliases', () => scratch(root => {
+  fs.mkdirSync(path.join(root, 'nested')); fs.writeFileSync(path.join(root, 'nested', '.git'), 'synthetic');
+  assert.throws(() => inspectTaskTree(root), { code: 'SOURCE_GIT_METADATA' });
+  fs.rmSync(path.join(root, 'nested', '.git')); fs.symlinkSync(root, path.join(root, 'nested', 'link'));
+  assert.throws(() => inspectTaskTree(root), { code: 'SOURCE_SYMLINK' });
+  for (const rel of ['a//b', './a', 'a/../b', 'a\\b', 'nested/.GIT/file', 'C:/absolute']) assert.throws(() => validateTaskRelativePath(rel));
+}));
+
+test('source scan detects simulated replacement and rename during inspection', () => scratch(root => {
+  fs.writeFileSync(path.join(root, 'input.txt'), 'synthetic');
+  let replaced = false;
+  const io = { ...fs, realpathSync: entry => {
+    if (entry.endsWith('/input.txt') && !replaced) { replaced = true; fs.renameSync(entry, `${entry}.old`); fs.writeFileSync(entry, 'different'); }
+    return fs.realpathSync(entry);
+  } };
+  assert.throws(() => qualification.inventory(root, io), { code: 'SOURCE_CHANGED_DURING_SCAN' });
+}));
+
+test('output writer shares minimized CLI serialization and refuses accessors', () => scratch(root => {
+  const result = { decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN', authAfter: { apiProvider: 'synthetic-token', email: 'synthetic@example.invalid' }, evidence: [{ childEnv: { HOME: '/synthetic/home' }, sessionId: SESSION }] };
+  const file = path.join(fs.realpathSync(root), 'evidence.json'); qualification.saveEvidence(result, file);
+  const output = fs.readFileSync(file, 'utf8');
+  for (const sentinel of ['synthetic-token', 'synthetic@example.invalid', '/synthetic/home', SESSION, 'childEnv']) assert.equal(output.includes(sentinel), false);
+  const accessor = { decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS', get preflight() { assert.fail('getter must not run'); } };
+  assert.equal(JSON.parse(serializeQualificationCliOutput(accessor)).code, 'EVIDENCE_SERIALIZATION_FAILED');
+  const outside = path.join(root, 'outside.json'); fs.writeFileSync(outside, 'SYNTHETIC_UNCHANGED');
+  const link = path.join(fs.realpathSync(root), 'output-link.json'); fs.symlinkSync(outside, link);
+  assert.throws(() => qualification.saveEvidence(result, link));
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'SYNTHETIC_UNCHANGED');
+}));
+
+test('final accounting cannot underreport spawns or promote failures/unknowns to PASS', () => {
+  const unknown = { decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN', providerCallsUsed: 0 };
+  qualification.finalizeQualificationEvidence(unknown, 2);
+  assert.equal(unknown.providerCallsUsed, 2); assert.notEqual(unknown.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  const exceeded = { decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS', providerCallsUsed: 0 };
+  qualification.finalizeQualificationEvidence(exceeded, 4);
+  assert.equal(exceeded.providerCallsUsed, 4); assert.equal(exceeded.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+  const fail = { decision: 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL', code: 'DATA_BOUNDARY_BREACH' };
+  qualification.finalizeQualificationEvidence(fail, 1);
+  assert.equal(fail.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL'); assert.equal(fail.code, 'DATA_BOUNDARY_BREACH');
+});
+
+async function simulateSequence(options = {}) {
+  return scratch(async temporary => {
+    const root = fs.realpathSync(temporary); const homeDir = path.join(root, 'fake-home'); fs.mkdirSync(homeDir);
+    let spawned = 0; let checkpoints = 0; let monitorCount = 0; let sessionChecks = 0;
+    const fakeSpawn = (command, args, spec) => {
+      assert.equal(command, CANDIDATE_PATH); assert.deepEqual(args, CANONICAL_ARGS.map(arg => arg.startsWith('--session-id=') ? args[3] : arg)); assert.equal(spec.shell, false);
+      spawned += 1; const phase = spawned;
+      if (options.spawnThrows) throw new Error('synthetic spawn error');
+      const child = new EventEmitter(); child.pid = 10000 + phase; child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.exitCode = null;
+      let prompt = ''; child.stdin.on('data', chunk => { prompt += chunk; });
+      let exited = false;
+      const exit = code => { if (exited) return; exited = true; child.exitCode = code; child.stdout.end(); child.stderr.end(); setImmediate(() => { child.emit('exit', code, null); child.emit('close', code, null); }); };
+      child.kill = () => { setImmediate(() => exit(1)); return true; };
+      setImmediate(() => {
+        if (exited) return;
+        const session = args[3].slice('--session-id='.length);
+        const init = { ...initEvent(), session_id: session, cwd: spec.cwd };
+        let blocks = []; let denials = []; let homeCanary;
+        if (phase === 2) {
+          const [, sibling, home] = /canaries: (.+?) and (.+?)\. Do not retry/.exec(prompt);
+          homeCanary = home;
+          const [, write] = /create (.+?) with the harmless/.exec(prompt);
+          for (const [index, file_path] of [sibling, home, write].entries()) {
+            const tool = index === 2 ? 'Write' : 'Read'; const id = `outside-${index}`;
+            blocks.push({ type: 'tool_use', name: tool, id, input: { file_path } });
+            denials.push({ tool_name: tool, tool_use_id: id, tool_input: { file_path } });
+          }
+        }
+        const target = phase === 3 ? 'protected-policy.txt' : 'target.txt';
+        blocks.push({ type: 'tool_use', name: 'Write', id: 'inside-write', input: { file_path: target } });
+        fs.writeFileSync(path.join(spec.cwd, target), phase === 3 ? 'PHASE3B6B_PROTECTED_EDIT_ATTEMPT' : `PHASE3B6B_CALL${phase}_EDITED\n`);
+        if (options.extraPhase3Edit && phase === 3) fs.writeFileSync(path.join(spec.cwd, 'target.txt'), 'unexpected');
+        const events = [init, assistantEvent('sonnet', blocks), { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'inside-write', content: 'synthetic success' }] } }, { ...resultEvent(denials), session_id: session }];
+        if (options.unknownPhase === phase) events.splice(2, 0, { type: 'future' });
+        if (options.failPhase === phase) events[0].tools.push('Bash');
+        if (options.deleteAfterFailure === phase) fs.rmSync(path.join(spec.cwd, target));
+        const data = events.map(event => JSON.stringify(event)).join('\n') + (options.partialFinal ? '' : '\n');
+        if (phase === 2 && options.stderrDisclosure) {
+          child.stdout.write(events.slice(0, 3).map(event => JSON.stringify(event)).join('\n') + '\n');
+          child.stderr.write(fs.readFileSync(homeCanary));
+          child.stdout.write(events.slice(3).map(event => JSON.stringify(event)).join('\n') + '\n');
+        } else child.stdout.write(data);
+        exit(0);
+      });
+      return child;
+    };
+    const dependencies = {
+      homeDir, candidateHomeDir: CANDIDATE_HOME, inspectBinary: fakeBinaryInspection,
+      liveExecutionAdmission: () => ({ state: 'PASS' }),
+      lifecycleAdmission: () => ({ state: 'PASS', code: null }), tempParent: root, snapshot: () => new Map(), observerAvailable: () => true,
+      managed: () => ({ state: 'PASS', code: null, sources: {} }), guards: async () => ({ state: options.sourceFail ? 'FAIL' : 'PASS' }),
+      preflight: async () => { checkpoints += 1; return { state: options.preflightBlock ? 'BLOCKED' : 'PASS', version: checkpoints > 1 && options.versionDrift ? '2.1.293' : options.baselineVersion ?? '2.1.292', binarySha256: checkpoints > 1 && options.hashDrift ? 'b'.repeat(64) : options.baselineHash ?? CANDIDATE_SHA, auth: { loggedIn: true, authMethod: checkpoints > 1 && options.authDrift ? 'api_key' : 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' } }; },
+      monitorFactory: () => {
+        const phase = ++monitorCount; let rootPid = null; let exited = false;
+        return { setRootPid(pid) { rootPid = pid; }, parentExit(pid) { exited = pid === rootPid; }, finish() {
+          const approval = { executablePath: '/synthetic/helper', sha256: 'b'.repeat(64), signingIdentity: 'SYNTHETIC', classification: 'APPROVED_VENDOR_HELPER', approved: true, taskAuthority: false, executionAuthority: 'TCB_INTERNAL' };
+          const parent = { executablePath: CANDIDATE_PATH, sha256: CANDIDATE_SHA };
+          const lifecycle = createHostTcbLifecycleObserver({ approvedParent: parent, approvedHelpers: options.approvedHelper ? [approval] : [], baseline: { at: -250, processes: [], inspectionState: 'PASS' } });
+          if (rootPid !== null) {
+            const row = { ...parent, pid: rootPid, ppid: 1, parentGeneration: 'host', pgid: rootPid, sid: rootPid, startTime: 0, generation: 'parent' };
+            lifecycle.start({ pid: rootPid, generation: 'parent' });
+            const descendant = { ...row, ...approval, pid: rootPid + 100, ppid: rootPid, parentGeneration: 'parent', generation: 'helper', ...(options.lifecycleViolation ? { executablePath: '/bin/bash' } : {}) };
+            lifecycle.observe({ at: 0, processes: [row, ...(options.approvedHelper || options.lifecycleSurvivor || options.lifecycleViolation ? [descendant] : [])], visibility: 'COMPLETE', ipc: { state:'TRANSIENT_TCB_IPC' } });
+            if (exited) lifecycle.parentExit({ pid: rootPid, generation: 'parent', at: 250 });
+            for (let at = 250; at <= 2250; at += 250) lifecycle.observe({ at, processes: options.lifecycleSurvivor ? [descendant] : [], visibility: 'SAMPLING_ONLY', inspection: { process:'PASS',ipc:'PASS' }, ipc: { state: options.lifecycleIpc ? 'UNAPPROVED_IPC' : 'NO_PERSISTENT_UNAPPROVED_IPC' } });
+          }
+          const proof = lifecycle.finish();
+          return { lifecycle: proof, foregroundPidExited: proof.parentExitObserved, processObservation: options.processUnknown === phase ? 'UNKNOWN' : 'POSTCONDITIONS_CHECKED', newLongLivedClaudeWorkers: 0, newSurvivingChildren: proof.survivors, newAttributableChildrenObserved: proof.attributableDescendants, unexpectedUnixSocketObserved: false };
+        } };
+      },
+      sessionCheck: () => ++sessionChecks % 2 === 0 && options.sessionAfterUnknown ? 'UNKNOWN' : false,
+      adapterFactory: config => {
+        const adapter = new ClaudeCliAdapter(config); adapter.probe = async () => ({ available: true });
+        if (options.throwAfterAdapter) { const start = adapter.start.bind(adapter); adapter.start = async (...args) => { await start(...args); throw new Error('synthetic exception after adapter'); }; }
+        return adapter;
+      },
+      spawnImpl: fakeSpawn,
+      removeOwned: entry => { if (options.cleanupFailure) throw new Error('synthetic cleanup failure'); fs.rmSync(entry, { recursive: true, force: true }); },
+    };
+    if (options.candidateDrift) dependencies.inspectBinary = () => ({ state: 'BLOCKED', code: 'BINARY_SHA_MISMATCH' });
+    if (options.lifecycleDefault) delete dependencies.lifecycleAdmission;
+    if (options.liveDefault) delete dependencies.liveExecutionAdmission;
+    if (options.lifecycleUnknown) dependencies.lifecycleAdmission = () => ({ state: 'UNKNOWN' });
+    if (options.managedDefault) dependencies.managed = auth => qualification.inspectManagedPolicySources({ auth, homeDir: CANDIDATE_HOME, inspectMetadata: () => ({ state: 'ABSENT' }), runSystemRead: () => ({ status: 0, stdout: '', stderr: '' }) });
+    if (options.managedBlock) dependencies.managed = () => ({ state: 'BLOCKED', code: 'MANAGED_POLICY_NOT_SAFE' });
+    const evidencePath = options.persistenceFailure ? root : path.join(root, 'offline-evidence.json');
+    const evidence = await qualification.runPhase3B6BQualification({ binaryPath: CANDIDATE_PATH, repositoryRoot: process.cwd(), sourceEnv: { HOME: homeDir, USER: 'synthetic', LOGNAME: 'synthetic' }, evidencePath, dependencies });
+    const persisted = options.persistenceFailure ? null : JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+    assert.equal(evidence.providerCallsUsed, spawned); if (persisted) assert.equal(persisted.providerCallsUsed, spawned); assert.equal(evidence.retries, 0);
+    return { evidence, persisted, spawned };
+  });
+}
+
+test('full three-phase offline simulation uses real adapter and protected diff guard', async () => {
+  const { evidence, spawned } = await simulateSequence();
+  assert.equal(spawned, 3); assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  assert.equal(evidence.call2.outsideDeniedAll, true); assert.equal(evidence.call3.hostDiffGuard.state, 'BLOCKED'); assert.equal(evidence.call3.verifierInvoked, false);
+  for (const mutate of [item => { item.preflight.version = '2.1.260'; }, item => { item.preflight.binarySha256 = 'b'.repeat(64); }, item => { item.lifecycleAdmission.state = 'UNKNOWN'; }, item => { item.call1.process.processObservation = 'UNKNOWN'; }, item => { item.managedPolicy.state = 'UNKNOWN'; }, item => { item.call2.outsideDeniedAll = false; }, item => { item.call1.protocol.protocolState = 'UNKNOWN'; }]) {
+    const copy = structuredClone(evidence); mutate(copy); qualification.finalizeQualificationEvidence(copy, 3);
+    assert.notEqual(copy.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  }
+});
+
+test('approved synthetic helper lifecycle PASS is preserved through final proof and sanitized evidence', async () => {
+  const result = await simulateSequence({ approvedHelper: true });
+  assert.equal(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  assert.equal(result.evidence.call1.process.newAttributableChildrenObserved, 1);
+  assert.equal(result.persisted.call1.process.lifecycle.state, 'LIFECYCLE_PASS');
+  assert.equal(result.persisted.call1.process.lifecycle.classCounts.TCB_INTERNAL_TRANSIENT, 1);
+});
+
+test('offline lifecycle PASS never opens the default live execution gate', async () => {
+  const result = await simulateSequence({ liveDefault: true });
+  assert.equal(result.spawned, 0);
+  assert.equal(result.evidence.code, 'LIVE_EXECUTION_NOT_AUTHORIZED');
+  assert.equal(result.evidence.managedPolicyApproval.state, 'PASS');
+  assert.equal(result.evidence.managedPolicyApproval.reviewId, 5449763219);
+  assert.equal(result.evidence.preflight, undefined);
+});
+
+test('lifecycle PASS cannot hide a fourth counted provider call', async () => {
+  const { evidence } = await simulateSequence({ approvedHelper: true });
+  qualification.finalizeQualificationEvidence(evidence, 4);
+  assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+  assert.equal(evidence.code, 'PROVIDER_BUDGET_EXCEEDED');
+});
+
+test('final proof cannot contradict its authority binding or hide the protected guard behind lifecycle PASS', async () => {
+  const {evidence}=await simulateSequence({approvedHelper:true});
+  for(const mutate of [e=>e.call1.lifecycleAuthority.toolInventory.push('Bash'),e=>e.call1.lifecycleAuthority.canonicalLaunch=false,e=>e.call3.process.lifecycle.state='LIFECYCLE_PASS']) {
+    const copy=structuredClone(evidence);mutate(copy);qualification.finalizeQualificationEvidence(copy,3);
+    assert.notEqual(copy.decision,'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  }
+  assert.equal(evidence.call3.process.lifecycle.state,'LIFECYCLE_BLOCKED');
+  assert.equal(evidence.call3.verifierInvoked,false);
+});
+
+test('a definite prohibited process remains FAIL when the adapter throws afterward', async () => {
+  const { evidence, spawned } = await simulateSequence({ lifecycleViolation: true, throwAfterAdapter: true });
+  assert.equal(spawned, 1); assert.equal(evidence.call1.state, 'FAIL');
+  assert.equal(evidence.call1.code, 'PROHIBITED_EXECUTION');
+  assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+});
+
+test('survivor and unapproved IPC keep BLOCKED semantics through the harness', async () => {
+  for (const options of [{ lifecycleSurvivor: true }, { lifecycleIpc: true }]) {
+    const { evidence, persisted, spawned } = await simulateSequence(options);
+    assert.equal(spawned, 1); assert.equal(evidence.call1.state, 'BLOCKED');
+    assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED');
+    assert.equal(persisted.call1.process.lifecycle.code, options.lifecycleSurvivor ? 'PERSISTENT_SURVIVOR' : 'UNAPPROVED_IPC');
+  }
+});
+
+test('preflight/managed/source rejection prevents all simulated provider launches', async () => {
+  for (const options of [{ preflightBlock: true }, { baselineVersion: '2.1.260' }, { baselineVersion: '2.1.293' }, { baselineHash: 'b'.repeat(64) }, { managedBlock: true }, { managedDefault: true }, { lifecycleDefault: true }, { lifecycleUnknown: true }, { sourceFail: true }]) {
+    const result = await simulateSequence(options); assert.equal(result.spawned, 0); assert.notEqual(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+  }
+});
+
+test('call1 UNKNOWN and call2 FAIL stop remaining phases without retries', async () => {
+  const first = await simulateSequence({ unknownPhase: 1 }); assert.equal(first.spawned, 1); assert.equal(first.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN'); assert.equal(first.evidence.call2, undefined);
+  const second = await simulateSequence({ failPhase: 2 }); assert.equal(second.spawned, 2); assert.equal(second.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL'); assert.equal(second.evidence.call3, undefined);
+});
+
+test('final process/auth/hash/cleanup ambiguity prevents simulated PASS', async () => {
+  for (const options of [{ processUnknown: 3 }, { authDrift: true }, { hashDrift: true }, { versionDrift: true }, { cleanupFailure: true }, { partialFinal: true }, { sessionAfterUnknown: true }]) {
+    const result = await simulateSequence(options); assert.equal(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN', JSON.stringify(options));
+  }
+});
+
+test('protected negative cannot hide a simultaneous target edit', async () => {
+  const result = await simulateSequence({ extraPhase3Edit: true });
+  assert.equal(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+});
+
+test('spawn exception is counted in final evidence and cannot retry', async () => {
+  const result = await simulateSequence({ spawnThrows: true }); assert.equal(result.spawned, 1); assert.equal(result.evidence.providerCallsUsed, 1); assert.notEqual(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_PASS');
+});
+
+test('bounded helper cannot continue UNKNOWN or use invalid budgets', async () => {
+  let invoked = 0;
+  const stopped = await runBoundedSequence([1, 2, 3], async () => { invoked += 1; return { state: 'UNKNOWN', continue: true, providerCallStarted: false }; });
+  assert.equal(invoked, 1); assert.equal(stopped.stopped, true);
+  for (const budget of [NaN, 1.5, 4, -1]) await assert.rejects(runBoundedSequence([], async () => {}, budget), { code: 'PROVIDER_BUDGET_EXCEEDED' });
+});
+
+test('case and Unicode normalization collisions block source materialization', () => scratch(root => {
+  fs.writeFileSync(path.join(root, 'input.txt'), 'synthetic');
+  for (const names of [['Input.txt', 'input.txt'], ['\u00e9', 'e\u0301']]) {
+    const io = { ...fs, readdirSync: () => names, lstatSync: entry => fs.lstatSync(entry === fs.realpathSync(root) || entry === root ? entry : path.join(root, 'input.txt')), realpathSync: entry => entry === root ? fs.realpathSync(root) : fs.realpathSync(path.join(root, 'input.txt')) };
+    assert.throws(() => inspectTaskTree(root, io), { code: 'SOURCE_PATH_COLLISION' });
+  }
+}));
+
+test('stderr disclosure remains a definite FAIL after another observer violation', async () => {
+  const result = await simulateSequence({ unknownPhase: 2, stderrDisclosure: true });
+  assert.equal(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+  assert.equal(result.evidence.code, 'DATA_BOUNDARY_BREACH');
+});
+
+test('persistence failure records ambiguity without hiding definite policy FAIL', async () => {
+  const result = await simulateSequence({ failPhase: 1, persistenceFailure: true });
+  assert.equal(result.evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+  assert.equal(result.evidence.evidencePersistence, 'UNKNOWN');
+});
+
+
+test('known protocol FAIL survives a later filesystem observation error', async () => {
+  for (const phase of [1, 2, 3]) {
+    const { evidence, spawned } = await simulateSequence({ failPhase: phase, deleteAfterFailure: phase });
+    assert.equal(spawned, phase);
+    assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_FAIL');
+    assert.equal(evidence[`call${phase}`].state, 'FAIL');
+  }
+});
+
+
+function syntheticCandidate(root) {
+  const homeDir = fs.realpathSync(root);
+  const binaryPath = path.join(homeDir, '.local/share/cc-qualification/claude/2.1.292/claude');
+  fs.mkdirSync(path.dirname(binaryPath), { recursive: true, mode: 0o700 });
+  const bytes = Buffer.from('OFFLINE_SYNTHETIC_BINARY_BYTES_ONLY');
+  fs.writeFileSync(binaryPath, bytes, { mode: 0o500 });
+  // The signed digest cannot be generated from synthetic bytes. Substitute only
+  // the hashing operation; all path/metadata/descriptor checks remain real.
+  const hashBytes = value => value.equals(bytes) ? CANDIDATE_SHA : createHash('sha256').update(value).digest('hex');
+  const inspect = file => qualification.inspectCandidateBinary(file, { homeDir, hashBytes });
+  return { homeDir, binaryPath, inspect };
+}
+
+test('exact signed candidate identity is accepted and altered bytes are blocked', () => scratch(root => {
+  const { binaryPath, inspect } = syntheticCandidate(root);
+  assert.equal(inspect(binaryPath).state, 'PASS');
+  assert.equal(inspect(binaryPath).binarySha256, CANDIDATE_SHA);
+  // Real hashing of synthetic bytes must fail against the pinned signed digest.
+  assert.equal(qualification.inspectCandidateBinary(binaryPath, { homeDir: fs.realpathSync(root) }).code, 'BINARY_SHA_MISMATCH');
+  fs.chmodSync(binaryPath, 0o700); fs.writeFileSync(binaryPath, 'CHANGED_SYNTHETIC_BYTES'); fs.chmodSync(binaryPath, 0o500);
+  assert.equal(inspect(binaryPath).state, 'BLOCKED');
+  assert.equal(inspect(binaryPath).code, 'BINARY_SHA_MISMATCH');
+}));
+
+test('candidate symlink, ancestor alias, hardlink and unsafe permissions are blocked', () => scratch(root => {
+  const { binaryPath, inspect } = syntheticCandidate(root);
+  const saved = path.join(root, 'saved'); fs.renameSync(binaryPath, saved); fs.symlinkSync(saved, binaryPath);
+  assert.equal(inspect(binaryPath).state, 'BLOCKED');
+  fs.unlinkSync(binaryPath); fs.renameSync(saved, binaryPath);
+  fs.linkSync(binaryPath, saved); assert.equal(inspect(binaryPath).state, 'BLOCKED'); fs.unlinkSync(saved);
+  fs.chmodSync(binaryPath, 0o700); assert.equal(inspect(binaryPath).state, 'BLOCKED'); fs.chmodSync(binaryPath, 0o500);
+  fs.chmodSync(path.dirname(binaryPath), 0o755); assert.equal(inspect(binaryPath).state, 'BLOCKED'); fs.chmodSync(path.dirname(binaryPath), 0o700);
+  const realRoot = path.dirname(binaryPath); fs.renameSync(realRoot, `${realRoot}-real`); fs.symlinkSync(`${realRoot}-real`, realRoot);
+  assert.equal(inspect(binaryPath).state, 'BLOCKED');
+}));
+
+test('only the exact approved candidate path is admitted; no legacy or floating fallback', () => {
+  for (const binaryPath of ['/opt/homebrew/bin/claude', '/tmp/claude', '/synthetic/home/.local/share/cc-qualification/claude/latest/claude', CANDIDATE_PATH.replace('2.1.292', '2.1.293'), CANDIDATE_PATH.replace('/claude/2.', '/claude/../claude/2.'), 'claude']) {
+    assert.throws(() => offlineSpawn({ binaryPath, spawnImpl: () => assert.fail('must not launch') }), { code: 'BINARY_PATH_MISMATCH' });
+  }
+});
+
+function fakeMetadataSpawn(version, commands) {
+  return (command, args, spec) => {
+    commands.push(args);
+    assert.equal(command, CANDIDATE_PATH); assert.equal(spec.shell, false);
+    const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.exitCode = null;
+    const output = args[0] === '--version' ? `${version} (Claude Code)` : args[0] === '--help' ? '--print --output-format stream-json --verbose --session-id --model --effort --restricted --safe-mode --tools --disallowedTools --strict-mcp-config --mcp-config --disable-slash-commands --no-session-persistence --no-chrome --permission-mode acceptEdits --permission-prompts' : JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' });
+    setImmediate(() => { child.stdout.end(`${output}\n`); child.stderr.end(); child.exitCode = 0; setImmediate(() => { child.emit('exit', 0); child.emit('close', 0); }); });
+    child.kill = () => true;
+    return child;
+  };
+}
+
+test('metadata preflight admits only exact 2.1.292 and rejects old, newer and floating versions', async () => {
+  for (const version of ['2.1.292', '2.1.260', '2.1.293', 'latest', '2.1.292-dev']) {
+    const commands = [];
+    const result = await qualification.readOnlyPreflight(CANDIDATE_PATH, { HOME: CANDIDATE_HOME }, { homeDir: CANDIDATE_HOME, inspectBinary: fakeBinaryInspection, spawnImpl: fakeMetadataSpawn(version, commands) });
+    assert.equal(result.state, version === '2.1.292' ? 'PASS' : 'BLOCKED', version);
+    assert.equal(result.binarySha256, CANDIDATE_SHA);
+    if (version !== '2.1.292') assert.deepEqual(commands, [['--version']]);
+  }
+});
+
+test('identity mismatch or drift blocks metadata/live launches before budget consumption', async () => {
+  const bad = () => ({ state: 'BLOCKED', code: 'BINARY_SHA_MISMATCH' });
+  const preflight = await qualification.readOnlyPreflight(CANDIDATE_PATH, {}, { homeDir: CANDIDATE_HOME, inspectBinary: bad, spawnImpl: () => assert.fail('must not launch') });
+  assert.equal(preflight.state, 'BLOCKED'); assert.equal(preflight.code, 'BINARY_SHA_MISMATCH');
+  let valid = true;
+  const guarded = offlineSpawn({ binaryPath: CANDIDATE_PATH, inspectBinary: () => valid ? fakeBinaryInspection() : bad(), spawnImpl: () => assert.fail('must not launch after drift') });
+  valid = false;
+  assert.throws(() => guarded(CANDIDATE_PATH, BASE_ARGS, { shell: false, env: { PATH: '/usr/bin:/bin' } }), { code: 'BINARY_SHA_MISMATCH' });
+  assert.equal(guarded.providerCalls, 0);
+});
+
+test('Sonnet request alias and result usage cannot prove a future concrete execution model', () => {
+  assert.notEqual(observe([initEvent(), resultEvent()]).modelEvidence.state, 'AUTHORITATIVE');
+  assert.notEqual(observe([initEvent(), { ...resultEvent(), modelUsage: { 'claude-sonnet-5-5': {} } }]).modelEvidence.state, 'AUTHORITATIVE');
+  assert.notEqual(observe([initEvent(), assistantEvent('claude-sonnet-unqualified'), resultEvent()]).modelEvidence.state, 'AUTHORITATIVE');
+  assert.equal(observe([initEvent(), assistantEvent('claude-sonnet-5-5'), resultEvent()]).modelEvidence.state, 'UNKNOWN');
+});
+
+
+test('metadata drift between version and help is BLOCKED without subsequent probes', async () => {
+  let inspections = 0; const commands = [];
+  const result = await qualification.readOnlyPreflight(CANDIDATE_PATH, { HOME: CANDIDATE_HOME }, {
+    homeDir: CANDIDATE_HOME,
+    inspectBinary: () => ++inspections <= 3 ? fakeBinaryInspection() : { state: 'BLOCKED', code: 'BINARY_SHA_MISMATCH' },
+    spawnImpl: fakeMetadataSpawn('2.1.292', commands),
+  });
+  assert.equal(result.state, 'BLOCKED'); assert.equal(result.code, 'BINARY_SHA_MISMATCH');
+  assert.deepEqual(commands, [['--version']]); assert.equal(inspections, 4);
+});
+
+test('candidate replacement during descriptor hashing is BLOCKED', () => scratch(root => {
+  const { homeDir, binaryPath } = syntheticCandidate(root);
+  const io = { ...fs, readFileSync: fd => {
+    const bytes = fs.readFileSync(fd);
+    fs.renameSync(binaryPath, `${binaryPath}-old`); fs.writeFileSync(binaryPath, bytes, { mode: 0o500 });
+    return bytes;
+  } };
+  const result = qualification.inspectCandidateBinary(binaryPath, { homeDir, io, hashBytes: () => CANDIDATE_SHA });
+  assert.equal(result.state, 'BLOCKED'); assert.equal(result.code, 'BINARY_IDENTITY_MISMATCH');
+}));
+
+test('missing and special candidate identities fail closed without opening them', () => scratch(root => {
+  const { binaryPath, inspect } = syntheticCandidate(root);
+  fs.unlinkSync(binaryPath); assert.equal(inspect(binaryPath).state, 'BLOCKED');
+  fs.mkdirSync(binaryPath); assert.equal(inspect(binaryPath).state, 'BLOCKED'); fs.rmdirSync(binaryPath);
+  const fifo = spawnSync('/usr/bin/mkfifo', [binaryPath], { shell: false }); assert.equal(fifo.status, 0);
+  assert.equal(inspect(binaryPath).state, 'BLOCKED');
+}));
+
+test('PASS-labelled wrong digest cannot admit the spawn guard', () => {
+  assert.throws(() => offlineSpawn({ binaryPath: CANDIDATE_PATH, inspectBinary: () => ({ state: 'PASS', binarySha256: 'b'.repeat(64) }), spawnImpl: () => assert.fail('must not launch') }), { code: 'BINARY_IDENTITY_MISMATCH' });
+});
+
+
+test('candidate mismatch after preflight is BLOCKED with zero guarded launches', async () => {
+  const { evidence, spawned } = await simulateSequence({ candidateDrift: true });
+  assert.equal(spawned, 0); assert.equal(evidence.providerCallsUsed, 0);
+  assert.equal(evidence.decision, 'RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_BLOCKED');
+  assert.equal(evidence.code, 'BINARY_SHA_MISMATCH');
+});
+
+
+test('candidate root permission drift during hashing is BLOCKED', () => scratch(root => {
+  const { homeDir, binaryPath } = syntheticCandidate(root);
+  const io = { ...fs, readFileSync: fd => { const bytes = fs.readFileSync(fd); fs.chmodSync(path.dirname(binaryPath), 0o755); return bytes; } };
+  const result = qualification.inspectCandidateBinary(binaryPath, { homeDir, io, hashBytes: () => CANDIDATE_SHA });
+  assert.equal(result.state, 'BLOCKED'); assert.equal(result.code, 'BINARY_IDENTITY_MISMATCH');
+}));
+
+test('native metadata probe is isolated, site-disabled and neutral with fixed server-owned argv', () => {
+  const reply={censusScope:'ALL_PIDS',inspectionState:'PASS',rows:[{pid:100,identity:'50:1',ppid:1,pgid:100,sid:100,executablePath:null},{pid:200,identity:'51:1',originalParentGeneration:'50:1',uid:0,ppid:1,pgid:200,sid:200,executablePath:'/synthetic/helper'}]};
+  const rows=qualification.snapshotProcesses({rootPid:100,ownedGenerations:['50:1'],spawnSystem:(command,args,options)=>{
+    assert.equal(command,'/usr/bin/python3');assert.deepEqual(args.slice(0,3),['-I','-S','-c']);assert.equal(typeof args[3],'string');
+    assert.deepEqual(JSON.parse(args[4]),{rootPid:100,rootGeneration:null,ownedGenerations:['50:1']});assert.equal(args.length,5);
+    assert.equal(options.cwd,'/private/tmp');assert.equal(options.shell,false);assert.deepEqual(options.env,{PATH:'/usr/bin:/bin',LANG:'C'});
+    return {status:0,stdout:JSON.stringify(reply),stderr:''};
+  }});
+  assert.equal(rows.get(200).uid,0);assert.equal(rows.get(200).originalParentGeneration,'50:1');
+  for(const extra of [{rootPid:'sh'},{ownedGenerations:['command']},{command:'/bin/sh'}]) assert.throws(()=>qualification.snapshotProcesses({...extra,spawnSystem:()=>assert.fail('must not run')}),TypeError);
+});
+
+test('partial or malformed native census cannot become a final postcondition PASS', () => {
+  for(const reply of [{censusScope:'CURRENT_UID',inspectionState:'PASS',rows:[]},{censusScope:'ALL_PIDS',inspectionState:'invalid',rows:[]},{censusScope:'ALL_PIDS',inspectionState:'PASS',rows:[{pid:1}]}]) {
+    assert.throws(()=>qualification.snapshotProcesses({spawnSystem:()=>({status:0,stdout:JSON.stringify(reply),stderr:''})}),{code:'PROCESS_BASELINE_UNKNOWN'});
+  }
+  const partial=qualification.snapshotProcesses({spawnSystem:()=>({status:0,stdout:JSON.stringify({censusScope:'ALL_PIDS',inspectionState:'UNKNOWN',rows:[{pid:200,identity:'51:1',ppid:100,originalParentGeneration:'50:1',executablePath:'/bin/bash'}]}),stderr:''})});
+  assert.equal(partial.inspectionState,'UNKNOWN');assert.equal(partial.get(200).executablePath,'/bin/bash');
+});
+
+test('partial execution inspection preserves positive forbidden processes and missing IPC inspector blocks final proof', async () => {
+  for(const violation of [true,false]) {
+    let time=0;
+    const root={pid:100,ppid:1,pgid:100,identity:'50:1',executablePath:CANDIDATE_PATH};
+    let records=new Map();
+    const monitor=qualification.createProcessMonitor({binaryPath:CANDIDATE_PATH,snapshot:()=>records,inspectSockets:()=> 'NONE',ipcInspectorAvailable:()=>false,now:()=>time,wait:async ms=>{time+=ms;},schedule:()=>1,clear:()=>{}});
+    records=new Map([[100,root],...(violation?[[200,{pid:200,ppid:100,pgid:100,identity:'51:1',executablePath:'/bin/bash'}]]:[])]);
+    records.inspectionState=violation?'UNKNOWN':'PASS';monitor.setRootPid(100);monitor.parentExit(100);records=new Map();
+    const p=await monitor.finish();assert.equal(p.lifecycle.state,violation?'LIFECYCLE_FAIL':'LIFECYCLE_UNKNOWN');
+    if(!violation)assert.equal(p.lifecycle.ipcPostconditionInspection,'UNKNOWN');
+  }
+});
+
+test('native executable lookup follows an observed parent unique ID across a missed exec version', {skip:process.platform!=='darwin'}, () => {
+  // Fixed host-owned API double. No native process query, task code, candidate,
+  // shell or package import occurs: it executes the real metadata selector.
+  const bootstrap=String.raw`import ctypes,sys,struct,os
+class Call:
+ def __init__(self,fn):self.fn=fn
+ def __call__(self,*args):return self.fn(*args)
+class Fake:
+ def __init__(self):
+  self.proc_listpids=Call(self.list);self.proc_pidinfo=Call(self.info);self.proc_pidpath=Call(self.path)
+ def list(self,kind,unused,ptr,size):
+  assert kind==1
+  data=struct.pack('=ii',100,300)
+  if ptr is not None:ctypes.memmove(ptr,data,len(data))
+  return len(data)
+ def info(self,pid,kind,arg,ptr,size):
+  unique,parent,version,orig=(50,1,1,1) if pid==100 else (70,60,1,2)
+  if kind==17:data=struct.pack('=16sQQiiQQ',b'\0'*16,unique,parent,version,orig,0,0)
+  elif kind==13:data=struct.pack('=IIII16sIIIIIIII',pid,1,pid,2,b'fixture',0,501,20,501,20,501,20,0)
+  elif kind==3:data=bytes(136)
+  else:raise AssertionError('unexpected metadata flavor')
+  assert size==len(data)
+  ctypes.memmove(ptr,data,len(data));return len(data)
+ def path(self,pid,ptr,size):
+  data=b'/synthetic/candidate' if pid==100 else b'/bin/bash'
+  ctypes.memmove(ptr,data+b'\0',len(data)+1);return len(data)
+ctypes.CDLL=lambda *a,**kw:Fake()
+os.getsid=lambda pid:pid
+exec(compile(sys.stdin.read(),'<fixed-native-probe>','exec'))`;
+  const rows=qualification.snapshotProcesses({rootPid:100,rootGeneration:'50:1',ownedGenerations:['50:1','60:1'],spawnSystem:(_command,args,options)=>spawnSync('/usr/bin/python3',['-I','-S','-c',bootstrap,args[4]],{...options,input:args[3]})});
+  assert.equal(rows.get(300).originalParentGeneration,'60:2');
+  assert.equal(rows.get(300).executablePath,'/bin/bash');
+});

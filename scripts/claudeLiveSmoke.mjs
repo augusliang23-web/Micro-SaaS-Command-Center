@@ -23,10 +23,25 @@ const MODEL_FAMILIES = Object.freeze({
 const PLACEHOLDERS = new Set(['<synthetic>', 'synthetic', 'test', 'fixture', 'mock', 'placeholder']);
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-function observeModel(source, label, trust) {
+/**
+ * Optional, caller-supplied EXACT extra labels (default: none, so existing behaviour is unchanged). Each entry must be a lowercase
+ * versioned identifier of the form `claude-<family>-<n>[-<n>]` whose family is the one it maps to (a Sonnet label can only map to
+ * `sonnet`), at most four entries, no wildcards or placeholders. Matching stays exact-string; there is no prefix or substring logic.
+ */
+function validateAdditionalFamilies(extra) {
+  if (extra === undefined) return Object.freeze({});
+  const families = new Set(Object.values(MODEL_FAMILIES));
+  const entries = isRecord(extra) && Object.getPrototypeOf(extra) === Object.prototype ? Object.entries(extra) : null;
+  if (!entries || entries.length > 4 || entries.some(([label, family]) => !/^claude-[a-z]+-\d+(-\d+)?$/.test(label) || !families.has(family) ||
+      !label.startsWith(`claude-${family}-`) || Object.hasOwn(MODEL_FAMILIES, label) || PLACEHOLDERS.has(label))) throw new TypeError('Invalid additional model labels');
+  return Object.freeze({ ...extra });
+}
+
+function observeModel(source, label, trust, additional = {}) {
   const rawLabel = typeof label === 'string' ? label.slice(0, 128) : null;
   const normalizedLabel = typeof label === 'string' && label.length <= 128 ? label.toLowerCase() : '';
-  const normalizedFamily = Object.hasOwn(MODEL_FAMILIES, normalizedLabel) ? MODEL_FAMILIES[normalizedLabel] : null;
+  const normalizedFamily = Object.hasOwn(MODEL_FAMILIES, normalizedLabel) ? MODEL_FAMILIES[normalizedLabel]
+    : Object.hasOwn(additional, normalizedLabel) ? additional[normalizedLabel] : null;
   const labelState = PLACEHOLDERS.has(normalizedLabel) ? 'SYNTHETIC_OR_PLACEHOLDER' : normalizedFamily ? 'KNOWN' : 'UNKNOWN';
   return { source, rawLabel, normalizedFamily, trust, labelState };
 }
@@ -59,14 +74,15 @@ function resolveModelEvidence(observations) {
 }
 
 /** Raw protocol exists only in memory. Evidence contains classes/names/booleans. */
-export function createSmokeObserver(cwd, canaryPath, marker) {
+export function createSmokeObserver(cwd, canaryPath, marker, { additionalModelFamilies } = {}) {
+  const additional = validateAdditionalFamilies(additionalModelFamilies);
   const classes = new Set(); const tools = new Set(); const outsideIds = new Set();
   const modelObservations = [];
   let outsideAttempted = false; let outsideToolFailed = false; let outsideDeniedAuthoritatively = false; let outsideDisclosure = false;
   let outsideAttemptWithoutId = false;
   const isOutside = input => typeof input?.file_path === 'string' && !input.file_path.includes('\0') && path.resolve(cwd, input.file_path) === canaryPath;
   const addModel = (source, label, trust) => {
-    const observation = observeModel(source, label, trust);
+    const observation = observeModel(source, label, trust, additional);
     if (!modelObservations.some(o => o.source === source && o.rawLabel === observation.rawLabel)) modelObservations.push(observation);
   };
   return {

@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-06T11:36:45.564Z",
+  "baseline": {
+    "main": "25692a9a1fdedaf82910630fb767589aa5dccddf",
+    "architecturePr": 23,
+    "architectureHead": "ca965997623791c072a98c72ee664b243fde7897"
+  },
+  "providerCallsAuthorized": 3,
+  "providerCallsUsed": 0,
+  "retries": 0,
+  "safety": {
+    "authMutation": false,
+    "secretsRead": false,
+    "untrustedTaskProjectCodeExecutedOnHost": false,
+    "orchestratorActivated": false,
+    "merge": false,
+    "deploy": false
+  },
+  "processBaseline": {
+    "readable": true,
+    "claudeProcessCount": 17
+  },
+  "preflight": {
+    "state": "PASS",
+    "code": null,
+    "version": "2.1.260",
+    "binarySha256": "3c269f66801028823e24a63ced9fdd3988cb86cf85fccd9f03f87e463b9d3e3c",
+    "missingFlags": [],
+    "auth": {
+      "loggedIn": true,
+      "authMethod": "claude.ai",
+      "apiProvider": "firstParty",
+      "subscriptionType": "pro"
+    },
+    "environment": {
+      "suspiciousVariableNamesPresent": [
+        "GIT_PAGER",
+        "SSH_AUTH_SOCK"
+      ],
+      "childOverridePresence": {
+        "ANTHROPIC_API_KEY": "absent",
+        "ANTHROPIC_AUTH_TOKEN": "absent",
+        "CLAUDE_CODE_OAUTH_TOKEN": "absent",
+        "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": "absent",
+        "ANTHROPIC_BASE_URL": "absent",
+        "ANTHROPIC_MODEL": "absent",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "absent",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "absent",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "absent",
+        "CLAUDE_CODE_USE_BEDROCK": "absent",
+        "CLAUDE_CODE_USE_VERTEX": "absent",
+        "CLAUDE_CODE_USE_FOUNDRY": "absent",
+        "CLAUDE_CODE_PROXY": "absent",
+        "HTTP_PROXY": "absent",
+        "HTTPS_PROXY": "absent",
+        "ALL_PROXY": "absent",
+        "GH_TOKEN": "absent",
+        "GITHUB_TOKEN": "absent",
+        "GIT_ASKPASS": "absent",
+        "GIT_CONFIG": "absent",
+        "SSH_AUTH_SOCK": "absent",
+        "NODE_OPTIONS": "absent",
+        "RIPGREP_CONFIG_PATH": "absent"
+      },
+      "fixedPath": "/usr/bin:/bin",
+      "repositoryPathInChildPath": false
+    },
+    "probeExitCodes": {
+      "version": 0,
+      "help": 0,
+      "auth": 0
+    }
+  },
+  "binary": {
+    "path": "/opt/homebrew/bin/claude",
+    "version": "2.1.260",
+    "sha256": "3c269f66801028823e24a63ced9fdd3988cb86cf85fccd9f03f87e463b9d3e3c"
+  },
+  "authBefore": {
+    "loggedIn": true,
+    "authMethod": "claude.ai",
+    "apiProvider": "firstParty",
+    "subscriptionType": "pro"
+  },
+  "managedPolicy": {
+    "state": "PASS",
+    "code": "NO_APPLICABLE_MANAGED_POLICY_SOURCES",
+    "sources": {
+      "remoteServerManaged": "NOT_APPLICABLE_PRO_PLAN",
+      "macosMdm": {
+        "profile": {
+          "state": "READ",
+          "claudeDomainNamed": false
+        },
+        "preferenceDomain": {
+          "state": "READ",
+          "claudeDomainNamed": false
+        },
+        "systemFile": {
+          "state": "ABSENT"
+        },
+        "userFile": {
+          "state": "ABSENT"
+        }
+      },
+      "systemManagedSettings": {
+        "file": {
+          "state": "ABSENT"
+        },
+        "dropIns": {
+          "state": "ABSENT"
+        }
+      },
+      "managedMcpFile": {
+        "state": "ABSENT"
+      },
+      "parentManagedSettings": "NOT_APPLICABLE_DIRECT_CLI_CHILD_NOT_AGENT_SDK"
+    }
+  },
+  "offlineGuards": {
+    "state": "PASS",
+    "symlink": true,
+    "hardlink": true,
+    "specialFileClassification": true,
+    "traversal": true
+  },
+  "call1": {
+    "state": "UNKNOWN",
+    "code": "ADAPTER_START_AMBIGUOUS",
+    "providerCallStarted": false,
+    "targetEditExact": false,
+    "projectConfigFilesPresent": true,
+    "hostDiff": {
+      "state": "PASS",
+      "code": null,
+      "changedPaths": []
+    }
+  },
+  "decision": "RESTRICTED_RUNNER_SYNTHETIC_NEGATIVES_UNKNOWN",
+  "code": "ADAPTER_START_AMBIGUOUS"
+}
