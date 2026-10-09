@@ -8,7 +8,8 @@ import * as mdm from '../scripts/phase3b6bMdmReadbackNormalizer.mjs';
 const SRC = fs.readFileSync(fileURLToPath(new URL('../scripts/phase3b6bMdmReadbackNormalizer.mjs', import.meta.url)), 'utf8');
 const HOME = '/Users/tester'; const USER = 'tester';
 const NOW = () => Date.parse('2026-10-09T01:02:03Z');
-const SCHEMA = Object.freeze({ reviewId: 1, inventoryKey: '_computerlevel', entryRequiredKeys: ['ProfileIdentifier', 'ProfileDisplayName'], allowedOtherRootKeys: [], emptyInventoryIsComplete: false });
+const DESC = Object.freeze({ inventoryKey: '_computerlevel', entryRequiredKeys: ['ProfileIdentifier', 'ProfileDisplayName'], allowedOtherRootKeys: [], emptyInventoryIsComplete: false });
+const SCHEMA = mdm.createSyntheticTestSchema(DESC);
 const plist = body => `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">${body}</plist>\n`;
 const entry = (id = 'com.example.wifi', name = 'Wi-Fi') => `<dict><key>ProfileIdentifier</key><string>${id}</string><key>ProfileDisplayName</key><string>${name}</string></dict>`;
 const inventory = (...entries) => plist(`<dict><key>_computerlevel</key><array>${entries.join('')}</array></dict>`);
@@ -16,30 +17,24 @@ const COMPLETE = inventory(entry());
 
 function fakeFs({ dirs = [], files = [], symlinks = [], errors = {} } = {}) {
   const base = ['/Library', '/Library/Application Support', '/Library/Managed Preferences', '/Users', HOME, `${HOME}/Library`, `${HOME}/.claude`];
-  const D = new Set([...base, ...dirs]); const F = new Set(files); const L = new Set(symlinks);
-  return { lstatSync(p) {
-    if (Object.hasOwn(errors, p)) throw Object.assign(new Error(`synthetic ${errors[p]}`), { code: errors[p] });
-    const kind = L.has(p) ? 'link' : D.has(p) ? 'dir' : F.has(p) ? 'file' : null;
-    if (!kind) throw Object.assign(new Error('synthetic ENOENT'), { code: 'ENOENT' });
-    return { isSymbolicLink: () => kind === 'link', isDirectory: () => kind === 'dir' };
-  } };
+  return mdm.createSyntheticFs({ dirs: [...base, ...dirs], files, symlinks, errors });
 }
-const run = (over = {}) => mdm.normalizeMdmReadback({ exitCode: 0, stdout: COMPLETE, home: HOME, user: USER, fsApi: fakeFs(), qualifiedSchema: SCHEMA, now: NOW, ...over });
+const run = (over = {}) => mdm.normalizeMdmReadback({ exitCode: 0, stdout: COMPLETE, home: HOME, user: USER, syntheticFs: fakeFs(), schema: SCHEMA, now: NOW, ...over });
 const POLICY = mdm.policyPaths({ home: HOME, user: USER });
-const PASS = 'CURRENT_ABSENCE_OBSERVED';
+const PASS = 'SYNTHETIC_ABSENCE_OBSERVED';
 
-test('synthetic complete inventory with a reviewed schema and clean metadata is the ONLY path to CURRENT_ABSENCE_OBSERVED', () => {
+test('a synthetic complete inventory with a synthetic schema and synthetic clean metadata is the ONLY path to SYNTHETIC_ABSENCE_OBSERVED', () => {
   const r = run();
   assert.deepEqual([r.overall, r.coverage, r.claudeDomain, r.managedFiles, r.profilesExit, r.runUtc], [PASS, 'COMPLETE', 'ABSENT', 'ABSENT', '0', '2026-10-09T01:02:03Z']);
   assert.equal(run({ stdout: inventory(entry(), entry('com.example.vpn', 'VPN')) }).overall, PASS);
 });
 
 test('without a reviewed schema even a perfect inventory cannot PASS: valid XML proves syntax, not device-wide completeness', () => {
-  for (const qualifiedSchema of [undefined, null, {}, { ...SCHEMA, reviewId: undefined }, { ...SCHEMA, reviewId: 0 }, { ...SCHEMA, reviewId: '1' }, { ...SCHEMA, inventoryKey: '' }, { ...SCHEMA, emptyInventoryIsComplete: 'yes' }, { ...SCHEMA, entryRequiredKeys: 'x' }]) {
-    const r = run({ qualifiedSchema });
-    assert.equal(r.overall, 'BLOCKED_SCHEMA_UNQUALIFIED', JSON.stringify(qualifiedSchema)); assert.equal(r.coverage, 'UNQUALIFIED'); assert.notEqual(r.claudeDomain, 'ABSENT');
+  for (const schema of [undefined, null, {}, { ...DESC, reviewId: 1 }, { ...DESC, reviewId: 5466095478 }, { ...DESC, reviewId: '1' }, { ...DESC, inventoryKey: '' }, { ...DESC, emptyInventoryIsComplete: 'yes' }, { ...DESC, entryRequiredKeys: 'x' }, { kind: 'SYNTHETIC_TEST_SCHEMA' }, Object.create(SCHEMA), structuredClone(DESC)]) {
+    const r = run({ schema });
+    assert.equal(r.overall, 'BLOCKED_SCHEMA_UNQUALIFIED', JSON.stringify(schema)); assert.equal(r.coverage, 'UNQUALIFIED'); assert.notEqual(r.claudeDomain, 'ABSENT');
   }
-  assert.match(run({ qualifiedSchema: undefined }).schema, /^ROOT=dict;ROOT_KEYS=1-4;COMPUTERLEVEL=array;ENTRIES=1-4;ENTRIES_ALL_DICT=true;ENTRIES_HAVE_PROFILEIDENTIFIER=true$/);
+  assert.match(run({ schema: undefined }).schema, /^ROOT=dict;ROOT_KEYS=1-4;COMPUTERLEVEL=array;ENTRIES=1-4;ENTRIES_ALL_DICT=true;ENTRIES_HAVE_PROFILEIDENTIFIER=true$/);
 });
 
 test('well-formed but semantically partial or unrecognised inventories are PARTIAL and never PASS', () => {
@@ -52,7 +47,7 @@ test('well-formed but semantically partial or unrecognised inventories are PARTI
     'mixed entries': inventory(entry(), '<integer>1</integer>'),
   };
   for (const [name, stdout] of Object.entries(cases)) { const r = run({ stdout }); assert.equal(r.coverage, 'PARTIAL', name); assert.notEqual(r.overall, PASS, name); assert.notEqual(r.claudeDomain, 'ABSENT', name); }
-  assert.equal(run({ stdout: inventory(), qualifiedSchema: { ...SCHEMA, emptyInventoryIsComplete: true } }).overall, PASS, 'only an explicitly reviewed empty-inventory rule makes empty complete (synthetic)');
+  assert.equal(run({ stdout: inventory(), schema: mdm.createSyntheticTestSchema({ ...DESC, emptyInventoryIsComplete: true }) }).overall, PASS, 'only an explicit empty-inventory rule makes empty complete (synthetic)');
 });
 
 test('malformed XML, truncation and hostile structure are rejected', () => {
@@ -91,7 +86,7 @@ test('a Claude managed domain anywhere in the inventory is PRESENT (conservative
     'latin1 data': inventory(`<dict><key>ProfileIdentifier</key><string>p</string><key>ProfileDisplayName</key><string>n</string><key>blob</key><data>${latin}</data></dict>`) };
   for (const [name, stdout] of Object.entries(cases)) { const r = run({ stdout }); assert.deepEqual([r.claudeDomain, r.overall], ['PRESENT', 'BLOCKED_PRESENT'], name); }
   for (const stdout of [`garbage ${d} garbage`, `<plist><dict>${d}`]) { const r = run({ stdout, exitCode: 1 }); assert.equal(r.claudeDomain, 'PRESENT', 'even a failed or malformed output that names the domain blocks'); }
-  assert.equal(run({ qualifiedSchema: undefined, stdout: inventory(entry(d, 'x')) }).overall, 'BLOCKED_PRESENT');
+  assert.equal(run({ schema: undefined, stdout: inventory(entry(d, 'x')) }).overall, 'BLOCKED_PRESENT');
 });
 
 test('domain absent is claimed only with nothing else suspicious: other Anthropic references and opaque nested payloads are UNKNOWN', () => {
@@ -107,67 +102,68 @@ test('contradictory evidence (readback says absent, a policy source exists) is B
   for (const target of POLICY) {
     const parent = target.slice(0, target.lastIndexOf('/'));
     const dirs = []; for (let p = parent; p.length > 1; p = p.slice(0, p.lastIndexOf('/')) || '/') dirs.push(p);
-    const r = run({ fsApi: fakeFs({ dirs, files: [target] }) });
+    const r = run({ syntheticFs: fakeFs({ dirs, files: [target] }) });
     assert.deepEqual([r.claudeDomain, r.managedFiles, r.overall], ['ABSENT', 'PRESENT', 'BLOCKED_CONTRADICTORY'], target);
   }
-  const unknownDomain = run({ stdout: inventory(entry('com.anthropic.other', 'x')), fsApi: fakeFs({ dirs: ['/Library/Application Support/ClaudeCode'], files: [POLICY[0]] }) });
+  const unknownDomain = run({ stdout: inventory(entry('com.anthropic.other', 'x')), syntheticFs: fakeFs({ dirs: ['/Library/Application Support/ClaudeCode'], files: [POLICY[0]] }) });
   assert.equal(unknownDomain.overall, 'BLOCKED_PRESENT');
 });
 
 test('symlinked policy files, dangling links and symlinked or non-directory ancestors are never ABSENT', () => {
   const tgt = POLICY[0];
-  const present = run({ fsApi: fakeFs({ dirs: ['/Library/Application Support/ClaudeCode'], symlinks: [tgt] }) });
+  const present = run({ syntheticFs: fakeFs({ dirs: ['/Library/Application Support/ClaudeCode'], symlinks: [tgt] }) });
   assert.deepEqual([present.managedFiles, present.overall], ['PRESENT', 'BLOCKED_CONTRADICTORY'], 'a symlink (even dangling) at the policy path counts as present');
   assert.deepEqual(mdm.inspectPolicyPath(tgt, fakeFs({ dirs: ['/Library/Application Support/ClaudeCode'], symlinks: [tgt] })), { state: 'PRESENT', reason: 'SYMLINK' });
   const ancestorLink = fakeFs({ symlinks: ['/Library/Application Support/ClaudeCode'] });
   assert.deepEqual(mdm.inspectPolicyPath(tgt, ancestorLink), { state: 'UNKNOWN', reason: 'SYMLINK_ANCESTOR' });
-  assert.equal(run({ fsApi: ancestorLink }).overall, 'BLOCKED_UNKNOWN');
+  assert.equal(run({ syntheticFs: ancestorLink }).overall, 'BLOCKED_UNKNOWN');
   assert.deepEqual(mdm.inspectPolicyPath(tgt, fakeFs({ files: ['/Library/Application Support/ClaudeCode'] })), { state: 'UNKNOWN', reason: 'NOT_DIRECTORY_ANCESTOR' });
-  assert.equal(run({ fsApi: fakeFs({ symlinks: [HOME] }) }).overall, 'BLOCKED_UNKNOWN', 'a symlinked home directory');
-  assert.equal(run({ fsApi: fakeFs({ symlinks: ['/Library'] }) }).overall, 'BLOCKED_UNKNOWN', 'a symlinked top-level ancestor');
+  assert.equal(run({ syntheticFs: fakeFs({ symlinks: [HOME] }) }).overall, 'BLOCKED_UNKNOWN', 'a symlinked home directory');
+  assert.equal(run({ syntheticFs: fakeFs({ symlinks: ['/Library'] }) }).overall, 'BLOCKED_UNKNOWN', 'a symlinked top-level ancestor');
   assert.equal(mdm.inspectPolicyPath(tgt, fakeFs()).state, 'ABSENT');
 });
 
 test('unreadable paths and unexpected filesystem errors are UNKNOWN, not absent', () => {
   for (const code of ['EACCES', 'EPERM', 'EIO', 'ELOOP', 'ENOTDIR', 'ETIMEDOUT', undefined]) {
     for (const target of [POLICY[0], POLICY[3], POLICY[6]]) {
-      const r = run({ fsApi: fakeFs({ dirs: ['/Library/Application Support/ClaudeCode'], errors: { [target]: code } }) });
+      const r = run({ syntheticFs: fakeFs({ dirs: ['/Library/Application Support/ClaudeCode'], errors: { [target]: code } }) });
       assert.equal(r.managedFiles, 'UNKNOWN', `${code} ${target}`); assert.notEqual(r.overall, PASS);
     }
   }
   const throwing = { lstatSync: () => { throw 'a string, not an Error'; } };
-  assert.equal(run({ fsApi: throwing }).overall, 'BLOCKED_UNKNOWN');
+  assert.equal(run({ syntheticFs: throwing }).overall, 'BLOCKED_REAL_HOST_MODE_DISABLED', 'a non-synthetic filesystem object is never used');
   const weird = { lstatSync: () => ({ isSymbolicLink: () => { throw new Error('x'); }, isDirectory: () => true }) };
-  assert.notEqual(run({ fsApi: weird }).overall, PASS);
+  assert.notEqual(run({ syntheticFs: weird }).overall, PASS);
   for (const p of ['relative/path', '/a/../b', '', '/a//b', '/a/\0b', undefined, null]) assert.equal(mdm.inspectPolicyPath(p, fakeFs()).state, 'UNKNOWN', String(p));
-  assert.equal(mdm.inspectPolicyPath('/Library/Managed Preferences/x', { lstatSync: () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } }).state, 'UNKNOWN');
+  assert.equal(mdm.inspectPolicyPath('/Library/Managed Preferences/x', { lstatSync: () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } }).state, 'NOT_INSPECTED');
+  assert.equal(mdm.inspectPolicyPath('/Library/Managed Preferences/x', mdm.createSyntheticFs({ dirs: ['/Library'], errors: { '/Library': 'EACCES' } })).state, 'UNKNOWN');
 });
 
 test('output is closed-vocabulary: no profile names, ids, secrets, paths or keys leak; the schema fingerprint names only fixed words', () => {
   const secretProfile = inventory(entry('com.secret.corp.vpn', 'CEO-WIFI-PASSWORD-hunter2'));
-  const r = run({ stdout: secretProfile, qualifiedSchema: undefined });
+  const r = run({ stdout: secretProfile, schema: undefined });
   const text = mdm.formatReadback(r);
   for (const leak of ['secret', 'hunter2', 'CEO', 'corp', 'wifi', HOME, 'Library', '/Users']) assert.equal(text.toLowerCase().includes(leak.toLowerCase()), false, leak);
-  assert.equal(text.split('\n').length, 7);
-  for (const line of text.split('\n')) assert.match(line, /^(RUN_UTC|PROFILES_EXIT|COVERAGE|CLAUDE_DOMAIN|MANAGED_FILES|SCHEMA_FINGERPRINT|OVERALL)=[A-Za-z0-9_:;=\-(). ]+$/);
+  assert.equal(text.split('\n').length, 9);
+  for (const line of text.split('\n')) assert.match(line, /^(RUN_UTC|PROFILES_EXIT|COVERAGE|CLAUDE_DOMAIN|MANAGED_FILES|SCHEMA_FINGERPRINT|SCHEMA_TRUST|HOST_MODE|OVERALL)=[A-Za-z0-9_:;=\-(). ]+$/);
   assert.equal(mdm.schemaFingerprint(mdm.parsePlistXml(plist('<dict><key>my-secret-key</key><string>v</string></dict>'))).includes('secret'), false);
   assert.equal(mdm.schemaFingerprint({ ok: false }), 'ROOT=NONE');
 });
 
 test('the command-line adapter never supplies a schema, requires exactly one valid --rc and cannot reach PASS', () => {
-  const cli = (argv, stdin = COMPLETE) => mdm.runMdmCli({ argv, stdin, fsApi: fakeFs(), home: HOME, user: USER, now: NOW });
+  const cli = (argv, stdin = COMPLETE) => mdm.runMdmCli({ argv, stdin, syntheticFs: fakeFs(), home: HOME, user: USER, now: NOW });
   assert.match(cli(['--rc=0']), /OVERALL=BLOCKED_SCHEMA_UNQUALIFIED/);
   for (const argv of [[], ['--rc='], ['--rc=abc'], ['--rc=0', '--rc=0'], ['--rc=0.5'], ['--rc=99999'], ['--schema={"reviewId":1}'], ['rc=0']]) assert.doesNotMatch(cli(argv), /OVERALL=(CURRENT_ABSENCE_OBSERVED)/, JSON.stringify(argv));
   assert.match(cli([]), /PROFILES_EXIT=NONE/); assert.match(cli(['--rc=142']), /COVERAGE=FAILED/); assert.match(cli(['--rc=1']), /PROFILES_EXIT=1/);
-  assert.equal(/qualifiedSchema\s*[:=]\s*(?!input)/.test(SRC.slice(SRC.indexOf('export function runMdmCli'))), false, 'runMdmCli passes no schema');
+  assert.equal(/schema\s*[:=]\s*(?!input)/.test(SRC.slice(SRC.indexOf('export function runMdmCli'))), false, 'runMdmCli passes no schema');
 });
 
 test('the helper never throws on hostile input and the false-PASS matrix never produces PASS', () => {
-  const hostile = [undefined, null, 5, 'x', [], { get exitCode() { throw new Error('g'); } }, { exitCode: 0, get stdout() { throw new Error('g'); } }, { exitCode: 0, stdout: COMPLETE, home: undefined, user: undefined }, { exitCode: 0, stdout: COMPLETE, fsApi: null, home: HOME, user: USER }];
+  const hostile = [undefined, null, 5, 'x', [], { get exitCode() { throw new Error('g'); } }, { exitCode: 0, get stdout() { throw new Error('g'); } }, { exitCode: 0, stdout: COMPLETE, home: undefined, user: undefined }, { exitCode: 0, stdout: COMPLETE, syntheticFs: null, home: HOME, user: USER }];
   for (const input of hostile) { let r; assert.doesNotThrow(() => { r = mdm.normalizeMdmReadback(input); }); assert.notEqual(r.overall, PASS); }
   let passes = 0; const stdouts = [COMPLETE, inventory(), '', 'x', plist('<dict/>'), inventory(entry('com.anthropic.claudecode', 'x'))];
   const fsVariants = [fakeFs(), fakeFs({ symlinks: ['/Library'] }), fakeFs({ errors: { [POLICY[2]]: 'EIO' } }), fakeFs({ dirs: ['/Library/Application Support/ClaudeCode'], files: [POLICY[2]] })];
-  for (const stdout of stdouts) for (const exitCode of [0, 1, 142, undefined]) for (const qualifiedSchema of [SCHEMA, undefined]) for (const fsApi of fsVariants) if (run({ stdout, exitCode, qualifiedSchema, fsApi }).overall === PASS) passes += 1;
+  for (const stdout of stdouts) for (const exitCode of [0, 1, 142, undefined]) for (const schema of [SCHEMA, undefined]) for (const syntheticFs of fsVariants) if (run({ stdout, exitCode, schema, syntheticFs }).overall === PASS) passes += 1;
   assert.equal(passes, 2, 'the only PASS combinations are the synthetic complete inventories with exit 0, a reviewed schema and a clean fake filesystem');
 });
 

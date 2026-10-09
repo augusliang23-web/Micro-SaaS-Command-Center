@@ -3,15 +3,19 @@
 // It never runs `sudo` or `profiles`. A human would capture the command's own exit status and its stdout in memory and hand both to this
 // helper, which prints only a closed vocabulary of normalized words. Rules that matter:
 //   * A well-formed XML plist proves SYNTAX only. Whether it is a COMPLETE device-wide inventory depends on the exact output schema of
-//     `profiles show -all`, which has never been reviewed. So coverage can only be COMPLETE when the caller supplies a `qualifiedSchema`
-//     that carries an independent review id. The real command-line entry supplies none, therefore the real result can never be
-//     CURRENT_ABSENCE_OBSERVED today: the best it can say is BLOCKED_SCHEMA_UNQUALIFIED, plus a harmless schema fingerprint to review.
+//     `profiles show -all`, which has never been reviewed. So coverage can only be COMPLETE for a schema carrying a module-private trust brand
+//     (synthetic for tests, or Control Plane-approved via the committed registry, which is empty). The command line supplies none, therefore the real
+//     result can never be a success word today: the best it can say is BLOCKED (real-host mode disabled), plus a harmless schema fingerprint to review.
 //   * Presence is conservative (any mention of the Claude domain, anywhere, blocks); absence needs complete coverage and nothing opaque.
 //   * Policy-file checks use lstat on every ancestor; a symlinked or non-directory ancestor, an unreadable path or any unexpected error is UNKNOWN.
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+
+// PHASE 3B6B.10C — ISOLATION: this module imports no filesystem, OS, process or network API. It cannot read the host by construction.
+// Policy-path inspection runs ONLY against an in-memory `createSyntheticFs` object; anything else is NOT_INSPECTED. Real-host mode is a
+// constant `false` with no switch (no flag, no environment variable, no option). Enabling it needs a separately reviewed code change.
+export const REAL_HOST_MODE = Object.freeze({ enabled: false, reason: 'NOT_AUTHORIZED' });
 
 export const MDM_LIMITS = Object.freeze({ maxBytes: 8_000_000, maxDepth: 32, maxNodes: 200_000 });
 const DOMAIN = 'com.anthropic.claudecode';
@@ -143,15 +147,11 @@ export function schemaFingerprint(parsed) {
   return parts.join(';');
 }
 
-function qualified(schema) {
-  return isRecord(schema) && Number.isInteger(schema.reviewId) && schema.reviewId > 0 && typeof schema.inventoryKey === 'string' && schema.inventoryKey !== '' &&
-    Array.isArray(schema.entryRequiredKeys) && schema.entryRequiredKeys.every(k => typeof k === 'string' && k !== '') &&
-    Array.isArray(schema.allowedOtherRootKeys) && schema.allowedOtherRootKeys.every(k => typeof k === 'string') && typeof schema.emptyInventoryIsComplete === 'boolean';
-}
-
-function evaluateCoverage(parsed, schema) {
+function evaluateCoverage(parsed, brand) {
   if (!parsed.ok) return { coverage: 'PARTIAL', form: 'MALFORMED' };
-  if (!qualified(schema)) return { coverage: 'UNQUALIFIED', form: 'XML_PLIST' };
+  const trusted = isRecord(brand) ? SCHEMA_BRANDS.get(brand) : undefined; // an unbranded object (any self-asserted review id) is ignored
+  if (!trusted) return { coverage: 'UNQUALIFIED', form: 'XML_PLIST' };
+  const schema = trusted.descriptor;
   const root = parsed.root;
   if (root.t !== 'dict') return { coverage: 'PARTIAL', form: 'UNKNOWN_STRUCTURE' };
   const allowed = new Set([schema.inventoryKey, ...schema.allowedOtherRootKeys]);
@@ -163,6 +163,69 @@ function evaluateCoverage(parsed, schema) {
   return { coverage: 'COMPLETE', form: 'XML_PLIST' };
 }
 
+// ---- synthetic filesystem (the ONLY thing path inspection accepts) -----------------------------------------------------------
+const SYNTHETIC_FS = new WeakSet();
+/** In-memory directory model. Only objects made here are accepted; the real `fs` module (or a wrapper around it) is never accepted. */
+export function createSyntheticFs({ dirs = [], files = [], symlinks = [], errors = {} } = {}) {
+  const D = new Set(dirs); const F = new Set(files); const L = new Set(symlinks); const E = new Map(Object.entries(errors));
+  const api = Object.freeze({
+    lstatSync(p) {
+      if (E.has(p)) throw Object.assign(new Error('synthetic filesystem error'), { code: E.get(p) });
+      const kind = L.has(p) ? 'link' : D.has(p) ? 'dir' : F.has(p) ? 'file' : null;
+      if (!kind) throw Object.assign(new Error('synthetic ENOENT'), { code: 'ENOENT' });
+      return { isSymbolicLink: () => kind === 'link', isDirectory: () => kind === 'dir' };
+    },
+  });
+  SYNTHETIC_FS.add(api);
+  return api;
+}
+const isSyntheticFs = x => x !== null && typeof x === 'object' && SYNTHETIC_FS.has(x);
+
+// ---- schema trust --------------------------------------------------------------------------------------------------------
+// A schema descriptor is DATA and never carries its own trust. Trust is a module-private brand given only by:
+//   * createSyntheticTestSchema()           -> SYNTHETIC_TEST_SCHEMA  (tests; can never produce an "approved" outcome), or
+//   * resolveControlPlaneApprovedSchema()   -> CONTROL_PLANE_APPROVED_SCHEMA, only if the descriptor's exact SHA-256 appears in the
+//                                              committed APPROVED_SCHEMA_REGISTRY below. That registry is EMPTY: no schema is approved.
+// A review id typed into a descriptor (or anywhere a caller controls) establishes nothing.
+export const SCHEMA_TRUST = Object.freeze({ SYNTHETIC: 'SYNTHETIC_TEST_SCHEMA', APPROVED: 'CONTROL_PLANE_APPROVED_SCHEMA' });
+export const APPROVAL_REPOSITORY = 'augusliang23-web/Micro-SaaS-Command-Center';
+export const APPROVAL_COMMAND_CLASS = 'profiles show -type configuration -all -output stdout-xml';
+/** Future entries are added only by a Control Plane-reviewed commit: { schemaSha256, commitSha, reviewId, reviewSource, repository, commandClass }. */
+export const APPROVED_SCHEMA_REGISTRY = Object.freeze([]);
+const SCHEMA_BRANDS = new WeakMap();
+
+const validDescriptor = d => isRecord(d) && typeof d.inventoryKey === 'string' && d.inventoryKey !== '' &&
+  Array.isArray(d.entryRequiredKeys) && d.entryRequiredKeys.every(k => typeof k === 'string' && k !== '') &&
+  Array.isArray(d.allowedOtherRootKeys) && d.allowedOtherRootKeys.every(k => typeof k === 'string') && typeof d.emptyInventoryIsComplete === 'boolean';
+const canonical = v => (Array.isArray(v) ? `[${v.map(canonical).join(',')}]` : isRecord(v) ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}` : JSON.stringify(v));
+/** Hash of the structural content only (never of a self-asserted review id). */
+export function schemaSha256(d) {
+  if (!validDescriptor(d)) return null;
+  return createHash('sha256').update(canonical({ inventoryKey: d.inventoryKey, entryRequiredKeys: [...d.entryRequiredKeys].sort(), allowedOtherRootKeys: [...d.allowedOtherRootKeys].sort(), emptyInventoryIsComplete: d.emptyInventoryIsComplete })).digest('hex');
+}
+export function createSyntheticTestSchema(descriptor) {
+  if (!validDescriptor(descriptor)) throw new TypeError('Invalid schema descriptor');
+  const brand = Object.freeze({ kind: SCHEMA_TRUST.SYNTHETIC });
+  SCHEMA_BRANDS.set(brand, { kind: SCHEMA_TRUST.SYNTHETIC, descriptor: structuredClone(descriptor) });
+  return brand;
+}
+/** Pure binding check of a descriptor against a registry: exact schema hash, 40-hex commit, positive review id, fixed trusted source. */
+export function matchApproval(descriptor, registry) {
+  const hash = schemaSha256(descriptor);
+  if (!hash || !Array.isArray(registry)) return { ok: false, code: 'SCHEMA_NOT_APPROVED' };
+  const entry = registry.find(e => isRecord(e) && e.schemaSha256 === hash);
+  if (!entry) return { ok: false, code: 'SCHEMA_NOT_APPROVED' };
+  if (!/^[0-9a-f]{40}$/.test(entry.commitSha ?? '') || !Number.isInteger(entry.reviewId) || entry.reviewId <= 0 || entry.reviewSource !== 'GITHUB_CONTROL_PLANE_REVIEW' ||
+      entry.repository !== APPROVAL_REPOSITORY || entry.commandClass !== APPROVAL_COMMAND_CLASS) return { ok: false, code: 'APPROVAL_BINDING_INVALID' };
+  return { ok: true, entry };
+}
+export function resolveControlPlaneApprovedSchema(descriptor) {
+  if (!matchApproval(descriptor, APPROVED_SCHEMA_REGISTRY).ok) return null;
+  const brand = Object.freeze({ kind: SCHEMA_TRUST.APPROVED });
+  SCHEMA_BRANDS.set(brand, { kind: SCHEMA_TRUST.APPROVED, descriptor: structuredClone(descriptor) });
+  return brand;
+}
+
 // ---- policy-file inspection (symlink / ancestor safe) -------------------------------------------------------------------------
 export function policyPaths({ home, user }) {
   return [
@@ -172,7 +235,8 @@ export function policyPaths({ home, user }) {
     path.join(home, '.claude/remote-settings.json'),
   ];
 }
-export function inspectPolicyPath(target, fsApi = fs) {
+export function inspectPolicyPath(target, fsApi) {
+  if (!isSyntheticFs(fsApi)) return { state: 'NOT_INSPECTED', reason: 'NO_SYNTHETIC_FILESYSTEM' };
   if (typeof target !== 'string' || !path.isAbsolute(target) || path.normalize(target) !== target || target.includes('\0')) return { state: 'UNKNOWN', reason: 'PATH_NOT_CANONICAL' };
   const parts = target.split('/').filter(Boolean); let current = '';
   for (let i = 0; i < parts.length; i += 1) {
@@ -191,16 +255,20 @@ export function inspectPolicyPath(target, fsApi = fs) {
 
 // ---- decision --------------------------------------------------------------------------------------------------------------------
 /**
- * @param {{ exitCode: unknown, signal?: unknown, timedOut?: boolean, stdout: unknown, home: string, user: string, fsApi?: object, qualifiedSchema?: object, now?: () => number }} input
+ * @param {{ exitCode: unknown, signal?: unknown, timedOut?: boolean, stdout: unknown, home?: string, user?: string, syntheticFs?: object, schema?: object, now?: () => number }} input
  * Never throws; every failure is a BLOCKED word.
  */
 export function normalizeMdmReadback(input) {
-  const out = { runUtc: 'UNKNOWN', profilesExit: 'NONE', coverage: 'FAILED', form: 'NONE', claudeDomain: 'UNKNOWN', managedFiles: 'UNKNOWN', domainScan: 'UNSCANNABLE', schema: 'ROOT=NONE', overall: 'BLOCKED_UNKNOWN' };
+  const out = { runUtc: 'UNKNOWN', profilesExit: 'NONE', coverage: 'FAILED', form: 'NONE', claudeDomain: 'UNKNOWN', managedFiles: 'NOT_INSPECTED', domainScan: 'UNSCANNABLE', schema: 'ROOT=NONE', schemaTrust: 'NONE', hostMode: 'DISABLED', overall: 'BLOCKED_UNKNOWN' };
   try {
     try { out.runUtc = new Date((input.now ?? Date.now)()).toISOString().replace(/\.\d+Z$/, 'Z'); } catch { out.runUtc = 'UNKNOWN'; }
-    // Policy files (metadata only).
-    const states = policyPaths({ home: input.home, user: input.user }).map(p => inspectPolicyPath(p, input.fsApi ?? fs).state);
-    out.managedFiles = states.includes('PRESENT') ? 'PRESENT' : states.every(s => s === 'ABSENT') ? 'ABSENT' : 'UNKNOWN';
+    // Policy files: ONLY against a synthetic in-memory filesystem. Without one nothing is inspected (there is no real-host fallback).
+    if (isSyntheticFs(input.syntheticFs)) {
+      out.hostMode = 'SYNTHETIC';
+      const states = policyPaths({ home: input.home, user: input.user }).map(p => inspectPolicyPath(p, input.syntheticFs).state);
+      out.managedFiles = states.includes('PRESENT') ? 'PRESENT' : states.every(s => s === 'ABSENT') ? 'ABSENT' : 'UNKNOWN';
+    }
+    out.schemaTrust = (isRecord(input.schema) && SCHEMA_BRANDS.get(input.schema)?.kind) || 'NONE';
     // The command's OWN status.
     const rc = input.exitCode;
     const statusOk = Number.isInteger(rc) && rc === 0 && !input.timedOut && !input.signal;
@@ -219,14 +287,16 @@ export function normalizeMdmReadback(input) {
     // Coverage can only be COMPLETE when the command succeeded AND a reviewed schema recognises the structure.
     if (!statusOk) out.coverage = 'FAILED';
     else if (out.form === 'EMPTY' || out.form === 'TOO_LARGE' || out.form === 'NONE') out.coverage = 'PARTIAL';
-    else { const c = evaluateCoverage(parsed, input.qualifiedSchema); out.coverage = c.coverage; if (c.form !== 'XML_PLIST') out.form = c.form; }
+    else { const c = evaluateCoverage(parsed, input.schema); out.coverage = c.coverage; if (c.form !== 'XML_PLIST') out.form = c.form; }
     if (scan.domain) out.claudeDomain = 'PRESENT';
     else if (out.coverage === 'COMPLETE' && out.domainScan === 'SCANNED' && !scan.reference && !scan.opaque) out.claudeDomain = 'ABSENT';
     else out.claudeDomain = 'UNKNOWN';
     if (out.claudeDomain === 'PRESENT') out.overall = 'BLOCKED_PRESENT';
     else if (out.managedFiles === 'PRESENT') out.overall = out.claudeDomain === 'ABSENT' ? 'BLOCKED_CONTRADICTORY' : 'BLOCKED_PRESENT';
+    else if (out.hostMode !== 'SYNTHETIC') out.overall = 'BLOCKED_REAL_HOST_MODE_DISABLED';
     else if (out.coverage === 'UNQUALIFIED' && out.managedFiles === 'ABSENT' && statusOk) out.overall = 'BLOCKED_SCHEMA_UNQUALIFIED';
-    else if (out.coverage === 'COMPLETE' && out.claudeDomain === 'ABSENT' && out.managedFiles === 'ABSENT') out.overall = 'CURRENT_ABSENCE_OBSERVED';
+    // The only success word is SYNTHETIC: there is no real-host mode, so `CURRENT_ABSENCE_OBSERVED` is reserved and unreachable.
+    else if (out.coverage === 'COMPLETE' && out.claudeDomain === 'ABSENT' && out.managedFiles === 'ABSENT') out.overall = 'SYNTHETIC_ABSENCE_OBSERVED';
     else out.overall = 'BLOCKED_UNKNOWN';
   } catch { out.overall = 'BLOCKED_UNKNOWN'; }
   return out;
@@ -234,15 +304,20 @@ export function normalizeMdmReadback(input) {
 
 export function formatReadback(r) {
   return [`RUN_UTC=${r.runUtc}`, `PROFILES_EXIT=${r.profilesExit}`, `COVERAGE=${r.coverage} (form=${r.form})`, `CLAUDE_DOMAIN=${r.claudeDomain} (scan=${r.domainScan})`,
-    `MANAGED_FILES=${r.managedFiles}`, `SCHEMA_FINGERPRINT=${r.schema}`, `OVERALL=${r.overall}`].join('\n');
+    `MANAGED_FILES=${r.managedFiles}`, `SCHEMA_FINGERPRINT=${r.schema}`, `SCHEMA_TRUST=${r.schemaTrust}`, `HOST_MODE=${r.hostMode}`, `OVERALL=${r.overall}`].join('\n');
 }
 
-/** Thin command-line adapter: `print -rn -- "$raw" | node <this file> --rc="$rc"`. No qualified schema is supplied here. */
-export function runMdmCli({ argv, stdin, fsApi = fs, home = os.homedir(), user = os.userInfo().username, now = Date.now }) {
-  const args = argv.filter(a => a.startsWith('--rc='));
-  const rcText = args.length === 1 ? args[0].slice(5) : '';
-  const exitCode = /^-?\d{1,4}$/.test(rcText) ? Number(rcText) : undefined;
-  const result = normalizeMdmReadback({ exitCode, timedOut: exitCode !== undefined && exitCode > 128, stdout: stdin, home, user, fsApi, now });
+/**
+ * Thin command-line adapter: `print -rn -- "$raw" | node <this file> --rc="$rc"`. It reads ONLY standard input: no filesystem, no home directory,
+ * no user lookup, no environment. Real-host inspection is disabled, so the policy files are reported NOT_INSPECTED and the overall word is
+ * BLOCKED_*. A `syntheticFs` / `schema` can be supplied only by library callers (tests); the command line has no flag for either.
+ */
+export function runMdmCli({ argv, stdin, syntheticFs, schema, home, user, now = Date.now }) {
+  const rcArgs = argv.filter(a => /^--rc=-?\d{1,4}$/.test(a));
+  const argsValid = rcArgs.length === 1 && argv.length === 1; // any other argument (for example a real-host or fixture switch) is refused
+  const exitCode = argsValid ? Number(rcArgs[0].slice(5)) : undefined;
+  const result = normalizeMdmReadback({ exitCode, timedOut: exitCode !== undefined && exitCode > 128, stdout: stdin, home, user, syntheticFs, schema, now });
+  if (!argsValid) result.overall = 'BLOCKED_UNKNOWN';
   return formatReadback(result);
 }
 
