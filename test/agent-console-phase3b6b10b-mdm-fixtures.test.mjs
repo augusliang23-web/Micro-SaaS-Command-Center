@@ -144,8 +144,8 @@ test('output is closed-vocabulary: no profile names, ids, secrets, paths or keys
   const r = run({ stdout: secretProfile, schema: undefined });
   const text = mdm.formatReadback(r);
   for (const leak of ['secret', 'hunter2', 'CEO', 'corp', 'wifi', HOME, 'Library', '/Users']) assert.equal(text.toLowerCase().includes(leak.toLowerCase()), false, leak);
-  assert.equal(text.split('\n').length, 9);
-  for (const line of text.split('\n')) assert.match(line, /^(RUN_UTC|PROFILES_EXIT|COVERAGE|CLAUDE_DOMAIN|MANAGED_FILES|SCHEMA_FINGERPRINT|SCHEMA_TRUST|HOST_MODE|OVERALL)=[A-Za-z0-9_:;=\-(). ]+$/);
+  assert.equal(text.split('\n').length, 12);
+  for (const line of text.split('\n')) assert.match(line, /^(RUN_UTC|PROFILES_EXIT|COVERAGE|CLAUDE_DOMAIN|MANAGED_FILES|SCHEMA_FINGERPRINT|SCHEMA_TRUST|HOST_MODE|OVERALL|FORMAT_CLASS|FORMAT_DETAIL|EXTRACTED_FINGERPRINT)=[A-Za-z0-9_:;=\-(). <>/+]+$/);
   assert.equal(mdm.schemaFingerprint(mdm.parsePlistXml(plist('<dict><key>my-secret-key</key><string>v</string></dict>'))).includes('secret'), false);
   assert.equal(mdm.schemaFingerprint({ ok: false }), 'ROOT=NONE');
 });

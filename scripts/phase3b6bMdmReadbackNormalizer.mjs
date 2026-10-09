@@ -42,52 +42,58 @@ function decodeText(text) {
   return out;
 }
 
-/** @returns {{ok:true, root:object, dataBlobs:Buffer[]} | {ok:false, code:string}} */
+const PARSE_REASONS = new Set(['INVALID_INPUT', 'UNTERMINATED_COMMENT', 'UNTERMINATED_DECL', 'DOCTYPE_SUBSET', 'LEADING_TEXT', 'STRAY_TEXT', 'TRUNCATED', 'CDATA_OR_DECL', 'BAD_TAG',
+  'LIMIT', 'UNEXPECTED_TAG', 'MISMATCHED_CLOSE', 'BAD_SCALAR', 'BAD_DICT', 'DUPLICATE_KEY', 'UNKNOWN_ELEMENT', 'NOT_PLIST_ROOT', 'BAD_TAIL', 'TRAILING_CONTENT', 'BAD_ENTITY', 'UNKNOWN']);
+const atBucket = (pos, length) => (length <= 0 ? 'NONE' : pos >= length - 1 ? 'END' : pos < length * 0.25 ? '0-25' : pos < length * 0.5 ? '25-50' : pos < length * 0.75 ? '50-75' : '75-100');
+
+/** @returns {{ok:true, root:object, dataBlobs:Buffer[]} | {ok:false, code:string, reason:string, at:string}} reason/at are closed vocabularies (diagnostic only). */
 export function parsePlistXml(input) {
+  let pos = 0; let length = 0; let started = false;
   try {
-    if (typeof input !== 'string' || input.length === 0 || input.length > MDM_LIMITS.maxBytes || input.includes('\0')) return { ok: false, code: 'MALFORMED_XML' };
-    let s = input.charCodeAt(0) === 0xfeff ? input.slice(1) : input; let pos = 0; let nodes = 0; const dataBlobs = [];
-    const fail = () => { throw new Error('malformed'); };
+    if (typeof input !== 'string' || input.length === 0 || input.length > MDM_LIMITS.maxBytes || input.includes('\0')) return { ok: false, code: 'MALFORMED_XML', reason: 'INVALID_INPUT', at: 'NONE' };
+    let s = input.charCodeAt(0) === 0xfeff ? input.slice(1) : input; let nodes = 0; const dataBlobs = []; length = s.length;
+    const fail = (reason = 'UNKNOWN') => { throw Object.assign(new Error('malformed'), { reason }); };
     const skipWs = () => { while (pos < s.length && /\s/.test(s[pos])) pos += 1; };
     const skipMisc = () => {
       for (;;) {
         skipWs();
-        if (s.startsWith('<!--', pos)) { const end = s.indexOf('-->', pos + 4); if (end < 0) fail(); pos = end + 3; } else break;
+        if (s.startsWith('<!--', pos)) { const end = s.indexOf('-->', pos + 4); if (end < 0) fail('UNTERMINATED_COMMENT'); pos = end + 3; } else break;
       }
     };
     skipMisc();
-    if (s.startsWith('<?xml', pos)) { const end = s.indexOf('?>', pos); if (end < 0) fail(); pos = end + 2; skipMisc(); }
+    if (s.startsWith('<?xml', pos)) { const end = s.indexOf('?>', pos); if (end < 0) fail('UNTERMINATED_DECL'); pos = end + 2; skipMisc(); }
     if (s.startsWith('<!DOCTYPE', pos)) {
-      const end = s.indexOf('>', pos); if (end < 0) fail();
+      const end = s.indexOf('>', pos); if (end < 0) fail('UNTERMINATED_DECL');
       const decl = s.slice(pos, end + 1);
-      if (/[\[\]]|<!ENTITY|<!ELEMENT|<!ATTLIST/.test(decl)) fail(); // no internal subset: no entity tricks
+      if (/[\[\]]|<!ENTITY|<!ELEMENT|<!ATTLIST/.test(decl)) fail('DOCTYPE_SUBSET'); // no internal subset: no entity tricks
       pos = end + 1; skipMisc();
     }
     const readTag = () => {
-      if (s[pos] !== '<') fail();
-      const end = s.indexOf('>', pos); if (end < 0) fail();
+      if (pos >= s.length) fail('TRUNCATED');
+      if (s[pos] !== '<') fail(started ? 'STRAY_TEXT' : 'LEADING_TEXT');
+      const end = s.indexOf('>', pos); if (end < 0) fail('TRUNCATED');
       const body = s.slice(pos + 1, end); pos = end + 1;
-      if (body.startsWith('!') || body.startsWith('?')) fail(); // CDATA, stray declarations
+      if (body.startsWith('!') || body.startsWith('?')) fail('CDATA_OR_DECL'); // CDATA, stray declarations
       const closing = body.startsWith('/'); const selfClosing = body.endsWith('/');
       const inner = body.slice(closing ? 1 : 0, selfClosing ? -1 : undefined).trim();
-      const m = /^([A-Za-z]+)(\s+[^<>]*)?$/.exec(inner); if (!m) fail();
+      const m = /^([A-Za-z]+)(\s+[^<>]*)?$/.exec(inner); if (!m) fail('BAD_TAG');
       return { name: m[1], attrs: m[2]?.trim() ?? '', closing, selfClosing };
     };
-    const readText = () => { const end = s.indexOf('<', pos); if (end < 0) fail(); const t = s.slice(pos, end); pos = end; return decodeText(t); };
+    const readText = () => { const end = s.indexOf('<', pos); if (end < 0) fail('TRUNCATED'); const t = s.slice(pos, end); pos = end; return decodeText(t); };
     const value = (depth) => {
-      if (depth > MDM_LIMITS.maxDepth || ++nodes > MDM_LIMITS.maxNodes) fail();
+      if (depth > MDM_LIMITS.maxDepth || ++nodes > MDM_LIMITS.maxNodes) fail('LIMIT');
       skipMisc();
-      const tag = readTag(); if (tag.closing || tag.attrs) fail();
-      const close = name => { skipMisc(); const t = readTag(); if (!t.closing || t.name !== name || t.attrs || t.selfClosing) fail(); };
+      const tag = readTag(); if (tag.closing || tag.attrs) fail('UNEXPECTED_TAG');
+      const close = name => { skipMisc(); const t = readTag(); if (!t.closing || t.name !== name || t.attrs || t.selfClosing) fail('MISMATCHED_CLOSE'); };
       switch (tag.name) {
         case 'true': case 'false': if (!tag.selfClosing) { close(tag.name); } return { t: 'bool', v: tag.name === 'true' };
         case 'string': { if (tag.selfClosing) return { t: 'string', v: '' }; const v = readText(); close('string'); return { t: 'string', v }; }
-        case 'integer': { if (tag.selfClosing) fail(); const v = readText().trim(); if (!/^-?\d{1,20}$/.test(v)) fail(); close('integer'); return { t: 'integer', v }; }
-        case 'real': { if (tag.selfClosing) fail(); const v = readText().trim(); if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(v)) fail(); close('real'); return { t: 'real', v }; }
-        case 'date': { if (tag.selfClosing) fail(); const v = readText().trim(); if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(v)) fail(); close('date'); return { t: 'date', v }; }
+        case 'integer': { if (tag.selfClosing) fail('BAD_SCALAR'); const v = readText().trim(); if (!/^-?\d{1,20}$/.test(v)) fail('BAD_SCALAR'); close('integer'); return { t: 'integer', v }; }
+        case 'real': { if (tag.selfClosing) fail('BAD_SCALAR'); const v = readText().trim(); if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(v)) fail('BAD_SCALAR'); close('real'); return { t: 'real', v }; }
+        case 'date': { if (tag.selfClosing) fail('BAD_SCALAR'); const v = readText().trim(); if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(v)) fail('BAD_SCALAR'); close('date'); return { t: 'date', v }; }
         case 'data': {
           if (tag.selfClosing) return { t: 'data', v: Buffer.alloc(0) };
-          const v = readText().replace(/\s+/g, ''); if (!/^[A-Za-z0-9+/]*={0,2}$/.test(v) || v.length % 4 !== 0) fail(); close('data');
+          const v = readText().replace(/\s+/g, ''); if (!/^[A-Za-z0-9+/]*={0,2}$/.test(v) || v.length % 4 !== 0) fail('BAD_SCALAR'); close('data');
           const buf = Buffer.from(v, 'base64'); dataBlobs.push(buf); return { t: 'data', v: buf };
         }
         case 'array': { const items = []; if (tag.selfClosing) return { t: 'array', items };
@@ -96,19 +102,22 @@ export function parsePlistXml(input) {
           for (;;) {
             skipMisc();
             if (s.startsWith('</', pos)) { close('dict'); return { t: 'dict', entries }; }
-            const k = readTag(); if (k.name !== 'key' || k.closing || k.attrs || k.selfClosing) fail();
-            const name = readText(); close('key'); if (seen.has(name)) fail(); seen.add(name);
+            const k = readTag(); if (k.name !== 'key' || k.closing || k.attrs || k.selfClosing) fail('BAD_DICT');
+            const name = readText(); close('key'); if (seen.has(name)) fail('DUPLICATE_KEY'); seen.add(name);
             entries.push([name, value(depth + 1)]);
           } }
-        default: return fail();
+        default: return fail('UNKNOWN_ELEMENT');
       }
     };
-    const head = readTag(); if (head.name !== 'plist' || head.closing || head.selfClosing || !/^version="1\.0"$/.test(head.attrs)) fail();
+    const head = readTag(); if (head.name !== 'plist' || head.closing || head.selfClosing || !/^version="1\.0"$/.test(head.attrs)) fail('NOT_PLIST_ROOT'); started = true;
     const root = value(1);
-    skipMisc(); const tail = readTag(); if (tail.name !== 'plist' || !tail.closing) fail();
-    skipMisc(); if (pos !== s.length) fail();
+    skipMisc(); const tail = readTag(); if (tail.name !== 'plist' || !tail.closing) fail('BAD_TAIL');
+    skipMisc(); if (pos !== s.length) fail('TRAILING_CONTENT');
     return { ok: true, root, dataBlobs };
-  } catch { return { ok: false, code: 'MALFORMED_XML' }; }
+  } catch (error) {
+    const reason = PARSE_REASONS.has(error?.reason) ? error.reason : (error?.message === 'entity' || error?.message === 'codepoint') ? 'BAD_ENTITY' : 'UNKNOWN';
+    return { ok: false, code: 'MALFORMED_XML', reason, at: atBucket(pos, length) };
+  }
 }
 
 // ---- content scan (conservative presence) ---------------------------------------------------------------------------------
@@ -261,13 +270,54 @@ export function inspectPolicyPath(target, fsApi) {
   return { state: 'UNKNOWN', reason: 'INSPECTION_ERROR' };
 }
 
+// ---- output-format diagnosis (RECORDING ONLY) -------------------------------------------------------------------------------------
+/**
+ * Describes WHAT KIND of text the readback produced, using only closed vocabularies, booleans and buckets — never raw text, line contents, keys,
+ * values, paths or names. It never feeds coverage, schema trust, the domain verdict or any admission decision: an uncertain format is BLOCKED
+ * exactly as before. In particular the `phrase_*` flags are generic word-presence hints; a "no profiles" sentence is NOT evidence that no
+ * managed policy applies, and nothing here treats it that way.
+ */
+export function diagnoseFormat(stdout) {
+  const d = { formatClass: 'UNKNOWN', size: '0', lines: '0', first: 'NONE', xmlDecl: false, plistOpen: false, plistClose: false, dict: false, leading: false, trailing: false,
+    extractedParses: false, nonText: false, noProfiles: false, errorWord: false, usageWord: false, sudoWord: false, reason: 'NONE', at: 'NONE', extractedFingerprint: 'NONE' };
+  try {
+    if (typeof stdout !== 'string') return { ...d, formatClass: 'NONE' };
+    if (stdout.length === 0) return { ...d, formatClass: 'EMPTY' };
+    d.size = stdout.length <= 256 ? '<=256' : stdout.length <= 4096 ? '<=4K' : stdout.length <= 65536 ? '<=64K' : stdout.length <= 1048576 ? '<=1M' : stdout.length <= MDM_LIMITS.maxBytes ? '<=8M' : 'OVER';
+    if (stdout.length > MDM_LIMITS.maxBytes) return { ...d, formatClass: 'TOO_LARGE' };
+    const lineCount = stdout.replace(/\n+$/, '').split('\n').length; d.lines = lineCount === 1 ? '1' : lineCount <= 5 ? '2-5' : lineCount <= 20 ? '6-20' : '21+';
+    const firstChar = stdout.trimStart()[0] ?? '';
+    d.first = firstChar === '' ? 'NONE' : firstChar === '<' ? 'LT' : /[A-Za-z]/.test(firstChar) ? 'LETTER' : /\d/.test(firstChar) ? 'DIGIT' : /[{[]/.test(firstChar) ? 'BRACE' : 'OTHER';
+    // eslint-disable-next-line no-control-regex
+    const control = (stdout.match(/[\u0000-\u0008\u000e-\u001f]/g) ?? []).length; d.nonText = control > 0 || (stdout.match(/\ufffd/g) ?? []).length > stdout.length * 0.05;
+    const lower = stdout.toLowerCase();
+    d.noProfiles = /\bno (configuration )?profiles\b/.test(lower); d.errorWord = /error|fail|denied|not permitted|unable/.test(lower);
+    d.usageWord = /usage|invalid (option|argument|command)|unknown (option|command)/.test(lower); d.sudoWord = /sudo|password/.test(lower);
+    const plistAt = lower.search(/<plist[\s>]/); d.plistOpen = plistAt >= 0; d.plistClose = lower.includes('</plist>'); d.dict = /<dict[\s/>]/.test(lower); d.xmlDecl = lower.trimStart().startsWith('<?xml');
+    const parsed = parsePlistXml(stdout);
+    if (parsed.ok) return { ...d, formatClass: 'XML_PLIST_VALID', extractedParses: true, extractedFingerprint: schemaFingerprint(parsed) };
+    d.reason = parsed.reason ?? 'UNKNOWN'; d.at = parsed.at ?? 'NONE';
+    if (d.nonText) return { ...d, formatClass: 'BINARY_OR_NONTEXT' };
+    if (d.plistOpen && d.plistClose) {
+      const declAt = lower.indexOf('<?xml'); const start = declAt >= 0 && declAt < plistAt ? declAt : plistAt; const end = lower.lastIndexOf('</plist>') + '</plist>'.length;
+      d.leading = stdout.slice(0, start).trim().length > 0; d.trailing = stdout.slice(end).trim().length > 0;
+      const extracted = parsePlistXml(stdout.slice(start, end)); d.extractedParses = extracted.ok;
+      if (extracted.ok) d.extractedFingerprint = schemaFingerprint(extracted);
+      d.formatClass = !extracted.ok ? 'XML_PLIST_MALFORMED_BODY' : d.leading && d.trailing ? 'XML_PLIST_WITH_LEADING_AND_TRAILING_TEXT' : d.leading ? 'XML_PLIST_WITH_LEADING_TEXT' : d.trailing ? 'XML_PLIST_WITH_TRAILING_TEXT' : 'XML_PLIST_UNEXPECTED_FAILURE';
+      return d;
+    }
+    d.formatClass = d.plistOpen ? 'XML_PLIST_TRUNCATED' : d.first === 'LT' ? 'XML_LIKE_OTHER' : 'PLAIN_TEXT';
+    return d;
+  } catch { return { ...d, formatClass: 'UNKNOWN' }; }
+}
+
 // ---- decision --------------------------------------------------------------------------------------------------------------------
 /**
  * @param {{ exitCode: unknown, signal?: unknown, timedOut?: boolean, stdout: unknown, home?: string, user?: string, syntheticFs?: object, schema?: object, now?: () => number }} input
  * Never throws; every failure is a BLOCKED word.
  */
 export function normalizeMdmReadback(input) {
-  const out = { runUtc: 'UNKNOWN', profilesExit: 'NONE', coverage: 'FAILED', form: 'NONE', claudeDomain: 'UNKNOWN', managedFiles: 'NOT_INSPECTED', domainScan: 'UNSCANNABLE', schema: 'ROOT=NONE', schemaTrust: 'NONE', hostMode: 'DISABLED', overall: 'BLOCKED_UNKNOWN' };
+  const out = { runUtc: 'UNKNOWN', profilesExit: 'NONE', coverage: 'FAILED', form: 'NONE', claudeDomain: 'UNKNOWN', managedFiles: 'NOT_INSPECTED', domainScan: 'UNSCANNABLE', schema: 'ROOT=NONE', schemaTrust: 'NONE', hostMode: 'DISABLED', overall: 'BLOCKED_UNKNOWN', format: diagnoseFormat(undefined) };
   try {
     try { out.runUtc = new Date((input.now ?? Date.now)()).toISOString().replace(/\.\d+Z$/, 'Z'); } catch { out.runUtc = 'UNKNOWN'; }
     // Policy files: ONLY against a synthetic in-memory filesystem. Without one nothing is inspected (there is no real-host fallback).
@@ -282,6 +332,7 @@ export function normalizeMdmReadback(input) {
     const statusOk = Number.isInteger(rc) && rc === 0 && !input.timedOut && !input.signal;
     if (Number.isInteger(rc)) out.profilesExit = String(rc);
     const stdout = typeof input.stdout === 'string' ? input.stdout : null;
+    out.format = diagnoseFormat(stdout ?? undefined); // recording only: nothing below reads it
     let parsed = { ok: false, code: 'MALFORMED_XML' }; let scan = { domain: false, reference: false, opaque: false };
     if (stdout === null || stdout.length === 0) out.form = stdout === null ? 'NONE' : 'EMPTY';
     else if (stdout.length > MDM_LIMITS.maxBytes) out.form = 'TOO_LARGE';
@@ -311,8 +362,12 @@ export function normalizeMdmReadback(input) {
 }
 
 export function formatReadback(r) {
+  const f = r.format ?? diagnoseFormat(undefined);
+  const detail = [`size=${f.size}`, `lines=${f.lines}`, `first=${f.first}`, `xml_decl=${f.xmlDecl}`, `plist_open=${f.plistOpen}`, `plist_close=${f.plistClose}`, `dict=${f.dict}`, `leading_text=${f.leading}`, `trailing_text=${f.trailing}`,
+    `extracted_parses=${f.extractedParses}`, `non_text=${f.nonText}`, `phrase_no_profiles=${f.noProfiles}`, `phrase_error=${f.errorWord}`, `phrase_usage=${f.usageWord}`, `phrase_sudo=${f.sudoWord}`, `parse_reason=${f.reason}`, `parse_at=${f.at}`].join(';');
   return [`RUN_UTC=${r.runUtc}`, `PROFILES_EXIT=${r.profilesExit}`, `COVERAGE=${r.coverage} (form=${r.form})`, `CLAUDE_DOMAIN=${r.claudeDomain} (scan=${r.domainScan})`,
-    `MANAGED_FILES=${r.managedFiles}`, `SCHEMA_FINGERPRINT=${r.schema}`, `SCHEMA_TRUST=${r.schemaTrust}`, `HOST_MODE=${r.hostMode}`, `OVERALL=${r.overall}`].join('\n');
+    `MANAGED_FILES=${r.managedFiles}`, `SCHEMA_FINGERPRINT=${r.schema}`, `SCHEMA_TRUST=${r.schemaTrust}`, `HOST_MODE=${r.hostMode}`, `OVERALL=${r.overall}`,
+    `FORMAT_CLASS=${f.formatClass}`, `FORMAT_DETAIL=${detail}`, `EXTRACTED_FINGERPRINT=${f.extractedFingerprint}`].join('\n');
 }
 
 /**

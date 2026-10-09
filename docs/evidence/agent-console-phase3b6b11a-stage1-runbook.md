@@ -20,8 +20,8 @@ This runbook **replaces** the command blocks in the 3B6B.10A, 10B and 10C docume
 | --- | --- |
 | Worktree | `~/Developer/worktrees/command-center-agent-console-p3b6b-negative-proof` |
 | Git commit to run | the 40-hex commit **named in Control Plane's written authorization** (this document cannot name the commit that contains it; the pre-check refuses anything else) |
-| Normalizer SHA-256 | `656c2f3940bc288bedca8f996434b7adc7b5cb4efbfd6f66f786412bbc1d7cec` |
-| Superseded (do not use) | `dd5d58ce47670e9b6db27848ea48ecdf39442d397992bc087897e0ecbf4d1626` |
+| Normalizer SHA-256 | `31aeaddc984b4b6091b3cca8c9030b5769adbb2648197ae165568dbd988b56a5` |
+| Superseded (do not use) | `656c2f3940bc288bedca8f996434b7adc7b5cb4efbfd6f66f786412bbc1d7cec` (Stage 1 run #1), `dd5d58ce47670e9b6db27848ea48ecdf39442d397992bc087897e0ecbf4d1626` |
 | Node executable | `/opt/homebrew/Cellar/node@20/20.20.2/bin/node` (the real file behind `/opt/homebrew/opt/node@20/bin/node`; regular file, not a symlink, owner `augusliang`, mode `r-xr-xr-x`) |
 | Node version / SHA-256 | `v20.20.2` / `edc0c98fee8947a04913cb45cf80e7341653b0ea9e907ff3dc50d7fdaedda1d2` |
 | Git | `/usr/bin/git` |
@@ -50,7 +50,7 @@ Then paste:
   (( ${#STAGE1_WANT_HEAD} == 40 )) && [[ "$STAGE1_WANT_HEAD" != *[^0-9a-f]* ]] || fail want_head_format
   [[ "$(/usr/bin/git rev-parse HEAD)" == "$STAGE1_WANT_HEAD" ]] || fail head_mismatch
   [[ -z "$(/usr/bin/git status --porcelain)" ]] || fail worktree_not_clean
-  [[ "$(/usr/bin/shasum -a 256 scripts/phase3b6bMdmReadbackNormalizer.mjs | /usr/bin/cut -d' ' -f1)" == 656c2f3940bc288bedca8f996434b7adc7b5cb4efbfd6f66f786412bbc1d7cec ]] || fail normalizer_hash
+  [[ "$(/usr/bin/shasum -a 256 scripts/phase3b6bMdmReadbackNormalizer.mjs | /usr/bin/cut -d' ' -f1)" == 31aeaddc984b4b6091b3cca8c9030b5769adbb2648197ae165568dbd988b56a5 ]] || fail normalizer_hash
   [[ -f /opt/homebrew/Cellar/node@20/20.20.2/bin/node && ! -L /opt/homebrew/Cellar/node@20/20.20.2/bin/node && -x /opt/homebrew/Cellar/node@20/20.20.2/bin/node ]] || fail node_path
   [[ "$(/opt/homebrew/Cellar/node@20/20.20.2/bin/node --version)" == v20.20.2 ]] || fail node_version
   [[ "$(/usr/bin/shasum -a 256 /opt/homebrew/Cellar/node@20/20.20.2/bin/node | /usr/bin/cut -d' ' -f1)" == edc0c98fee8947a04913cb45cf80e7341653b0ea9e907ff3dc50d7fdaedda1d2 ]] || fail node_hash
@@ -85,7 +85,7 @@ How it behaves:
 - An `EXIT` trap runs `sudo -k` on every way out (normal end, `STOP`, Ctrl-C, terminal hang-up). Ctrl-C/terminate/hang-up turn into an exit, so no later line of the block can run.
 - The block is a subshell: if you see a continuation prompt (`subsh>`, `cmdsubst>`) the paste was incomplete — press **Ctrl-C** and do not type anything else.
 
-## Expected safe output (exactly nine lines)
+## Expected safe output (exactly twelve lines)
 
 ```
 RUN_UTC=2026-…Z
@@ -97,20 +97,23 @@ SCHEMA_FINGERPRINT=ROOT=dict;ROOT_KEYS=1-4;COMPUTERLEVEL=array;SPELLING=DOCUMENT
 SCHEMA_TRUST=NONE
 HOST_MODE=DISABLED
 OVERALL=BLOCKED_REAL_HOST_MODE_DISABLED
+FORMAT_CLASS=XML_PLIST_VALID
+FORMAT_DETAIL=size=<=4K;lines=6-20;first=LT;xml_decl=true;plist_open=true;plist_close=true;dict=true;leading_text=false;trailing_text=false;extracted_parses=true;non_text=false;phrase_no_profiles=false;phrase_error=false;phrase_usage=false;phrase_sudo=false;parse_reason=NONE;parse_at=NONE
+EXTRACTED_FINGERPRINT=ROOT=dict;ROOT_KEYS=1-4;COMPUTERLEVEL=array;SPELLING=DOCUMENTED;OTHER_ROOT_KEYS=0;ENTRIES=1-4;ENTRIES_ALL_DICT=true;ENTRIES_HAVE_PROFILEIDENTIFIER=true
 ```
 
 - `scan=SCANNED` with `UNKNOWN` means the output was read and no Claude-domain mention was found; it still proves nothing about completeness. `PRESENT` / `BLOCKED_PRESENT` means the Claude domain was mentioned.
-- If `profiles` prints plain text instead of XML: `COVERAGE=PARTIAL (form=MALFORMED)` and `SCHEMA_FINGERPRINT=ROOT=NONE`.
+- If `profiles` prints something that is not a clean XML property list (as in Stage 1 run #1: `PROFILES_EXIT=0`, `COVERAGE=PARTIAL (form=MALFORMED)`, `SCHEMA_FINGERPRINT=ROOT=NONE`), the three `FORMAT_*` lines say what kind of text it was — plain text, XML with extra text before or after it, truncated XML, or a broken body — using fixed words, yes/no flags and size buckets only. They are **recording only**: they never change the verdict, and a "no profiles" style sentence is not evidence that no managed policy applies. See `agent-console-phase3b6b11b-mdm-output-diagnosis.md`.
 - Stage 1 cannot print `CURRENT_ABSENCE_OBSERVED`, `MANAGED_POLICY_RUNTIME_ADMISSION_PASS` or `LIVE_EXECUTION_AUTHORIZED`; `SYNTHETIC_ABSENCE_OBSERVED` is unreachable from the command line. It can never authorize live inference.
 
 ## What to copy, what never to share
 
-- **Copy to the assistant/Control Plane:** only the nine lines, as text.
-- **Never share:** the administrator password; raw profile text; screenshots of the Terminal window or its scrollback; the contents of the `raw` variable; any output line outside the nine lines (errors, stack traces, prompts).
+- **Copy to the assistant/Control Plane:** only the twelve lines, as text.
+- **Never share:** the administrator password; raw profile text; screenshots of the Terminal window or its scrollback; the contents of the `raw` variable; any output line outside the twelve lines (errors, stack traces, prompts).
 
 ## Stop conditions
 
-Stop and report in words (not by pasting the output) if: Step 0 does not print `PRECHECK=PASS`; the terminal is not Terminal.app; `sudo -v` shows anything other than one `Password:` prompt; after pressing Return at a password prompt you see a normal shell prompt, `command not found`, or your typed characters echoed (treat the password as exposed — close the window and change it in System Settings); nothing returns after about a minute; the output is not exactly the nine expected lines; `PROFILES_EXIT` is not `0`; or `OVERALL` is `BLOCKED_PRESENT`. Do not re-run without Control Plane's say-so.
+Stop and report in words (not by pasting the output) if: Step 0 does not print `PRECHECK=PASS`; the terminal is not Terminal.app; `sudo -v` shows anything other than one `Password:` prompt; after pressing Return at a password prompt you see a normal shell prompt, `command not found`, or your typed characters echoed (treat the password as exposed — close the window and change it in System Settings); nothing returns after about a minute; the output is not exactly the twelve expected lines; `PROFILES_EXIT` is not `0`; or `OVERALL` is `BLOCKED_PRESENT`. Do not re-run without Control Plane's say-so.
 
 ## Interruption, partial execution and manual recovery
 
@@ -119,7 +122,7 @@ Stop and report in words (not by pasting the output) if: Step 0 does not print `
 | Ctrl-C or `STOP` before/at the password prompt | Nothing privileged ran; the `EXIT` trap already ran `sudo -k` | Nothing more |
 | Interrupted during the capture | The subshell exited, the trap ran `sudo -k`, `raw` is gone, nothing printed | Treat as blocked; do the recovery check below |
 | Terminal closed or crashed mid-run | The trap may not have run; admin credentials may stay cached for up to 5 minutes | Open a new Terminal window and do the recovery below |
-| Fewer than nine lines, or extra text | Unreliable | Do not paste it; report in words |
+| Fewer than twelve lines, or extra text | Unreliable | Do not paste it; report in words |
 | Incomplete paste (`subsh>` prompt) | Nothing ran | Ctrl-C |
 
 Recovery (no password needed):

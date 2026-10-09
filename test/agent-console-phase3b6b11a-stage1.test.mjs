@@ -80,6 +80,8 @@ const [wantHead, precheck, main, recovery] = blocks;
 test('runbook: pins the NEW normalizer hash and the verified absolute Node identity; the old hash appears only as superseded', () => {
   assert.equal(blocks.length, 4);
   assert.notEqual(NORMALIZER_SHA, OLD_SHA, 'the normalizer changed, so the old hash cannot apply');
+  const RUN1_SHA = '656c2f3940bc288bedca8f996434b7adc7b5cb4efbfd6f66f786412bbc1d7cec'; assert.notEqual(NORMALIZER_SHA, RUN1_SHA, 'the normalizer changed after Stage 1 run #1');
+  assert.ok(DOC.split('\n').filter(l => l.includes(RUN1_SHA)).every(l => /Superseded/.test(l)), 'the run #1 hash is only ever listed as superseded'); assert.equal(precheck.includes(RUN1_SHA), false);
   const hashLines = DOC.split('\n').filter(l => l.includes(OLD_SHA)); assert.ok(hashLines.length >= 1); assert.ok(hashLines.every(l => /Superseded|old normalizer|must not be reused/i.test(l)), 'the old hash is only ever mentioned as superseded');
   assert.equal(precheck.includes(OLD_SHA.slice(0, 12)), false); assert.equal(main.includes(OLD_SHA.slice(0, 12)), false);
   assert.equal(DOC.includes(NORMALIZER_SHA), true, 'the document states the current normalizer SHA-256'); assert.ok(precheck.includes(NORMALIZER_SHA));
@@ -106,7 +108,7 @@ test('runbook: the privileged block orders visible sudo -v before non-interactiv
 });
 
 test('runbook: interruption, partial execution and manual recovery are documented, and no step asks for the password to be shared', () => {
-  for (const phrase of ['subsh>', 'cmdsubst>', 'Ctrl-C', 'EXIT', 'sudo -k', 'sudo -K', 'NOT_CACHED', 'STILL_CACHED', 'Terminal.app', 'nine lines', 'PRECHECK=PASS', 'exact commit', 'STAGE1_WANT_HEAD', 'not authorized', 'diagnostic only']) assert.ok(DOC.toLowerCase().includes(phrase.toLowerCase()), phrase);
+  for (const phrase of ['subsh>', 'cmdsubst>', 'Ctrl-C', 'EXIT', 'sudo -k', 'sudo -K', 'NOT_CACHED', 'STILL_CACHED', 'Terminal.app', 'twelve lines', 'PRECHECK=PASS', 'exact commit', 'STAGE1_WANT_HEAD', 'not authorized', 'diagnostic only']) assert.ok(DOC.toLowerCase().includes(phrase.toLowerCase()), phrase);
   assert.match(DOC, /Never share:\*\*[^\n]*password/); assert.doesNotMatch(DOC, /send (me|us|the assistant) (your|the) password/i);
   assert.ok(recovery.includes('sudo -k') && recovery.includes('sudo -K') && recovery.includes('sudo -n true'));
   assert.equal(/CURRENT_ABSENCE_OBSERVED/.test(main + precheck), false);
@@ -155,11 +157,11 @@ function stubbed(block, { sudo, profiles, repo }) {
 const runBlock = (block, env) => spawnSync('/bin/zsh', ['-f', '-c', block], { encoding: 'utf8', shell: false, cwd: os.tmpdir(), env: { PATH: '/usr/bin:/bin', ...env }, timeout: 60_000 });
 const lines = text => text.trim().split('\n').filter(Boolean);
 
-test('blocks, normal path with FAKE sudo/profiles: nine safe lines only, ordered sudo calls, credentials dropped, no raw text', () => {
+test('blocks, normal path with FAKE sudo/profiles: twelve safe lines only, ordered sudo calls, credentials dropped, no raw text', () => {
   const dir = fixtureDir(); try {
     const fakes = installFakes(dir); const env = { FAKE_LOG: path.join(dir, 'log'), FAKE_STATE: path.join(dir, 'cached'), FAKE_MODE: 'ok', rc: '0', raw: 'stale-junk' };
     const r = runBlock(stubbed(main, { ...fakes, repo: ROOT }), env);
-    assert.equal(r.status, 0, r.stderr); const out = lines(r.stdout); assert.equal(out.length, 9, r.stdout);
+    assert.equal(r.status, 0, r.stderr); const out = lines(r.stdout); assert.equal(out.length, 12, r.stdout);
     assert.ok(out.includes('PROFILES_EXIT=0') && out.includes('OVERALL=BLOCKED_REAL_HOST_MODE_DISABLED') && out.includes('MANAGED_FILES=NOT_INSPECTED') && out.includes('SCHEMA_TRUST=NONE'));
     assert.ok(out.some(l => /^SCHEMA_FINGERPRINT=.*COMPUTERLEVEL=array;SPELLING=DOCUMENTED;/.test(l)));
     for (const leak of ['SECRET', 'com.example', 'stale-junk']) assert.equal(r.stdout.includes(leak) || r.stderr.includes(leak), false, leak);

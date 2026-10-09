@@ -86,7 +86,7 @@ test('A: the command line runs correctly with filesystem access DENIED by Node\'
   assert.match(probe.stdout, /ERR_ACCESS_DENIED/, `the permission model must deny host reads: ${probe.stdout}${probe.stderr}`);
   const ok = sandbox([SCRIPT, '--rc=0'], COMPLETE);
   assert.equal(ok.status, 0, ok.stderr); const lines = ok.stdout.trim().split('\n');
-  assert.equal(lines.length, 9); assert.ok(lines.includes('MANAGED_FILES=NOT_INSPECTED')); assert.ok(lines.includes('HOST_MODE=DISABLED')); assert.ok(lines.includes('OVERALL=BLOCKED_REAL_HOST_MODE_DISABLED'));
+  assert.equal(lines.length, 12); assert.ok(lines.includes('MANAGED_FILES=NOT_INSPECTED')); assert.ok(lines.includes('HOST_MODE=DISABLED')); assert.ok(lines.includes('OVERALL=BLOCKED_REAL_HOST_MODE_DISABLED'));
   assert.ok(lines.includes('SCHEMA_TRUST=NONE')); assert.ok(lines.some(l => l.startsWith('SCHEMA_FINGERPRINT=ROOT=dict;')));
   for (const args of [[SCRIPT], [SCRIPT, '--rc=0', '--real-host'], [SCRIPT, '--rc=abc'], [SCRIPT, '--fixture=/etc/hosts', '--rc=0']]) {
     const r = sandbox(args, COMPLETE); assert.equal(r.status, 0, r.stderr); assert.doesNotMatch(r.stdout, /OVERALL=(SYNTHETIC_ABSENCE_OBSERVED|CURRENT_ABSENCE_OBSERVED)/); assert.match(r.stdout, /MANAGED_FILES=NOT_INSPECTED/);
@@ -113,7 +113,7 @@ test('B: SYNTHETIC_TEST_SCHEMA and CONTROL_PLANE_APPROVED_SCHEMA are distinct br
   const synthetic = mdm.createSyntheticTestSchema(DESC);
   const r = run({ schema: synthetic, syntheticFs: synth() });
   assert.deepEqual([r.schemaTrust, r.hostMode, r.coverage, r.overall], ['SYNTHETIC_TEST_SCHEMA', 'SYNTHETIC', 'COMPLETE', SYNTH_PASS]);
-  assert.match(mdm.formatReadback(r), /SCHEMA_TRUST=SYNTHETIC_TEST_SCHEMA\nHOST_MODE=SYNTHETIC\nOVERALL=SYNTHETIC_ABSENCE_OBSERVED$/);
+  assert.match(mdm.formatReadback(r), /SCHEMA_TRUST=SYNTHETIC_TEST_SCHEMA\nHOST_MODE=SYNTHETIC\nOVERALL=SYNTHETIC_ABSENCE_OBSERVED\nFORMAT_CLASS=XML_PLIST_VALID\nFORMAT_DETAIL=[^\n]+\nEXTRACTED_FINGERPRINT=[^\n]+$/);
   assert.throws(() => mdm.createSyntheticTestSchema({ ...DESC, inventoryKey: '' }), TypeError); assert.throws(() => mdm.createSyntheticTestSchema(null), TypeError);
   assert.equal(Object.isFrozen(synthetic), true); assert.throws(() => { synthetic.kind = 'CONTROL_PLANE_APPROVED_SCHEMA'; }, TypeError);
   assert.equal(run({ schema: synthetic, syntheticFs: synth() }).schemaTrust, 'SYNTHETIC_TEST_SCHEMA');
