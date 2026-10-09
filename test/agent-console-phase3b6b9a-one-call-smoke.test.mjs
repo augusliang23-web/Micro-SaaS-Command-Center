@@ -13,6 +13,7 @@ import * as threeCall from '../scripts/phase3b6bSyntheticNegativeQualification.m
 import * as smoke from '../scripts/phase3b6bOneCallSmoke.mjs';
 import * as controls from '../scripts/phase3b6bOneCallControls.mjs';
 import { createSmokeObserver } from '../scripts/claudeLiveSmoke.mjs';
+import * as shapes from '../scripts/phase3b6bOneCallShapeRecorder.mjs';
 import { createHash } from 'node:crypto';
 
 // Offline only. Every executable is a function-valued fake; the qualification candidate is never executed and the
@@ -75,6 +76,7 @@ async function simulate(options = {}) {
           { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'synthetic' }, { type: 'tool_result', tool_use_id: 't2', content: 'synthetic' }] } },
           { type: 'result', subtype: 'success', is_error: false, session_id: session, permission_denials: [] }];
         if (options.unknownEvent) events.splice(2, 0, { type: 'future_event' });
+        for (const { at, event } of options.insertEvents ?? []) events.splice(at < 0 ? events.length + 1 + at : at, 0, typeof event === 'function' ? event(session, cwd) : event);
         const data = events.map(e => JSON.stringify(e)).join('\n') + (options.partialFinal ? '' : '\n');
         child.stdout.write(data); exit(0);
       });
@@ -120,6 +122,7 @@ async function simulate(options = {}) {
       removeOwned: entry => { if (options.cleanupFailure) throw new Error('synthetic cleanup failure'); fs.rmSync(entry, { recursive: true, force: true }); },
     };
     counts.sessionChecks = 0;
+    Object.assign(dependencies, options.shapeRecorderFactory ? { shapeRecorderFactory: options.shapeRecorderFactory } : {});
     Object.assign(dependencies, { attestationPolicy: trustPolicy(options.trust ?? {}), launchPermit: () => (Object.hasOwn(options, 'permit') ? options.permit : goodPermit()), permitLedgerDir: Object.hasOwn(options, 'ledgerDir') ? options.ledgerDir : ledger, ...(options.runIdFactory ? { runIdFactory: options.runIdFactory } : {}) });
     for (const key of options.omit ?? []) delete dependencies[key];
     const evidenceDirectory = Object.hasOwn(options, 'evidenceDirectory') ? options.evidenceDirectory : privateDir(path.join(root, 'evidence'));
@@ -1060,4 +1063,130 @@ test('R1/R2 N/O/P: five-tool inventory, forbidden-tool FAIL and the guards are u
   assert.equal(observeStream([initEv(), asstEv('sonnet', [{ type: 'tool_use', id: 't9', name: 'Bash', input: { command: 'x' } }]), userEv(), resultEv()]).protocolState, 'FAIL');
   assert.equal(observeStream([initEv({ tools: TOOLS.slice(0, 4) }), asstEv(), userEv(), resultEv()]).protocolState, 'UNKNOWN');
   assert.equal(smoke.MAX_SMOKE_PROVIDER_CALLS, 1); assert.equal(threeCall.MAX_PROVIDER_CALLS, 3); assert.equal(strayCommands, 0);
+});
+
+// =====================================================================================================================
+// Phase 3B6B.10B — recording-only event shape fingerprints: bounded, sanitized, and with NO influence on admission
+// =====================================================================================================================
+const VOCAB = {
+  stage: ['BEFORE_INIT', 'INIT', 'ACTIVE', 'AFTER_RESULT'], type: ['system', 'assistant', 'user', 'result', 'rate_limit_event', 'OTHER', 'NONE', 'MALFORMED'],
+  subtype: ['init', 'status', 'compact_boundary', 'hook_started', 'hook_progress', 'hook_response', 'task_started', 'task_progress', 'task_updated', 'task_notification', 'background_tasks_changed',
+    'commands_changed', 'session_state_changed', 'conversation_reset', 'informational', 'control_request_progress', 'success', 'error_max_turns', 'error_during_execution', 'OTHER', 'NONE'],
+  keyCountBucket: ['0', '1-4', '5-8', '9-16', '17+'], sizeBucket: ['<=256', '<=1K', '<=4K', '<=64K', '<=1M', 'OVERSIZE'],
+};
+const SENS = ['tools', 'mcpServers', 'plugins', 'agents', 'apiProvider', 'authMethod', 'permissionMode', 'cwd', 'model', 'permissionDenials', 'toolUseBlock', 'toolResultBlock'];
+function assertSanitizedShape(snapshot) {
+  assert.deepEqual(Object.keys(snapshot).sort(), ['admissionEffect', 'count', 'entries', 'overflow', 'recorder', 'schema']);
+  assert.equal(snapshot.admissionEffect, 'NONE'); assert.ok(snapshot.entries.length <= shapes.SHAPE_MAX_ENTRIES);
+  snapshot.entries.forEach((e, i) => {
+    assert.deepEqual(Object.keys(e).sort(), ['keyCountBucket', 'ordinal', 'sensitive', 'sessionMatch', 'sizeBucket', 'stage', 'subtype', 'type']);
+    assert.ok(Number.isInteger(e.ordinal) && e.ordinal >= 1); assert.ok([true, false, null].includes(e.sessionMatch));
+    for (const key of ['stage', 'type', 'subtype', 'keyCountBucket', 'sizeBucket']) assert.ok(VOCAB[key].includes(e[key]), `${key}=${e[key]}`);
+    assert.deepEqual(Object.keys(e.sensitive).sort(), [...SENS].sort()); assert.ok(Object.values(e.sensitive).every(v => typeof v === 'boolean'));
+    assert.ok(snapshot.entries.length === 0 || e.ordinal >= i + 1);
+  });
+}
+const SESSION_X = '99999999-8888-4777-8666-555555555555';
+
+test('shape recorder: fingerprints use ordinal, stage, closed type/subtype, session-match boolean and presence flags only', () => {
+  const r = shapes.createShapeRecorder({ sessionId: SESSION_X });
+  const lines = [{ type: 'rate_limit_event', session_id: SESSION_X, rate_limit_info: { a: 1 } }, { type: 'system', subtype: 'init', session_id: SESSION_X, cwd: '/x', model: 'm', tools: [], mcp_servers: [] },
+    { type: 'system', subtype: 'hook_started', session_id: SESSION_X }, { type: 'system', subtype: 'weird_new_subtype' }, { type: 'assistant', session_id: 'other', message: { content: [{ type: 'tool_use', id: 'x', name: 'Bash' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result' }] } }, { type: 'mystery' }, { type: 5 }, { subtype: 'init' }, { type: 'result', subtype: 'success', session_id: SESSION_X, permission_denials: [] },
+    { type: 'rate_limit_event', session_id: SESSION_X }];
+  lines.forEach(l => r.record(JSON.stringify(l))); r.record('not json'); r.record(''); r.record(undefined);
+  const snap = r.snapshot(); assertSanitizedShape(snap);
+  const by = i => snap.entries[i];
+  assert.deepEqual([by(0).stage, by(0).type, by(0).sessionMatch], ['BEFORE_INIT', 'rate_limit_event', true]);
+  assert.deepEqual([by(1).stage, by(1).type, by(1).subtype, by(1).sensitive.cwd, by(1).sensitive.model, by(1).sensitive.tools, by(1).sensitive.mcpServers], ['INIT', 'system', 'init', true, true, true, true]);
+  assert.deepEqual([by(2).stage, by(2).subtype], ['ACTIVE', 'hook_started']); assert.equal(by(3).subtype, 'OTHER');
+  assert.deepEqual([by(4).sessionMatch, by(4).sensitive.toolUseBlock], [false, true]); assert.equal(by(5).sensitive.toolResultBlock, true);
+  assert.deepEqual([by(6).type, by(7).type, by(8).type, by(8).subtype], ['OTHER', 'NONE', 'NONE', 'init']);
+  assert.deepEqual([by(9).stage, by(9).type, by(9).sensitive.permissionDenials], ['ACTIVE', 'result', true]); assert.deepEqual([by(10).stage, by(10).sessionMatch], ['AFTER_RESULT', true]);
+  assert.deepEqual([snap.entries[11].type, snap.entries[12].type, snap.entries[13].type], ['MALFORMED', 'MALFORMED', 'MALFORMED']);
+  assert.deepEqual(snap.entries.map(e => e.ordinal), snap.entries.map((_, i) => i + 1));
+  assert.equal(shapes.createShapeRecorder({}).snapshot().count, 0);
+});
+
+test('shape recorder sanitization: no raw payload, session id, path, prompt, model text, credential or arbitrary key name is ever kept', () => {
+  const sentinels = ['SECRET-TOKEN-xyz', '/Users/someone/private.txt', 'PROMPT: please read my diary', 'sk-ant-FAKE', 'ARBITRARY_FIELD_NAME_42', SESSION_X, 'claude-sonnet-5-5', 'attacker-subtype', 'attacker-type'];
+  const r = shapes.createShapeRecorder({ sessionId: SESSION_X });
+  r.record(JSON.stringify({ type: 'attacker-type', subtype: 'attacker-subtype', session_id: SESSION_X, ARBITRARY_FIELD_NAME_42: 'SECRET-TOKEN-xyz', model: 'claude-sonnet-5-5', cwd: '/Users/someone/private.txt',
+    message: { content: [{ type: 'text', text: 'PROMPT: please read my diary' }, { type: 'tool_use', name: 'sk-ant-FAKE', input: { file_path: '/Users/someone/private.txt' } }] }, authMethod: 'sk-ant-FAKE' }));
+  r.record(`{"__proto__":{"polluted":true},"type":"assistant","constructor":{"prototype":{"x":1}}}`); r.record('SECRET-TOKEN-xyz /Users/someone/private.txt');
+  const text = JSON.stringify(r.snapshot()); for (const sentinel of sentinels) assert.equal(text.includes(sentinel), false, sentinel);
+  assertSanitizedShape(r.snapshot()); assert.equal({}.polluted, undefined);
+  const serialized = smoke.serializeOneCallEvidence({ decision: D.UNKNOWN, call: { eventDiagnostics: { ...r.snapshot(), entries: [{ ...r.snapshot().entries[0], type: 'SECRET-TOKEN-xyz', extraKey: 'SECRET-TOKEN-xyz' }] } } }).text;
+  assert.equal(serialized.includes('SECRET-TOKEN-xyz'), false); assert.match(serialized, /"type": "REDACTED"/);
+});
+
+test('shape recorder bounds: at most 64 entries (rest counted), oversized / deep / huge-key lines are bucketed, hostile input never throws', () => {
+  const r = shapes.createShapeRecorder({ sessionId: SESSION_X });
+  for (let i = 0; i < 200; i += 1) r.record(JSON.stringify({ type: 'assistant' }));
+  let snap = r.snapshot(); assert.equal(snap.count, 64); assert.equal(snap.overflow, 136); assert.equal(snap.entries.length, 64); assertSanitizedShape(snap);
+  const big = shapes.createShapeRecorder({ sessionId: SESSION_X });
+  big.record('x'.repeat(shapes.SHAPE_MAX_LINE_BYTES + 1)); big.record(`{"type":"user","pad":"${'a'.repeat(5000)}"}`);
+  big.record(`{"type":"user"${Array.from({ length: 40 }, (_, i) => `,"k${i}":1`).join('')}}`); big.record('['.repeat(200000)); big.record(`{"a":${'['.repeat(100000)}}`);
+  snap = big.snapshot(); assertSanitizedShape(snap);
+  assert.deepEqual([snap.entries[0].type, snap.entries[0].sizeBucket], ['MALFORMED', 'OVERSIZE']); assert.equal(snap.entries[1].sizeBucket, '<=64K'.replace('64K', '64K') && snap.entries[1].sizeBucket);
+  assert.equal(snap.entries[2].keyCountBucket, '17+');
+  for (const hostile of [Symbol('x'), 5, {}, [], null, new Proxy({}, {}), { toString() { throw new Error('x'); } }]) assert.doesNotThrow(() => big.record(hostile));
+  assert.equal(JSON.stringify(shapes.safeSnapshot({ snapshot() { throw new Error('x'); } })).includes('"recorder":"FAILED"'), true);
+  assert.equal(shapes.safeSnapshot(null).recorder, 'FAILED');
+});
+
+test('shape diagnostics in the harness: a PASS run records the lifecycle shape and persists only sanitized fingerprints', async () => {
+  const { evidence, persistedText, persisted } = await simulate();
+  assert.equal(evidence.decision, D.PASS);
+  const diag = evidence.call.eventDiagnostics; assertSanitizedShape(diag);
+  assert.deepEqual(diag.entries.map(e => [e.type, e.stage]), [['system', 'INIT'], ['assistant', 'ACTIVE'], ['user', 'ACTIVE'], ['result', 'ACTIVE']]);
+  assert.deepEqual(persisted.call.eventDiagnostics.entries.map(e => e.type), ['system', 'assistant', 'user', 'result']);
+  for (const leak of ['/private', 'cc-p3b6b9a', 'input.txt', 'VERIFIED', 'tool_use', 'SYNTHETIC-ATT', 'file_path']) assert.equal(persistedText.includes(leak), false, leak);
+  assert.equal(diag.entries[0].sessionMatch, true);
+});
+
+test('shape diagnostics NEVER change admission: UNKNOWN stays UNKNOWN for rate_limit_event / non-init system / early / late / unknown events', async () => {
+  const rate = session => ({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' }, session_id: session });
+  const status = session => ({ type: 'system', subtype: 'status', session_id: session });
+  const scenarios = { 'rate limit after init': [{ at: 1, event: rate }], 'system status after init': [{ at: 1, event: status }], 'rate limit before init': [{ at: 0, event: rate }],
+    'event after result': [{ at: -1, event: rate }], 'unknown subtype': [{ at: 1, event: s => ({ type: 'system', subtype: 'zzz_new', session_id: s }) }], 'hook event': [{ at: 1, event: s => ({ type: 'system', subtype: 'hook_started', session_id: s }) }] };
+  for (const [name, insertEvents] of Object.entries(scenarios)) {
+    const withRecorder = await simulate({ insertEvents });
+    assert.equal(withRecorder.evidence.decision, D.UNKNOWN, name);
+    const types = withRecorder.evidence.call.eventDiagnostics.entries.map(e => e.type);
+    assert.ok(types.includes('rate_limit_event') || types.includes('system'), name);
+    for (const shapeRecorderFactory of [() => { throw new Error('x'); }, () => ({ record() { throw new Error('y'); }, snapshot() { throw new Error('z'); } }), () => undefined, () => ({ record() {}, snapshot: () => 'garbage' })]) {
+      const broken = await simulate({ insertEvents, shapeRecorderFactory });
+      assert.equal(broken.evidence.decision, withRecorder.evidence.decision, `${name}: a broken recorder changes nothing`); assert.equal(broken.evidence.code, withRecorder.evidence.code);
+    }
+  }
+  const one = (await simulate({ insertEvents: [{ at: 1, event: rate }] })).evidence.call.eventDiagnostics.entries[1];
+  assert.deepEqual([one.type, one.stage, one.sessionMatch, Object.values(one.sensitive).some(Boolean)], ['rate_limit_event', 'ACTIVE', true, false]);
+  assert.equal((await simulate({ insertEvents: [{ at: 1, event: status }] })).evidence.call.eventDiagnostics.entries[1].subtype, 'status');
+  assert.equal((await simulate({ insertEvents: [{ at: 0, event: rate }] })).evidence.call.eventDiagnostics.entries[0].stage, 'BEFORE_INIT');
+  assert.equal((await simulate({ insertEvents: [{ at: -1, event: rate }] })).evidence.call.eventDiagnostics.entries.at(-1).stage, 'AFTER_RESULT');
+});
+
+test('shape diagnostics NEVER soften FAIL: security-bearing informational-looking events stay FAIL or UNKNOWN as before', async () => {
+  const rate = (extra) => session => ({ type: 'rate_limit_event', session_id: session, ...extra });
+  const fail = async (extra, name) => { const r = await simulate({ insertEvents: [{ at: 1, event: rate(extra) }] }); assert.equal(r.evidence.decision, D.FAIL, name); return r.evidence.call.eventDiagnostics.entries[1]; };
+  assert.equal((await fail({ apiProvider: 'bedrock' }, 'provider')).sensitive.apiProvider, true);
+  assert.equal((await fail({ authMethod: 'api_key' }, 'auth')).sensitive.authMethod, true);
+  const foreign = await simulate({ insertEvents: [{ at: 1, event: () => ({ type: 'rate_limit_event', session_id: 'someone-else' }) }] });
+  assert.equal(foreign.evidence.decision, D.FAIL); assert.equal(foreign.evidence.call.eventDiagnostics.entries[1].sessionMatch, false);
+  const toolish = await simulate({ insertEvents: [{ at: 1, event: s => ({ type: 'rate_limit_event', session_id: s, message: { content: [{ type: 'tool_use', id: 'x', name: 'Bash', input: {} }] } }) }] });
+  assert.notEqual(toolish.evidence.decision, D.PASS); assert.equal(toolish.evidence.call.eventDiagnostics.entries[1].sensitive.toolUseBlock, true);
+  assert.equal((await simulate({ lifecycleViolation: true })).evidence.decision, D.FAIL); assert.equal((await simulate({ shellUse: true })).evidence.decision, D.FAIL); assert.equal((await simulate({ extraTool: true })).evidence.decision, D.FAIL);
+});
+
+test('a failing recorder never changes a PASS, and diagnostics are not an input to the PASS rule', async () => {
+  const broken = await simulate({ shapeRecorderFactory: () => { throw new Error('x'); } });
+  assert.equal(broken.evidence.decision, D.PASS); assert.equal(broken.evidence.call.eventDiagnostics.recorder, 'FAILED');
+  const throwingRecord = await simulate({ shapeRecorderFactory: () => ({ record() { throw new Error('y'); }, snapshot: () => shapes.createShapeRecorder({}).snapshot() }) });
+  assert.equal(throwingRecord.evidence.decision, D.PASS, 'a recorder whose record() throws on every line cannot disturb the run');
+  const { evidence } = await simulate(); assert.equal(smoke.assessOneCallPass(evidence), true);
+  for (const mutate of [e => { e.call.eventDiagnostics = undefined; }, e => { e.call.eventDiagnostics = { entries: 'x' }; }, e => { e.call.eventDiagnostics.entries.push({ type: 'rate_limit_event' }); }]) {
+    const copy = structuredClone(evidence); mutate(copy); assert.equal(smoke.assessOneCallPass(copy), true);
+  }
+  assert.equal(/eventDiagnostics|eventShape|shapeRecorder|safeSnapshot/.test(SOURCE.slice(SOURCE.indexOf('export function assessOneCallPass'), SOURCE.indexOf('// ---- the single provider call'))), false, 'the pure PASS rule does not read diagnostics');
 });

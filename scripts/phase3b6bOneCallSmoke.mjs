@@ -23,6 +23,7 @@ import {
   DEFAULT_TRUST_POLICY, EVIDENCE_CLASS_LOCAL, ONE_CALL_SCOPE_ID, bindingDigest, consumeLaunchPermit, defaultRunId, hashIdentity, isValidRunId,
   publishEvidenceBundle, validateAttestation, validateLaunchPermit,
 } from './phase3b6bOneCallControls.mjs';
+import { createShapeRecorder, safeSnapshot } from './phase3b6bOneCallShapeRecorder.mjs';
 import { completeLifecycleProof, lifecyclePostconditionsComplete, lifecycleProofComplete } from './hostTcbLifecycleObserver.mjs';
 
 // One-call budget. Independent of (and never derived from) the full-suite budget of the three-call qualification.
@@ -49,7 +50,7 @@ const RANK = Object.freeze({ PASS: 0, UNKNOWN: 1, BLOCKED: 2, FAIL: 3 });
 const KNOWN_DEPENDENCIES = Object.freeze([
   'managedPolicyRuntimeAdmission', 'liveExecutionAuthorized', 'spawnImpl', 'candidateHomeDir', 'inspectBinary', 'preflight',
   'snapshot', 'monitorFactory', 'sessionCheck', 'adapterFactory', 'tempParent', 'removeOwned', 'observerAvailable',
-  'attestationPolicy', 'launchPermit', 'permitLedgerDir', 'runIdFactory',
+  'attestationPolicy', 'launchPermit', 'permitLedgerDir', 'runIdFactory', 'shapeRecorderFactory',
 ]);
 const isRecord = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -159,9 +160,9 @@ requestedEffort modelEvidence effectiveModel sessionIdHash cleanExit sessionTran
 permissionMode protocolState disclosure lifecycle parentSeen parentExitObserved quiescent survivors ambiguousPersistentProcesses forbiddenProcesses
 processPostconditionInspection ipcPostconditionInspection ipcState postconditionsComplete authorityComplete authorityState filesystemState sessionState
 process newSurvivingChildren unexpectedUnixSocketObserved processObservation hostDiff changedPaths targetEditExact inputUnchanged fixtureRemoved
-cleanup evidencePersistence evidenceClass authorizationGrade runIdentity runId scopeId candidate attemptBudget sha256 attestationIdSha256 permitIdSha256 bindingSha256 attestation permit launchPermit attestationState safety authMutation secretsRead orchestratorActivated merge deploy rawProtocolPersisted credentialMaterialPersisted`.split(/\s+/));
+cleanup evidencePersistence eventDiagnostics schema recorder admissionEffect count overflow entries ordinal stage type subtype sessionMatch sensitive keyCountBucket sizeBucket tools mcpServers plugins agents apiProvider authMethod permissionMode cwd model permissionDenials toolUseBlock toolResultBlock evidenceClass authorizationGrade runIdentity runId scopeId candidate attemptBudget sha256 attestationIdSha256 permitIdSha256 bindingSha256 attestation permit launchPermit attestationState safety authMutation secretsRead orchestratorActivated merge deploy rawProtocolPersisted credentialMaterialPersisted`.split(/\s+/));
 const SAFE_STRINGS = new Set(`PASS BLOCKED FAIL UNKNOWN READ ABSENT PRESENT NOT_INSPECTED AUTHORITATIVE WRONG_MODEL CONFLICT SYNTHETIC_OR_PLACEHOLDER NOT_AUTHORITATIVELY_OBSERVED
-system:init assistant user result NOT_REQUESTED UNAUTHENTICATED_LOCAL_EVIDENCE OFFLINE_SIMULATION REAL_CANDIDATE NOT_ESTABLISHED sonnet opus medium claude.ai firstParty pro team enterprise acceptEdits
+system:init assistant user result NOT_REQUESTED OK FAILED NONE OTHER MALFORMED BEFORE_INIT INIT ACTIVE AFTER_RESULT system rate_limit_event init status compact_boundary hook_started hook_progress hook_response task_started task_progress task_updated task_notification background_tasks_changed commands_changed session_state_changed conversation_reset informational control_request_progress error_max_turns error_during_execution <=256 <=1K <=4K <=64K <=1M OVERSIZE 1-4 5-8 9-16 17+ UNAUTHENTICATED_LOCAL_EVIDENCE OFFLINE_SIMULATION REAL_CANDIDATE NOT_ESTABLISHED sonnet opus medium claude.ai firstParty pro team enterprise acceptEdits
 ${Object.values(ONE_CALL_DECISIONS).join(' ')} ${APPROVED_TOOLS.join(' ')}
 MANAGED_POLICY_RUNTIME_ADMISSION_PASS MANAGED_POLICY_RUNTIME_ADMISSION_BLOCKED MANAGED_POLICY_RUNTIME_ADMISSION_UNKNOWN MANAGED_POLICY_RUNTIME_ADMISSION_CONTRADICTED
 MANAGED_POLICY_RUNTIME_ADMISSION_NOT_PASS CURRENT_EFFECTIVE_MDM_NOT_ESTABLISHED LIVE_EXECUTION_NOT_AUTHORIZED TEST_SEAM_NOT_PERMITTED_FOR_REAL_LAUNCH
@@ -243,7 +244,7 @@ export function assessOneCallPass(evidence) {
 }
 
 // ---- the single provider call -------------------------------------------------------------------------------------
-async function runSmokeCall({ binaryPath, repositoryRoot, sourceEnv, fixture, providerSpawn, onMonitor, monitorFactory, sessionCheck, adapterFactory, authEvidence, verdict }) {
+async function runSmokeCall({ binaryPath, repositoryRoot, sourceEnv, fixture, providerSpawn, onMonitor, monitorFactory, sessionCheck, adapterFactory, authEvidence, verdict, shapeRecorderFactory = createShapeRecorder }) {
   const callsBefore = providerSpawn.providerCalls; // 0: a single scope, never reset
   const sessionId = randomUUID();
   providerSpawn.setCanaryMarkers([]);
@@ -251,13 +252,15 @@ async function runSmokeCall({ binaryPath, repositoryRoot, sourceEnv, fixture, pr
   if (transcriptBefore !== false) return { state: 'UNKNOWN', code: 'SESSION_STORE_BASELINE_UNKNOWN', providerCallStarted: false };
   const monitor = monitorFactory({ binaryPath, taskRoot: fixture.taskRoot, repositoryRoot });
   const observer = createQualificationObserver({ taskRoot: fixture.taskRoot, sessionId, targets: [], additionalModelFamilies: ONE_CALL_ADDITIONAL_MODEL_FAMILIES });
+  // Recording only: the recorder sees every line the observer sees, can never throw into the run, and its output is never read by any verdict.
+  let recorder = null; try { recorder = shapeRecorderFactory({ sessionId }); } catch { recorder = null; }
   let run; let startError = false; let cleanup;
   try {
     onMonitor(monitor);
     const adapter = adapterFactory({ binaryPath, env: buildClaudeEnvironment(sourceEnv), commandCenterRoot: repositoryRoot,
       idFactory: () => sessionId, spawnImpl: providerSpawn, timeoutMs: 120_000,
       limits: { maxLineBytes: 1024 * 1024, maxStdoutBytes: 4 * 1024 * 1024, maxStderrBytes: 64 * 1024 },
-      onProtocolLine: raw => observer.line(raw) });
+      onProtocolLine: raw => { try { recorder?.record(raw); } catch { /* diagnostics only */ } return observer.line(raw); } });
     const day = new Date().toISOString().slice(0, 10).replaceAll('-', '');
     // The only adapter.start in this module: one invocation, no loop, no retry.
     run = await adapter.start({ runId: `RUN-${day}-${randomUUID().replaceAll('-', '').slice(0, 8)}`,
@@ -285,7 +288,7 @@ async function runSmokeCall({ binaryPath, repositoryRoot, sourceEnv, fixture, pr
   return { ...checked, providerCallStarted: providerSpawn.providerCalls > callsBefore, requestedModel: MODEL, requestedEffort: EFFORT,
     modelEvidence: summary.modelEvidence.state,
     effectiveModel: summary.modelEvidence.state === 'AUTHORITATIVE' ? summary.modelEvidence.effectiveModel : 'NOT_AUTHORITATIVELY_OBSERVED',
-    sessionIdHash: digest(sessionId), process: cleanup,
+    sessionIdHash: digest(sessionId), process: cleanup, eventDiagnostics: safeSnapshot(recorder),
     lifecycleAuthority: { canonicalLaunch: frame?.canonicalLaunch === true, toolInventory: summary.toolInventory, invokedTools: summary.invokedTools,
       protocolState: summary.protocolState, authMethod: authEvidence?.authMethod ?? 'UNKNOWN', apiProvider: authEvidence?.apiProvider ?? 'UNKNOWN',
       requestedModel: MODEL, requestedEffort: EFFORT, modelEvidence: summary.modelEvidence.state, effectiveModel: summary.modelEvidence.effectiveModel ?? 'UNKNOWN',
@@ -397,7 +400,8 @@ export async function runOneCallSmoke({ binaryPath, repositoryRoot = process.cwd
     if (!consumed.ok) { evidence.gates.launchPermit = { state: consumed.burned ? 'CONSUMED' : consumed.code }; verdict.escalate('BLOCKED', consumed.code); return; }
     evidence.gates.launchPermit = { state: 'CONSUMED' };
     const call = await runSmokeCall({ binaryPath, repositoryRoot, sourceEnv, fixture, providerSpawn, authEvidence: preflight.auth,
-      monitorFactory: deps.monitorFactory, sessionCheck: deps.sessionCheck, adapterFactory: deps.adapterFactory, onMonitor: m => { activeMonitor = m; }, verdict });
+      monitorFactory: deps.monitorFactory, sessionCheck: deps.sessionCheck, adapterFactory: deps.adapterFactory, onMonitor: m => { activeMonitor = m; }, verdict,
+      ...(deps.shapeRecorderFactory ? { shapeRecorderFactory: deps.shapeRecorderFactory } : {}) });
     evidence.call = call; // preserved before any host postcheck can throw
     // Definite results are sticky immediately. The only provisional result is the "lifecycle authority not yet bound" UNKNOWN,
     // which the host-side filesystem checks below legitimately resolve; it is re-evaluated after binding.
