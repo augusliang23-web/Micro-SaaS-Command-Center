@@ -466,3 +466,20 @@ test('approval store is never reachable from adapter inputs: the adapter spec ca
     assert.ok(e.approvals.store instanceof ApprovalStore && e.approvals.gate instanceof ApprovalGate);
   });
 }));
+
+test('an adapter result must say outcome "completed" as well as exit 0: any other outcome with exit 0 is a FAILURE, never a success', async () => {
+  for (const [label, patch] of [['failed with exit 0', { outcome: 'failed', exitCode: 0 }], ['missing outcome', { outcome: undefined, exitCode: 0 }], ['bogus outcome', { outcome: 'success', exitCode: 0 }], ['null exit', { outcome: 'completed', exitCode: null }]]) {
+    await withFixture(async (f) => {
+      f.task(TASK_A);
+      const wrap = (base) => ({ id: base.id, probe: () => base.probe(), cancel: (r) => base.cancel(r), start: async (spec, emit) => ({ ...(await base.start(spec, emit)), ...patch }) });
+      await withEngine(f, { wrapAdapter: wrap }, async (e) => {
+        const made = grant(e, TASK_A, GATED_ACTIONS, { baseSha: f.baseSha });
+        const r = await e.orchestrator.execute(TASK_A);
+        assert.equal(r.task.status, 'FAILED', label);
+        assert.equal(worktreeHead(f, TASK_A), f.baseSha, label);
+        assert.deepEqual(remoteBranches(f), [], label);
+        for (const a of made) assert.ok(!fs.existsSync(path.join(e.approvals.dir, `${a.approvalId}.consumed`)), label);
+      });
+    });
+  }
+});

@@ -416,3 +416,24 @@ test('the evidence kinds an adapter may return equal the runtime\'s own sandbox 
   assert.ok(Object.isFrozen(CONTAINER_EVIDENCE_KINDS));
   assert.ok(DockerSandboxRuntime);
 });
+
+test('a prepared container without verified policy evidence is never started and the run is UNKNOWN', async () => withAdapter(async (s) => {
+  const inner = s.rt.runtime;
+  const calls = [];
+  const runtime = {
+    probe: () => inner.probe(), stop: (id) => inner.stop(id),
+    prepare: async (spec) => { const r = await inner.prepare(spec); return { ...r, evidence: r.evidence.filter((e) => e.kind !== 'sandbox_policy') }; },
+    start: async (id, o) => { calls.push('start'); return inner.start(id, o); },
+    destroy: (id) => inner.destroy(id),
+  };
+  const adapter = new ContainerFakeAgentAdapter({ runtime });
+  const r = await adapter.start(fresh(s), () => {});
+  assert.equal(r.outcome, 'unknown'); assert.equal(r.reason, 'POLICY_EVIDENCE_MISSING'); assert.equal(r.exitCode, null);
+  assert.deepEqual(calls, [], 'the container never ran');
+  assert.equal(r.cleanup, 'CONFIRMED'); assert.equal(s.fake.containers.size, 0);
+  for (const weak of ['AGENT_CLAIM', 'RUNTIME_OBSERVED']) {
+    const weakRuntime = { ...runtime, prepare: async (spec) => { const x = await inner.prepare({ ...spec, sandboxId: spec.sandboxId }); return { ...x, evidence: x.evidence.map((e) => ({ ...e, grade: weak })) }; } };
+    const out = await new ContainerFakeAgentAdapter({ runtime: weakRuntime }).start(fresh(s), () => {});
+    assert.equal(out.outcome, 'unknown', weak);
+  }
+}));

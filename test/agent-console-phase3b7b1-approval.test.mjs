@@ -61,6 +61,20 @@ test('diff digest: deterministic, order independent and sensitive to path, conte
     Array.from({ length: 201 }, (_, i) => entry(`f${i}`, 'x'))]) assert.throws(() => diffDigestOf(bad), /manifest/i, JSON.stringify(bad)?.slice(0, 40));
 });
 
+test('diff digest and manifest: a same-size content change changes the digest (content is bound, not just size)', () => {
+  const a = entry('a.txt', 'two'); const b = entry('a.txt', 'tw0');
+  assert.equal(a.size, b.size);
+  assert.notEqual(diffDigestOf([a]), diffDigestOf([b]));
+  const w = workspace();
+  try {
+    fs.writeFileSync(path.join(w.root, 'a.txt'), 'two');
+    const one = computeDiffManifest({ worktreePath: w.root, paths: ['a.txt'], baseSha: BASE }).diffDigest;
+    fs.writeFileSync(path.join(w.root, 'a.txt'), 'tw0');
+    const two = computeDiffManifest({ worktreePath: w.root, paths: ['a.txt'], baseSha: BASE }).diffDigest;
+    assert.notEqual(one, two);
+  } finally { w.cleanup(); }
+});
+
 function workspace() {
   const root = realTmp('cc-p3b7b1-ws-');
   return { root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
@@ -146,6 +160,16 @@ test('authorize: exactly one valid approval is found and burned; replay is refus
   // A second store instance on the same directory (another process) also sees it consumed.
   const other = new ApprovalStore({ dir, now: () => '2026-10-10T00:00:30.000Z' });
   assert.equal(other.authorize({ taskId: TASK, action: 'COMMIT', expect: expectArgs() }).code, 'APPROVAL_CONSUMED');
+}));
+
+test('authorize: a consumed approval is skipped, so one fresh approval still works (not "ambiguous")', async () => withApprovals(({ store }) => {
+  store.grant(grantArgs());
+  assert.equal(store.authorize({ taskId: TASK, action: 'COMMIT', expect: expectArgs() }).ok, true);
+  const fresh = store.grant(grantArgs());
+  const r = store.authorize({ taskId: TASK, action: 'COMMIT', expect: expectArgs() });
+  assert.equal(r.ok, true, 'the earlier burned approval must not make the fresh one ambiguous');
+  assert.equal(r.approval.approvalId, fresh.approvalId);
+  assert.equal(store.authorize({ taskId: TASK, action: 'COMMIT', expect: expectArgs() }).code, 'APPROVAL_CONSUMED');
 }));
 
 test('authorize: missing approval, wrong action and a different task are refused', async () => withApprovals(({ store }) => {
