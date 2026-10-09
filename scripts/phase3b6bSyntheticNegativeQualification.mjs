@@ -581,9 +581,9 @@ function qualifyManagedPolicy(auth) {
   return inspectManagedPolicySources({ auth });
 }
 
-export function createQualificationObserver({ taskRoot, sessionId, targets = [] }) {
+export function createQualificationObserver({ taskRoot, sessionId, targets = [], additionalModelFamilies }) {
   const parser = createClaudeStreamParser({ allowedTools: APPROVED_TOOLS, expectedCwd: taskRoot });
-  const modelObserver = createSmokeObserver(taskRoot, targets[0]?.absolutePath ?? path.join(taskRoot, '__unused__'), 'NO_CANARY_SENTINEL');
+  const modelObserver = createSmokeObserver(taskRoot, targets[0]?.absolutePath ?? path.join(taskRoot, '__unused__'), 'NO_CANARY_SENTINEL', { additionalModelFamilies });
   const classes = new Set(); const invokedTools = new Set(); const attempts = []; const denials = [];
   const requestIds = new Set(); const matchedIds = new Set();
   let stage = 'INITIAL'; let toolInventory = null; let disclosure = false; let issue = null; let rolling = ''; let executionMetadataMissing = false;

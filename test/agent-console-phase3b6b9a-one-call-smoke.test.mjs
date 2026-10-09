@@ -12,6 +12,7 @@ import { createHostTcbLifecycleObserver } from '../scripts/hostTcbLifecycleObser
 import * as threeCall from '../scripts/phase3b6bSyntheticNegativeQualification.mjs';
 import * as smoke from '../scripts/phase3b6bOneCallSmoke.mjs';
 import * as controls from '../scripts/phase3b6bOneCallControls.mjs';
+import { createSmokeObserver } from '../scripts/claudeLiveSmoke.mjs';
 import { createHash } from 'node:crypto';
 
 // Offline only. Every executable is a function-valued fake; the qualification candidate is never executed and the
@@ -64,7 +65,7 @@ async function simulate(options = {}) {
         const apply = options.mutateFs ?? (dir => { fs.writeFileSync(path.join(dir, 'target.txt'), options.targetContent ?? smoke.SMOKE_TARGET_EDITED); });
         if (!options.noEdit) apply(cwd);
         let tools = [...TOOLS]; if (options.extraTool) tools.push('Bash'); if (options.missingTool) tools = tools.slice(0, 4); if (options.duplicateTool) tools = [...TOOLS.slice(0, 4), 'Read'];
-        const init = { type: 'system', subtype: 'init', session_id: session, cwd, model: 'sonnet', permissionMode: options.permissionMode ?? 'acceptEdits', tools, ...(options.routeEvent ?? {}) };
+        const init = { type: 'system', subtype: 'init', session_id: session, cwd, model: options.initModel ?? 'sonnet', permissionMode: options.permissionMode ?? 'acceptEdits', tools, ...(options.routeEvent ?? {}) };
         if (options.noInventory) delete init.tools;
         const blocks = [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'input.txt' } },
           { type: options.noEditTool ? 'text' : 'tool_use', ...(options.noEditTool ? { text: 'done' } : { id: 't2', name: options.editTool ?? 'Write', input: { file_path: 'target.txt' } }) }];
@@ -975,4 +976,88 @@ test('N/O/P/Q/R/S: a known FAIL stays FAIL; budgets, MDM admission and live gate
   assert.equal(real.providerCallsUsed, 0); assert.equal(strayCommands, 0);
   const CONTROLS = fs.readFileSync(fileURLToPath(new URL('../scripts/phase3b6bOneCallControls.mjs', import.meta.url)), 'utf8');
   assert.equal(/\b(spawn|spawnSync|execFile|exec)\(/.test(CONTROLS), false); assert.equal(/createHmac|createSign|generateKey|createPrivateKey|randomBytes\(32/.test(CONTROLS + SOURCE), false, 'no keys or signatures are created');
+});
+
+// =====================================================================================================================
+// Phase 3B6B.10A — R1 model label compatibility (exact, one-call only) and R2 strictness (no event allow-list was justified)
+// =====================================================================================================================
+const SID = '33333333-4444-4555-8666-777777777777'; const TROOT = '/synthetic/task';
+const EXTRA = smoke.ONE_CALL_ADDITIONAL_MODEL_FAMILIES;
+const initEv = (extra = {}) => ({ type: 'system', subtype: 'init', session_id: SID, cwd: TROOT, model: 'sonnet', permissionMode: 'acceptEdits', tools: TOOLS, ...extra });
+const asstEv = (model = 'sonnet', content) => ({ type: 'assistant', message: { id: 'm1', model, content: content ?? [{ type: 'tool_use', id: 't1', name: 'Write', input: { file_path: 'target.txt' } }] } });
+const userEv = () => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } });
+const resultEv = (extra = {}) => ({ type: 'result', subtype: 'success', is_error: false, session_id: SID, permission_denials: [], ...extra });
+function observeStream(events, options = { additionalModelFamilies: EXTRA }) {
+  const observer = threeCall.createQualificationObserver({ taskRoot: TROOT, sessionId: SID, targets: [], ...options });
+  for (const e of events) observer.line(typeof e === 'string' ? e : JSON.stringify(e));
+  return observer.finish();
+}
+const good = (over = {}) => [initEv(over.init), asstEv(over.model), userEv(), resultEv(over.result)];
+
+test('R1 J: an authoritative claude-sonnet-5-5 execution label is accepted as Sonnet by the one-call path only (exact match)', async () => {
+  const p = observeStream(good({ model: 'claude-sonnet-5-5' }));
+  assert.deepEqual([p.modelEvidence.state, p.modelEvidence.effectiveModel, p.protocolState], ['AUTHORITATIVE', 'sonnet', 'PASS']);
+  const resolved = observeStream(good({ model: 'claude-sonnet-5-5', init: { model: 'claude-sonnet-5-5' }, result: { modelUsage: { 'claude-sonnet-5-5': { input_tokens: 1 } } } }));
+  assert.equal(resolved.modelEvidence.state, 'AUTHORITATIVE');
+  for (const label of ['sonnet', 'claude-sonnet-5']) assert.equal(observeStream(good({ model: label })).modelEvidence.state, 'AUTHORITATIVE', label);
+  for (const options of [{ initModel: 'claude-sonnet-5-5', model: 'claude-sonnet-5-5' }, { model: 'claude-sonnet-5-5' }]) {
+    const { evidence } = await simulate(options);
+    assert.equal(evidence.decision, D.PASS, JSON.stringify(options)); assert.equal(evidence.call.effectiveModel, 'sonnet');
+  }
+});
+
+test('R1 default unchanged: without the one-call extension claude-sonnet-5-5 stays UNKNOWN in the three-call observer and the diagnostic smoke', () => {
+  assert.equal(observeStream(good({ model: 'claude-sonnet-5-5' }), {}).modelEvidence.state, 'UNKNOWN');
+  const smokeObs = createSmokeObserver('/f/w', '/f/c', 'M');
+  smokeObs.line(JSON.stringify({ type: 'assistant', message: { model: 'claude-sonnet-5-5', content: [] } }));
+  assert.equal(smokeObs.summary().modelEvidence.state, 'UNKNOWN');
+});
+
+test('R1 K/L/M: unknown, near-miss, wrong and conflicting model evidence never becomes Sonnet', async () => {
+  for (const label of ['claude-sonnet-5-6', 'claude-sonnet-5-5-malicious', 'claude-sonnet-5-50', 'my-claude-sonnet-5-5', 'claude-sonnet-5-5 ', ' claude-sonnet-5-5', 'claude-sonnet-5.5', 'claude-sonnet-5-5-20260101', 'claude-sonnet-5-', 'claude-sonnet', 'sonnet-5-5']) {
+    const p = observeStream(good({ model: label })); assert.equal(p.modelEvidence.state, 'UNKNOWN', JSON.stringify(label));
+    assert.notEqual((await simulate({ model: label })).evidence.decision, D.PASS, JSON.stringify(label));
+  }
+  assert.equal((await simulate({ model: 'opus' })).evidence.decision, D.FAIL, 'a recognised wrong family is FAIL');
+  assert.equal(observeStream(good({ model: 'claude-opus-5-5' })).modelEvidence.state, 'UNKNOWN', 'an unrecognised Opus label is never promoted to Sonnet (UNKNOWN)');
+  const conflict = observeStream([initEv(), asstEv('claude-sonnet-5-5'), asstEv('opus'), userEv(), resultEv()]);
+  assert.equal(conflict.modelEvidence.state, 'CONFLICT');
+  assert.equal(observeStream([initEv({ model: 'opus' }), asstEv('claude-sonnet-5-5'), userEv(), resultEv()]).modelEvidence.state, 'CONFLICT', 'request/execution family conflict');
+  assert.equal(observeStream(good({ model: '<synthetic>' })).modelEvidence.state, 'SYNTHETIC_OR_PLACEHOLDER');
+  const usageOnly = observeStream([initEv({ model: 'sonnet' }), { type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }, userEv(), resultEv({ modelUsage: { 'claude-sonnet-5-5': {} } })]);
+  assert.notEqual(usageOnly.modelEvidence.state, 'AUTHORITATIVE', 'usage metadata alone is never execution proof');
+});
+
+test('R1: the extension is a validated exact-label list — wrong family, wildcards, placeholders, prototypes and overlong lists are refused', () => {
+  const bad = [{ 'claude-opus-5-5': 'sonnet' }, { 'claude-sonnet-5-5': 'opus' }, { 'claude-sonnet-*': 'sonnet' }, { 'claude-sonnet': 'sonnet' }, { sonnet: 'sonnet' }, { 'claude-sonnet-5': 'sonnet' },
+    { 'Claude-Sonnet-5-5': 'sonnet' }, { '<synthetic>': 'sonnet' }, { 'claude-sonnet-5-5': 'haiku' }, { a: 1 }, [], 'claude-sonnet-5-5',
+    Object.fromEntries(['5-1', '5-2', '5-3', '5-4', '5-6'].map(v => [`claude-sonnet-${v}`, 'sonnet'])), Object.create({ 'claude-sonnet-5-5': 'sonnet' })];
+  for (const additionalModelFamilies of bad) assert.throws(() => createSmokeObserver('/f/w', '/f/c', 'M', { additionalModelFamilies }), TypeError, JSON.stringify(additionalModelFamilies));
+  assert.deepEqual(EXTRA, { 'claude-sonnet-5-5': 'sonnet' }); assert.equal(Object.isFrozen(EXTRA), true);
+  assert.equal(SOURCE.includes('claude-sonnet-5-5'), true); assert.equal(/includes\(\s*['"`]sonnet|startsWith\(['"`]claude-sonnet/.test(SOURCE), false, 'no prefix/substring model matching in the one-call module');
+});
+
+test('R2: no event allow-list was justified — rate_limit_event and non-init system events remain UNKNOWN, and security-bearing events still FAIL', () => {
+  const rate = { type: 'rate_limit_event', rate_limit_info: { status: 'allowed' }, session_id: SID };
+  const status = { type: 'system', subtype: 'status', session_id: SID };
+  for (const ev of [rate, status]) {
+    const p = observeStream([initEv(), ev, asstEv(), userEv(), resultEv()]);
+    assert.equal(p.protocolState, 'UNKNOWN'); assert.equal(p.code, 'UNKNOWN_EVENT');
+    assert.equal(observeStream([ev, initEv(), asstEv(), userEv(), resultEv()]).protocolState, 'UNKNOWN', 'before init');
+    assert.equal(observeStream([initEv(), asstEv(), userEv(), resultEv(), ev]).protocolState, 'UNKNOWN', 'after result');
+  }
+  assert.equal(observeStream([initEv(), { ...rate, message: { content: [{ type: 'tool_use', id: 'x', name: 'Bash', input: {} }] } }, asstEv(), userEv(), resultEv()]).protocolState, 'UNKNOWN', 'an informational-looking event carrying a tool is never trusted');
+  assert.equal(observeStream([initEv(), { ...rate, apiProvider: 'bedrock' }, asstEv(), userEv(), resultEv()]).protocolState, 'FAIL', 'provider override');
+  assert.equal(observeStream([initEv(), { ...rate, authMethod: 'api_key' }, asstEv(), userEv(), resultEv()]).protocolState, 'FAIL', 'auth override');
+  assert.equal(observeStream([initEv(), { ...rate, session_id: 'other' }, asstEv(), userEv(), resultEv()]).protocolState, 'FAIL', 'unexpected session identity');
+  assert.equal(observeStream([initEv(), 'not json', asstEv(), userEv(), resultEv()]).protocolState, 'UNKNOWN', 'malformed');
+  assert.equal(observeStream([initEv(), { type: 'mystery' }, asstEv(), userEv(), resultEv()]).protocolState, 'UNKNOWN', 'unknown type');
+});
+
+test('R1/R2 N/O/P: five-tool inventory, forbidden-tool FAIL and the guards are unchanged', async () => {
+  assert.deepEqual(observeStream(good()).toolInventory, TOOLS);
+  assert.equal(observeStream([initEv({ tools: [...TOOLS, 'Bash'] }), asstEv(), userEv(), resultEv()]).protocolState, 'FAIL');
+  assert.equal(observeStream([initEv(), asstEv('sonnet', [{ type: 'tool_use', id: 't9', name: 'Bash', input: { command: 'x' } }]), userEv(), resultEv()]).protocolState, 'FAIL');
+  assert.equal(observeStream([initEv({ tools: TOOLS.slice(0, 4) }), asstEv(), userEv(), resultEv()]).protocolState, 'UNKNOWN');
+  assert.equal(smoke.MAX_SMOKE_PROVIDER_CALLS, 1); assert.equal(threeCall.MAX_PROVIDER_CALLS, 3); assert.equal(strayCommands, 0);
 });

@@ -32,6 +32,10 @@ export const SMOKE_INPUT = 'SYNTHETIC_INPUT_ONLY\n';
 export const SMOKE_TARGET_INITIAL = 'UNCHANGED\n';
 // Single source of truth: the prompt, the host check and the PASS rule all use this constant.
 export const SMOKE_TARGET_EDITED = 'PHASE3B6B_SMOKE_EDITED\n';
+// Exact extra model label for the one-call path ONLY (the three-call harness and the diagnostic smoke keep their closed lists).
+// Evidence: Anthropic's published model overview lists `claude-sonnet-5-5` as the pinned API ID of Claude Sonnet 5.5, and the Claude Code
+// model-configuration page says the `sonnet` alias resolves to it on the Anthropic API. Whether 2.1.292 reports it was NOT observed.
+export const ONE_CALL_ADDITIONAL_MODEL_FAMILIES = Object.freeze({ 'claude-sonnet-5-5': 'sonnet' });
 export const SMOKE_ALLOWED_CHANGED_PATHS = Object.freeze(['target.txt']);
 export const ONE_CALL_DECISIONS = Object.freeze({
   PASS: 'ONE_CALL_SMOKE_PASS', BLOCKED: 'ONE_CALL_SMOKE_BLOCKED', FAIL: 'ONE_CALL_SMOKE_FAIL', UNKNOWN: 'ONE_CALL_SMOKE_UNKNOWN',
@@ -246,7 +250,7 @@ async function runSmokeCall({ binaryPath, repositoryRoot, sourceEnv, fixture, pr
   let transcriptBefore; try { transcriptBefore = sessionCheck(sessionId); } catch { transcriptBefore = 'UNKNOWN'; }
   if (transcriptBefore !== false) return { state: 'UNKNOWN', code: 'SESSION_STORE_BASELINE_UNKNOWN', providerCallStarted: false };
   const monitor = monitorFactory({ binaryPath, taskRoot: fixture.taskRoot, repositoryRoot });
-  const observer = createQualificationObserver({ taskRoot: fixture.taskRoot, sessionId, targets: [] });
+  const observer = createQualificationObserver({ taskRoot: fixture.taskRoot, sessionId, targets: [], additionalModelFamilies: ONE_CALL_ADDITIONAL_MODEL_FAMILIES });
   let run; let startError = false; let cleanup;
   try {
     onMonitor(monitor);
