@@ -130,15 +130,23 @@ function scanTree(root, dataBlobs) {
   return { domain, reference, opaque };
 }
 
-/** Closed-vocabulary schema fingerprint for human/Control Plane review. Reveals no key names beyond two fixed schema names, and no values. */
+/**
+ * Closed-vocabulary schema fingerprint for human/Control Plane review. DIAGNOSTIC ONLY: it never feeds coverage, trust or any admission decision.
+ * Reveals no key names (user-name root keys are only counted) and no values.
+ * The `profiles` manual documents the device-level top-level key as `_computerLevel`; older notes used `_computerlevel`. Both are recognised for
+ * diagnostics (case-insensitively), the spelling is reported, and more than one candidate spelling is AMBIGUOUS: nothing below it is inspected.
+ */
 export function schemaFingerprint(parsed) {
   if (!parsed?.ok) return 'ROOT=NONE';
   const bucket = n => (n === 0 ? '0' : n <= 4 ? '1-4' : n <= 16 ? '5-16' : '17+');
   const root = parsed.root; const parts = [`ROOT=${root.t}`];
   if (root.t === 'dict') {
     parts.push(`ROOT_KEYS=${bucket(root.entries.length)}`);
-    const inv = root.entries.find(([k]) => k === '_computerlevel')?.[1];
-    parts.push(`COMPUTERLEVEL=${inv ? inv.t : 'ABSENT'}`);
+    const matches = root.entries.filter(([k]) => k.toLowerCase() === '_computerlevel');
+    const only = matches.length === 1 ? matches[0] : null;
+    const spelling = only ? (only[0] === '_computerLevel' ? 'DOCUMENTED' : only[0] === '_computerlevel' ? 'LOWERCASE' : 'OTHER_CASE') : 'NONE';
+    parts.push(`COMPUTERLEVEL=${matches.length === 0 ? 'ABSENT' : matches.length > 1 ? 'AMBIGUOUS' : only[1].t}`, `SPELLING=${spelling}`, `OTHER_ROOT_KEYS=${bucket(root.entries.length - matches.length)}`);
+    const inv = only?.[1];
     if (inv?.t === 'array') {
       parts.push(`ENTRIES=${bucket(inv.items.length)}`, `ENTRIES_ALL_DICT=${inv.items.every(i => i.t === 'dict')}`,
         `ENTRIES_HAVE_PROFILEIDENTIFIER=${inv.items.length > 0 && inv.items.every(i => i.t === 'dict' && i.entries.some(([k]) => k === 'ProfileIdentifier'))}`);

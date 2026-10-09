@@ -34,7 +34,7 @@ test('without a reviewed schema even a perfect inventory cannot PASS: valid XML 
     const r = run({ schema });
     assert.equal(r.overall, 'BLOCKED_SCHEMA_UNQUALIFIED', JSON.stringify(schema)); assert.equal(r.coverage, 'UNQUALIFIED'); assert.notEqual(r.claudeDomain, 'ABSENT');
   }
-  assert.match(run({ schema: undefined }).schema, /^ROOT=dict;ROOT_KEYS=1-4;COMPUTERLEVEL=array;ENTRIES=1-4;ENTRIES_ALL_DICT=true;ENTRIES_HAVE_PROFILEIDENTIFIER=true$/);
+  assert.match(run({ schema: undefined }).schema, /^ROOT=dict;ROOT_KEYS=1-4;COMPUTERLEVEL=array;SPELLING=LOWERCASE;OTHER_ROOT_KEYS=0;ENTRIES=1-4;ENTRIES_ALL_DICT=true;ENTRIES_HAVE_PROFILEIDENTIFIER=true$/);
 });
 
 test('well-formed but semantically partial or unrecognised inventories are PARTIAL and never PASS', () => {
