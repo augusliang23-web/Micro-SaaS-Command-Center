@@ -20,8 +20,8 @@ import {
   inspectTaskTree, inventory, readOnlyPreflight, sessionTranscriptExists, snapshotProcesses,
 } from './phase3b6bSyntheticNegativeQualification.mjs';
 import {
-  DEFAULT_TRUST_POLICY, ONE_CALL_SCOPE_ID, bindingDigest, consumeLaunchPermit, defaultRunId, hashIdentity, isValidRunId,
-  validateAttestation, validateLaunchPermit, writeEvidenceAtomically,
+  DEFAULT_TRUST_POLICY, EVIDENCE_CLASS_LOCAL, ONE_CALL_SCOPE_ID, bindingDigest, consumeLaunchPermit, defaultRunId, hashIdentity, isValidRunId,
+  publishEvidenceBundle, validateAttestation, validateLaunchPermit,
 } from './phase3b6bOneCallControls.mjs';
 import { completeLifecycleProof, lifecyclePostconditionsComplete, lifecycleProofComplete } from './hostTcbLifecycleObserver.mjs';
 
@@ -155,9 +155,9 @@ requestedEffort modelEvidence effectiveModel sessionIdHash cleanExit sessionTran
 permissionMode protocolState disclosure lifecycle parentSeen parentExitObserved quiescent survivors ambiguousPersistentProcesses forbiddenProcesses
 processPostconditionInspection ipcPostconditionInspection ipcState postconditionsComplete authorityComplete authorityState filesystemState sessionState
 process newSurvivingChildren unexpectedUnixSocketObserved processObservation hostDiff changedPaths targetEditExact inputUnchanged fixtureRemoved
-cleanup evidencePersistence runIdentity runId scopeId candidate attemptBudget sha256 attestationIdSha256 permitIdSha256 bindingSha256 attestation permit launchPermit attestationState safety authMutation secretsRead orchestratorActivated merge deploy rawProtocolPersisted credentialMaterialPersisted`.split(/\s+/));
+cleanup evidencePersistence evidenceClass authorizationGrade runIdentity runId scopeId candidate attemptBudget sha256 attestationIdSha256 permitIdSha256 bindingSha256 attestation permit launchPermit attestationState safety authMutation secretsRead orchestratorActivated merge deploy rawProtocolPersisted credentialMaterialPersisted`.split(/\s+/));
 const SAFE_STRINGS = new Set(`PASS BLOCKED FAIL UNKNOWN READ ABSENT PRESENT NOT_INSPECTED AUTHORITATIVE WRONG_MODEL CONFLICT SYNTHETIC_OR_PLACEHOLDER NOT_AUTHORITATIVELY_OBSERVED
-system:init assistant user result NOT_REQUESTED OFFLINE_SIMULATION REAL_CANDIDATE NOT_ESTABLISHED sonnet opus medium claude.ai firstParty pro team enterprise acceptEdits
+system:init assistant user result NOT_REQUESTED UNAUTHENTICATED_LOCAL_EVIDENCE OFFLINE_SIMULATION REAL_CANDIDATE NOT_ESTABLISHED sonnet opus medium claude.ai firstParty pro team enterprise acceptEdits
 ${Object.values(ONE_CALL_DECISIONS).join(' ')} ${APPROVED_TOOLS.join(' ')}
 MANAGED_POLICY_RUNTIME_ADMISSION_PASS MANAGED_POLICY_RUNTIME_ADMISSION_BLOCKED MANAGED_POLICY_RUNTIME_ADMISSION_UNKNOWN MANAGED_POLICY_RUNTIME_ADMISSION_CONTRADICTED
 MANAGED_POLICY_RUNTIME_ADMISSION_NOT_PASS CURRENT_EFFECTIVE_MDM_NOT_ESTABLISHED LIVE_EXECUTION_NOT_AUTHORIZED TEST_SEAM_NOT_PERMITTED_FOR_REAL_LAUNCH
@@ -308,6 +308,7 @@ export async function runOneCallSmoke({ binaryPath, repositoryRoot = process.cwd
   const verdict = createVerdict();
   const evidence = {
     schemaVersion: 1, observedAt: new Date().toISOString(), evidenceKind: 'REAL_CANDIDATE', realClaudeBehaviorEvidence: false, fullQualification: 'NOT_ESTABLISHED',
+    evidenceClass: EVIDENCE_CLASS_LOCAL, authorizationGrade: false,
     oneCallOnly: true, maxProviderCalls: MAX_SMOKE_PROVIDER_CALLS, providerCallsUsed: 0, retries: 0,
     gates: { managedPolicyRuntimeAdmission: { state: 'MANAGED_POLICY_RUNTIME_ADMISSION_UNKNOWN' }, liveExecutionAuthorized: false, admissionStable: false },
     binaryIdentity: 'NOT_INSPECTED', cleanup: 'PASS', fixtureRemoved: true,
@@ -459,7 +460,7 @@ export async function runOneCallSmoke({ binaryPath, repositoryRoot = process.cwd
       evidence.decision = ONE_CALL_DECISIONS[verdict.state]; evidence.code = verdict.code;
       evidence.bindingSha256 = bindingDigest(JSON.parse(serializeOneCallEvidence(evidence).text));
       const bound = serializeOneCallEvidence(evidence);
-      const written = bound.ok ? writeEvidenceAtomically(bound.text, evidenceDirectory, runId) : { ok: false, code: 'EVIDENCE_SERIALIZATION_FAILED' };
+      const written = bound.ok ? publishEvidenceBundle(bound.text, evidenceDirectory, runId) : { ok: false, code: 'EVIDENCE_SERIALIZATION_FAILED' };
       if (!written.ok) { evidence.evidencePersistence = 'UNKNOWN'; if (written.residualRecord) evidence.residualRecord = true; delete evidence.bindingSha256; verdict.escalate('UNKNOWN', written.code === 'EVIDENCE_SERIALIZATION_FAILED' ? written.code : 'EVIDENCE_PERSISTENCE_FAILED'); }
       else if (written.residualRecord) evidence.evidencePersistence = 'UNKNOWN';
     } else if (verdict.state === 'PASS') { evidence.evidencePersistence = 'UNKNOWN'; verdict.escalate('UNKNOWN', 'EVIDENCE_PERSISTENCE_FAILED'); }

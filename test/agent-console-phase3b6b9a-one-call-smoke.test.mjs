@@ -126,9 +126,10 @@ async function simulate(options = {}) {
       evidenceDirectory, dependencies });
     const file = evidenceDirectory && evidence.runIdentity ? path.join(evidenceDirectory, `${evidence.runIdentity.runId}.json`) : null;
     const persisted = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+    const commitText = file && fs.existsSync(file.replace(/\.json$/, '.commit.json')) ? fs.readFileSync(file.replace(/\.json$/, '.commit.json'), 'utf8') : null;
     const persistedText = file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
     const ledgerFiles = fs.existsSync(ledger) ? fs.readdirSync(ledger) : [];
-    return { evidence, persisted, persistedText, counts, root, evidenceDirectory, ledger, ledgerFiles, file };
+    return { evidence, persisted, persistedText, commitText, counts, root, evidenceDirectory, ledger, ledgerFiles, file };
   });
 }
 
@@ -793,4 +794,185 @@ test('budgets and gates are unchanged: one-call 1, three-call 3, live default fa
   assert.equal(/const defaultLiveExecutionAuthorized = \(\) => false;/.test(SOURCE), true);
   assert.equal(/ttl|timeToLive|expiresIn|maxAge/i.test(CONTROLS + SOURCE), false, 'no invented TTL');
   assert.equal(/\b(spawn|spawnSync|execFile|exec)\(/.test(CONTROLS), false, 'the controls module cannot launch anything');
+});
+
+// =====================================================================================================================
+// Phase 3B6B.9B-R1 — evidence consumer: authenticity (H1), provenance (H2), publication commit (H3)
+// =====================================================================================================================
+const RUN_R = 'OCS-dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const ATT_H = sha('SYNTHETIC-ATT-1'); const PERMIT_H = sha('SYNTHETIC-PERMIT-1');
+const CAND = { version: '2.1.292', sha256: CANDIDATE_SHA };
+/** A fixture record labelled REAL_CANDIDATE. It is synthetic: nothing real produced it. */
+function fixtureRecord({ runId = RUN_R, kind = 'REAL_CANDIDATE', mutate = () => {} } = {}) {
+  const r = { schemaVersion: 1, evidenceKind: kind, evidenceClass: 'UNAUTHENTICATED_LOCAL_EVIDENCE', authorizationGrade: false, decision: D.PASS, code: null,
+    runIdentity: { runId, scopeId: 'phase3b6b.one-call-smoke.v1', candidate: { ...CAND }, attemptBudget: 1, attestationIdSha256: ATT_H, permitIdSha256: PERMIT_H } };
+  mutate(r); r.bindingSha256 = controls.bindingDigest(r); return r;
+}
+const textOf = r => JSON.stringify(r, null, 2);
+const commitFor = (recordText, runId = RUN_R, extra = {}) => JSON.stringify({ schema: 'cc.evidence-commit/1', runId, scopeId: 'phase3b6b.one-call-smoke.v1', recordSha256: sha(`${recordText}\n`), recordBytes: Buffer.byteLength(`${recordText}\n`), ...extra });
+const trustedFor = (anchor, extra = {}) => ({ anchor, runId: RUN_R, candidate: { ...CAND }, scopeId: 'phase3b6b.one-call-smoke.v1', attemptBudget: 1, attestationIdSha256: ATT_H, permitIdSha256: PERMIT_H, executionMode: 'REAL_CANDIDATE', ...extra });
+// Offline stand-in for a FUTURE independent authenticator: it only knows the genuine bytes it was shown. No real key exists.
+const anchorFor = (...genuine) => ({ verifyAuthentication: ({ recordText, commitText }) => genuine.some(g => g.recordText === recordText && g.commitText === commitText) });
+const permissive = { verifyAuthentication: () => true };
+const goodBundle = () => { const recordText = textOf(fixtureRecord()); return { recordText, commitText: commitFor(recordText), revoked: false }; };
+
+test('H1: local records are classified UNAUTHENTICATED_LOCAL_EVIDENCE; self-consistency never implies authorization-grade trust', async () => {
+  const { evidence, persisted, persistedText } = await simulate();
+  assert.equal(persisted.evidenceClass, 'UNAUTHENTICATED_LOCAL_EVIDENCE'); assert.equal(persisted.authorizationGrade, false); assert.equal(evidence.authorizationGrade, false);
+  const local = controls.verifyOneCallEvidenceRecord(persistedText, { runId: evidence.runIdentity.runId, candidate: CAND });
+  assert.deepEqual([local.ok, local.classification, local.authorizationGrade], [true, 'UNAUTHENTICATED_LOCAL_EVIDENCE', false]);
+  assert.equal(controls.EVIDENCE_CLASS_LOCAL, 'UNAUTHENTICATED_LOCAL_EVIDENCE');
+  assert.equal(controls.DEFAULT_EVIDENCE_TRUST_ANCHOR.verifyAuthentication({}), false, 'the default anchor authenticates nothing');
+});
+
+test('H1 A/B: a modified record fails local checks with the old digest; with a RECOMPUTED digest it is self-consistent but rejected for authorization', () => {
+  const genuine = goodBundle();
+  const forged = fixtureRecord({ mutate: r => { r.decision = D.FAIL; r.call = { state: 'PASS' }; } }); // attacker edits content and recomputes the unkeyed digest
+  const old = JSON.parse(genuine.recordText); old.call = { state: 'PASS' }; // content edited, digest left unchanged
+  assert.equal(controls.verifyOneCallEvidenceRecord(JSON.stringify(old), { runId: RUN_R, candidate: CAND }).code, 'BINDING_MISMATCH');
+  const forgedText = textOf(forged);
+  const local = controls.verifyOneCallEvidenceRecord(forgedText, { runId: RUN_R, candidate: CAND });
+  assert.equal(local.ok, true, 'a recomputed unkeyed digest verifies locally — which is exactly why it proves nothing about authenticity');
+  assert.equal(local.authorizationGrade, false);
+  const forgedBundle = { recordText: forgedText, commitText: commitFor(forgedText), revoked: false }; // attacker also rewrites the commit
+  assert.equal(controls.verifyAuthorizationGradeEvidence(forgedBundle, trustedFor(anchorFor(genuine))).code, 'TRUST_ANCHOR_MISSING_OR_UNVERIFIED');
+  assert.equal(controls.verifyAuthorizationGradeEvidence(forgedBundle, trustedFor(controls.DEFAULT_EVIDENCE_TRUST_ANCHOR)).ok, false);
+  assert.equal(controls.verifyAuthorizationGradeEvidence(genuine, trustedFor(anchorFor(genuine))).ok, true, 'the genuine, anchor-authenticated bundle passes (fixture)');
+});
+
+test('H1 M: without an independent trust anchor, authorization-grade evidence is BLOCKED even for a perfect bundle', () => {
+  for (const anchor of [undefined, null, {}, { verifyAuthentication: 'yes' }, controls.DEFAULT_EVIDENCE_TRUST_ANCHOR, { verifyAuthentication: () => 'true' }, { verifyAuthentication: () => { throw new Error('x'); } }]) {
+    assert.equal(controls.verifyAuthorizationGradeEvidence(goodBundle(), trustedFor(anchor)).code, 'TRUST_ANCHOR_MISSING_OR_UNVERIFIED', String(anchor));
+  }
+  assert.equal(controls.verifyAuthorizationGradeEvidence(goodBundle(), undefined).ok, false);
+});
+
+test('H2 C: an OFFLINE_SIMULATION record can never satisfy real-run evidence — even with a trusting anchor and matching expectations', async () => {
+  const { evidence, persistedText, commitText } = await simulate();
+  assert.equal(evidence.evidenceKind, 'OFFLINE_SIMULATION');
+  const bundle = { recordText: persistedText, commitText, revoked: false };
+  const trusted = trustedFor(permissive, { runId: evidence.runIdentity.runId });
+  assert.equal(controls.verifyAuthorizationGradeEvidence(bundle, trusted).code, 'OFFLINE_SIMULATION_NOT_REAL');
+  assert.equal(controls.verifyAuthorizationGradeEvidence(bundle, { ...trusted, executionMode: 'OFFLINE_SIMULATION' }).code, 'EXECUTION_MODE_NOT_REAL', 'the reader only serves real-run requirements');
+  const relabelled = textOf(fixtureRecord({ kind: 'OFFLINE_SIMULATION' }));
+  assert.equal(controls.verifyAuthorizationGradeEvidence({ recordText: relabelled, commitText: commitFor(relabelled), revoked: false }, trustedFor(permissive)).code, 'OFFLINE_SIMULATION_NOT_REAL');
+  const wrongProvenance = textOf(fixtureRecord({ kind: 'SOMETHING_ELSE' }));
+  assert.equal(controls.verifyAuthorizationGradeEvidence({ recordText: wrongProvenance, commitText: commitFor(wrongProvenance), revoked: false }, trustedFor(permissive)).code, 'PROVENANCE_MISMATCH');
+});
+
+test('H2 D/E/F/G/H: permit, attestation, run, candidate, scope and budget expectations must be supplied by the trusted caller and must match', () => {
+  const b = goodBundle(); const t = extra => controls.verifyAuthorizationGradeEvidence(b, trustedFor(permissive, extra)).code;
+  for (const bad of [undefined, null, '', 'not-a-hash', 'A'.repeat(64)]) {
+    assert.equal(t({ permitIdSha256: bad }), 'EXPECTATION_MISSING', `permit ${bad}`); assert.equal(t({ attestationIdSha256: bad }), 'EXPECTATION_MISSING', `attestation ${bad}`);
+  }
+  assert.equal(t({ permitIdSha256: sha('OTHER-PERMIT') }), 'PERMIT_IDENTITY_MISMATCH');
+  assert.equal(t({ attestationIdSha256: sha('OTHER-ATT') }), 'ATTESTATION_IDENTITY_MISMATCH');
+  assert.equal(t({ runId: RUN_A }), 'STALE_OR_FOREIGN_RECORD'); assert.equal(t({ runId: 'bad' }), 'EXPECTATION_MISSING'); assert.equal(t({ runId: undefined }), 'EXPECTATION_MISSING');
+  assert.equal(t({ candidate: { version: '2.1.293', sha256: CANDIDATE_SHA } }), 'CANDIDATE_MISMATCH'); assert.equal(t({ candidate: { version: '2.1.292', sha256: 'b'.repeat(64) } }), 'CANDIDATE_MISMATCH');
+  assert.equal(t({ candidate: undefined }), 'EXPECTATION_MISSING');
+  assert.equal(t({ scopeId: 'phase3b6b.three-call' }), 'EXPECTATION_MISSING'); assert.equal(t({ scopeId: undefined }), 'EXPECTATION_MISSING');
+  assert.equal(t({ attemptBudget: 3 }), 'EXPECTATION_MISSING'); assert.equal(t({ attemptBudget: undefined }), 'EXPECTATION_MISSING');
+  assert.equal(t({ executionMode: undefined }), 'EXECUTION_MODE_NOT_REAL');
+  // a record that claims a different permit / attestation / scope than the trusted expectation is rejected regardless of its own digest
+  for (const [name, mutate, code] of [['record permit', r => { r.runIdentity.permitIdSha256 = sha('X'); }, 'PERMIT_IDENTITY_MISMATCH'], ['record attestation', r => { r.runIdentity.attestationIdSha256 = sha('X'); }, 'ATTESTATION_IDENTITY_MISMATCH'],
+    ['record scope', r => { r.runIdentity.scopeId = 'other'; }, 'SCOPE_OR_BUDGET_MISMATCH'], ['record budget', r => { r.runIdentity.attemptBudget = 3; }, 'SCOPE_OR_BUDGET_MISMATCH'], ['record permit absent', r => { delete r.runIdentity.permitIdSha256; }, 'PERMIT_IDENTITY_MISMATCH']]) {
+    const text = textOf(fixtureRecord({ mutate }));
+    assert.equal(controls.verifyAuthorizationGradeEvidence({ recordText: text, commitText: commitFor(text), revoked: false }, trustedFor(permissive)).code, code, name);
+  }
+});
+
+test('H3 I: a published but unconfirmed PASS record (no commit, malformed, mismatched, foreign or revoked commit) is rejected', () => {
+  const text = textOf(fixtureRecord()); const verify = bundle => controls.verifyAuthorizationGradeEvidence(bundle, trustedFor(permissive)).code;
+  assert.equal(verify({ recordText: text, commitText: null, revoked: false }), 'COMMIT_MISSING');
+  assert.equal(verify({ recordText: null, commitText: commitFor(text), revoked: false }), 'RECORD_MISSING');
+  assert.equal(verify({ recordText: text, commitText: 'garbage', revoked: false }), 'COMMIT_MALFORMED');
+  assert.equal(verify({ recordText: text, commitText: commitFor(text, RUN_A), revoked: false }), 'COMMIT_MALFORMED');
+  assert.equal(verify({ recordText: text, commitText: commitFor(text, RUN_R, { schema: 'x' }), revoked: false }), 'COMMIT_MALFORMED');
+  assert.equal(verify({ recordText: text, commitText: commitFor(`${text} `), revoked: false }), 'COMMIT_MISMATCH', 'a commit for different bytes');
+  assert.equal(verify({ recordText: text, commitText: commitFor(text, RUN_R, { recordBytes: 1 }), revoked: false }), 'COMMIT_MISMATCH');
+  assert.equal(verify({ recordText: text, commitText: commitFor(text), revoked: true }), 'EVIDENCE_REVOKED');
+  assert.equal(verify({ recordText: text, commitText: commitFor(text), revoked: undefined }), 'EVIDENCE_REVOKED', 'an unknown revocation state is not "not revoked"');
+  assert.equal(verify({ recordText: text, commitText: commitFor(text), revoked: false }), undefined);
+});
+
+function failingIo({ tamperReadAt = 0, failFsyncAt = 0, failReadAt = 0, failUnlink = false, failLinkAt = 0, crashAt = 0 } = {}) {
+  let fsyncs = 0; let reads = 0; let links = 0; let steps = 0; const io = { ...fs };
+  const wrap = (name, impl) => { io[name] = (...a) => { steps += 1; if (crashAt && steps === crashAt) throw Object.assign(new Error('synthetic crash'), { code: 'EIO' }); return impl(...a); }; };
+  wrap('fsyncSync', (...a) => { fsyncs += 1; if (fsyncs === failFsyncAt) throw Object.assign(new Error('synthetic fsync'), { code: 'EIO' }); return fs.fsyncSync(...a); });
+  wrap('readFileSync', (...a) => { reads += 1; if (reads === failReadAt) throw Object.assign(new Error('synthetic read'), { code: 'EIO' }); if (reads === tamperReadAt) return 'tampered'; return fs.readFileSync(...a); });
+  wrap('linkSync', (...a) => { links += 1; if (links === failLinkAt) throw Object.assign(new Error('synthetic link'), { code: 'EIO' }); return fs.linkSync(...a); });
+  wrap('unlinkSync', (...a) => { if (failUnlink) throw Object.assign(new Error('synthetic unlink'), { code: 'EBUSY' }); return fs.unlinkSync(...a); });
+  for (const n of ['openSync', 'writeFileSync', 'closeSync', 'fstatSync', 'lstatSync', 'realpathSync']) wrap(n, (...a) => fs[n](...a));
+  return io;
+}
+const gradeOf = (dir, extra) => controls.verifyAuthorizationGradeEvidence(controls.loadEvidenceBundle(dir, RUN_R), trustedFor(permissive, extra));
+
+test('H3: a complete, confirmed bundle verifies; bundle publication is atomic and never overwrites', async () => shared(async ({ evidence }) => {
+  const text = textOf(fixtureRecord());
+  const ok = controls.publishEvidenceBundle(text, evidence, RUN_R);
+  assert.equal(ok.ok, true); assert.deepEqual(fs.readdirSync(evidence).sort(), [`${RUN_R}.commit.json`, `${RUN_R}.json`]);
+  assert.deepEqual([gradeOf(evidence).ok, gradeOf(evidence).authorizationGrade], [true, true]);
+  assert.equal(controls.publishEvidenceBundle(text, evidence, RUN_R).ok, false, 'a second publication cannot replace the confirmed bundle');
+  assert.equal(gradeOf(evidence).ok, true);
+}));
+
+test('H3 J/K/L: late fsync failure, late read-back failure and a failed unlink never leave an authoritative PASS', async () => {
+  const text = textOf(fixtureRecord());
+  const scenarios = {
+    'late fsync after record link': { failFsyncAt: 3 }, 'late fsync (confirmation)': { failFsyncAt: 4 }, 'late fsync after commit link': { failFsyncAt: 7 },
+    'read-back of record fails': { failReadAt: 1 }, 'read-back of record fails (confirm)': { failReadAt: 2 }, 'read-back of commit fails': { failReadAt: 3 },
+    'commit link fails': { failLinkAt: 2 }, 'late fsync + unlink fails (residual PASS)': { failFsyncAt: 3, failUnlink: true },
+    'confirmation read-back returns different bytes': { tamperReadAt: 2 }, 'read-back + unlink fails (residual PASS)': { failReadAt: 1, failUnlink: true }, 'commit link fails + unlink fails': { failLinkAt: 2, failUnlink: true },
+  };
+  for (const [name, options] of Object.entries(scenarios)) {
+    await shared(async ({ evidence }) => {
+      const result = controls.publishEvidenceBundle(text, evidence, RUN_R, { io: failingIo(options) });
+      assert.equal(result.ok, false, name);
+      const grade = gradeOf(evidence);
+      assert.equal(grade.ok, false, `${name}: even a trusting anchor cannot make it authoritative (${JSON.stringify(grade)})`);
+      if (options.failUnlink) { assert.equal(result.residualRecord, true, name); assert.equal(fs.existsSync(path.join(evidence, `${RUN_R}.json`)), true, `${name}: a PASS record really remains`); assert.equal(fs.existsSync(path.join(evidence, `${RUN_R}.revoked`)), true, `${name}: a revocation marker was recorded`); assert.equal(grade.code, 'EVIDENCE_REVOKED', name); }
+    });
+  }
+});
+
+test('H3: crash injection at EVERY I/O step — authoritative only if publication reported success', async () => {
+  const text = textOf(fixtureRecord()); let successes = 0; let failures = 0;
+  for (let step = 1; step <= 120; step += 1) {
+    await shared(async ({ evidence }) => {
+      const result = controls.publishEvidenceBundle(text, evidence, RUN_R, { io: failingIo({ crashAt: step }) });
+      const grade = gradeOf(evidence);
+      if (result.ok) { successes += 1; assert.equal(grade.ok, true, `step ${step}`); }
+      else { failures += 1; assert.equal(grade.ok, false, `step ${step}: ${JSON.stringify(grade)}`); }
+    });
+  }
+  assert.ok(failures > 20 && successes > 0, `${failures} failing / ${successes} succeeding steps exercised`);
+});
+
+test('H3: a symlinked record or commit is never read, and a stray revoked marker blocks an otherwise perfect bundle', async () => shared(async ({ root, evidence }) => {
+  const text = textOf(fixtureRecord()); controls.publishEvidenceBundle(text, evidence, RUN_R);
+  assert.equal(gradeOf(evidence).ok, true);
+  fs.writeFileSync(path.join(evidence, `${RUN_R}.revoked`), ''); assert.equal(gradeOf(evidence).code, 'EVIDENCE_REVOKED'); fs.rmSync(path.join(evidence, `${RUN_R}.revoked`));
+  const copy = path.join(root, 'copy.json'); fs.copyFileSync(path.join(evidence, `${RUN_R}.json`), copy);
+  fs.rmSync(path.join(evidence, `${RUN_R}.json`)); fs.symlinkSync(copy, path.join(evidence, `${RUN_R}.json`));
+  assert.equal(controls.loadEvidenceBundle(evidence, RUN_R).recordText, null); assert.equal(gradeOf(evidence).code, 'RECORD_MISSING');
+}));
+
+test('H3 end-to-end: the harness publishes record + commit; a PASS record without its commit is not trusted by the consumer', async () => {
+  const run = await simulate();
+  assert.equal(run.evidence.decision, D.PASS); assert.ok(run.persistedText && run.commitText);
+  assert.equal(JSON.parse(run.commitText).recordSha256, sha(run.persistedText));
+  const id = run.evidence.runIdentity.runId;
+  const local = controls.verifyOneCallEvidenceRecord(run.persistedText, { runId: id, candidate: CAND });
+  assert.equal(local.authorizationGrade, false);
+  assert.equal(controls.verifyAuthorizationGradeEvidence({ recordText: run.persistedText, commitText: null, revoked: false }, trustedFor(permissive, { runId: id })).code, 'COMMIT_MISSING');
+});
+
+test('N/O/P/Q/R/S: a known FAIL stays FAIL; budgets, MDM admission and live gate defaults are unchanged; nothing real ran', async () => {
+  for (const extra of [{ evidenceDirectory: '/' }, { preflightExtra: { code: Number.NaN } }]) assert.equal((await simulate({ lifecycleViolation: true, ...extra })).evidence.decision, D.FAIL);
+  assert.equal(smoke.MAX_SMOKE_PROVIDER_CALLS, 1); assert.equal(threeCall.MAX_PROVIDER_CALLS, 3);
+  const real = await smoke.runOneCallSmoke({ binaryPath: path.join(os.homedir(), '.local/share/cc-qualification/claude/2.1.292/claude'), sourceEnv: { HOME: os.homedir() } });
+  assert.equal(real.gates.managedPolicyRuntimeAdmission.state, 'MANAGED_POLICY_RUNTIME_ADMISSION_BLOCKED'); assert.equal(real.gates.liveExecutionAuthorized, false);
+  assert.equal(real.providerCallsUsed, 0); assert.equal(strayCommands, 0);
+  const CONTROLS = fs.readFileSync(fileURLToPath(new URL('../scripts/phase3b6bOneCallControls.mjs', import.meta.url)), 'utf8');
+  assert.equal(/\b(spawn|spawnSync|execFile|exec)\(/.test(CONTROLS), false); assert.equal(/createHmac|createSign|generateKey|createPrivateKey|randomBytes\(32/.test(CONTROLS + SOURCE), false, 'no keys or signatures are created');
 });

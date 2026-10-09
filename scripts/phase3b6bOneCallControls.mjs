@@ -128,14 +128,14 @@ export const bindingDigest = record => { const { bindingSha256: _omit, ...rest }
  * (O_EXCL|O_NOFOLLOW), complete write, fsync, hard-link publication (fails if the name exists, even as a symlink), directory
  * fsync, read-back verification. A reader sees either no file or the complete record; no step ever truncates a destination.
  */
-export function writeEvidenceAtomically(text, directory, runId, { io = fs } = {}) {
+export function writeEvidenceAtomically(text, directory, runId, { io = fs, suffix = '.json' } = {}) {
   if (!isValidRunId(runId) || typeof text !== 'string' || text.length === 0) return fail('EVIDENCE_PERSISTENCE_FAILED');
   if (typeof directory !== 'string' || !path.isAbsolute(directory) || path.normalize(directory) !== directory) return fail('EVIDENCE_PERSISTENCE_FAILED');
   let tmp = null; let published = null;
   try {
     const dir = io.lstatSync(directory);
     if (!dir.isDirectory() || dir.isSymbolicLink() || io.realpathSync(directory) !== directory || dir.uid !== process.getuid() || (dir.mode & 0o022) !== 0) return fail('EVIDENCE_DIRECTORY_UNSAFE');
-    const final = path.join(directory, `${runId}.json`);
+    const final = path.join(directory, `${runId}${suffix}`);
     tmp = path.join(directory, `.${runId}.${randomUUID().slice(0, 8)}.tmp`);
     const fd = io.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
     try {
@@ -159,7 +159,86 @@ export function writeEvidenceAtomically(text, directory, runId, { io = fs } = {}
   }
 }
 
-/** Consumer-side check that a persisted record is the complete, untampered record of THIS run and scope. */
+// ---- evidence classes, publication commit, authorization-grade reader -----------------------------------------------------
+// A record written by this module is self-consistent LOCAL evidence only. Its digest is unkeyed, so anyone who can edit the file
+// can recompute it: self-consistency never implies authenticity. Authorization-grade trust needs (a) an independent trust anchor
+// supplied by the reader, (b) externally trusted expectations, and (c) a publication commit. No anchor exists in this phase.
+export const EVIDENCE_CLASS_LOCAL = 'UNAUTHENTICATED_LOCAL_EVIDENCE';
+export const COMMIT_SCHEMA = 'cc.evidence-commit/1';
+/** Future authenticated-evidence interface: `verifyAuthentication({ recordText, commitText }) === true`. Default: nothing verifies. */
+export const DEFAULT_EVIDENCE_TRUST_ANCHOR = Object.freeze({ verifyAuthentication: () => false });
+
+function createRevocation(directory, runId, io) {
+  try { const fd = io.openSync(path.join(directory, `${runId}.revoked`), fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600); io.closeSync(fd); return true; } catch { return false; }
+}
+
+/**
+ * Publish record + commit marker. A record is authoritative ONLY once `<runId>.commit.json` exists, binds the record's exact bytes
+ * and is itself atomically published after the record was durably confirmed. Existence of `<runId>.json` alone proves nothing.
+ * Any failure after the record became visible removes it; if removal fails a revocation marker is attempted, and in every case the
+ * missing commit keeps the record non-authoritative.
+ */
+export function publishEvidenceBundle(text, directory, runId, { io = fs } = {}) {
+  const record = writeEvidenceAtomically(text, directory, runId, { io });
+  if (!record.ok) { if (record.residualRecord) createRevocation(directory, runId, io); return record; }
+  const failAfterPublish = code => {
+    let residual = false;
+    try { io.unlinkSync(record.file); } catch { residual = true; }
+    if (residual) createRevocation(directory, runId, io);
+    return { ok: false, code, residualRecord: residual };
+  };
+  let back;
+  try { fsyncDirectory(directory, io); back = io.readFileSync(record.file, 'utf8'); } catch { return failAfterPublish('EVIDENCE_PERSISTENCE_FAILED'); }
+  if (back !== `${text}\n`) return failAfterPublish('EVIDENCE_PERSISTENCE_FAILED');
+  const commit = writeEvidenceAtomically(JSON.stringify({ schema: COMMIT_SCHEMA, runId, scopeId: ONE_CALL_SCOPE_ID, recordSha256: sha(back), recordBytes: Buffer.byteLength(back) }), directory, runId, { io, suffix: '.commit.json' });
+  if (!commit.ok) { const r = failAfterPublish(commit.code); if (commit.residualRecord) { r.residualRecord = true; createRevocation(directory, runId, io); } return r; }
+  return { ok: true, file: record.file, commitFile: commit.file };
+}
+
+/** Read the three artifacts of a run without following symlinks. Absence is reported as null, never as success. */
+export function loadEvidenceBundle(directory, runId, { io = fs } = {}) {
+  const read = name => {
+    try {
+      const fd = io.openSync(path.join(directory, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try { const st = io.fstatSync(fd); return st.isFile() && st.nlink === 1 ? io.readFileSync(fd, 'utf8') : null; } finally { io.closeSync(fd); }
+    } catch { return null; }
+  };
+  let revoked = false; try { io.lstatSync(path.join(directory, `${runId}.revoked`)); revoked = true; } catch (error) { revoked = error?.code !== 'ENOENT'; }
+  return { recordText: read(`${runId}.json`), commitText: read(`${runId}.commit.json`), revoked };
+}
+
+/**
+ * The only reader that may support a real-run decision. Nothing the record says about itself is trusted: the caller supplies the
+ * expected run, candidate, scope, budget, attestation identity, permit identity and execution mode, and an independent trust anchor
+ * that authenticates the record and its commit. Without every one of those the answer is BLOCKED. Self-hash + commit alone never pass.
+ */
+export function verifyAuthorizationGradeEvidence(bundle, trusted) {
+  try {
+    const anchor = trusted?.anchor;
+    if (typeof anchor?.verifyAuthentication !== 'function') return fail('TRUST_ANCHOR_MISSING_OR_UNVERIFIED');
+    if (!isValidRunId(trusted.runId) || !nonEmpty(trusted.candidate?.version) || !SHA256.test(trusted.candidate?.sha256 ?? '') || trusted.scopeId !== ONE_CALL_SCOPE_ID ||
+        trusted.attemptBudget !== 1 || !SHA256.test(trusted.attestationIdSha256 ?? '') || !SHA256.test(trusted.permitIdSha256 ?? '')) return fail('EXPECTATION_MISSING');
+    if (trusted.executionMode !== 'REAL_CANDIDATE') return fail('EXECUTION_MODE_NOT_REAL');
+    if (!isRecord(bundle)) return fail('RECORD_MISSING');
+    if (bundle.revoked !== false) return fail('EVIDENCE_REVOKED');
+    if (typeof bundle.recordText !== 'string') return fail('RECORD_MISSING');
+    if (typeof bundle.commitText !== 'string') return fail('COMMIT_MISSING');
+    const local = verifyOneCallEvidenceRecord(bundle.recordText, { runId: trusted.runId, candidate: trusted.candidate, attestationIdSha256: trusted.attestationIdSha256 });
+    if (!local.ok) return local;
+    const record = JSON.parse(bundle.recordText);
+    if (record.evidenceKind === 'OFFLINE_SIMULATION') return fail('OFFLINE_SIMULATION_NOT_REAL');
+    if (record.evidenceKind !== trusted.executionMode) return fail('PROVENANCE_MISMATCH');
+    if (record.runIdentity.permitIdSha256 !== trusted.permitIdSha256) return fail('PERMIT_IDENTITY_MISMATCH');
+    let commit; try { commit = JSON.parse(bundle.commitText); } catch { return fail('COMMIT_MALFORMED'); }
+    if (!isRecord(commit) || commit.schema !== COMMIT_SCHEMA || commit.runId !== trusted.runId || commit.scopeId !== ONE_CALL_SCOPE_ID) return fail('COMMIT_MALFORMED');
+    const bytes = `${bundle.recordText.replace(/\n$/, '')}\n`;
+    if (commit.recordSha256 !== sha(bytes) || commit.recordBytes !== Buffer.byteLength(bytes)) return fail('COMMIT_MISMATCH');
+    if (anchor.verifyAuthentication({ recordText: bundle.recordText, commitText: bundle.commitText }) !== true) return fail('TRUST_ANCHOR_MISSING_OR_UNVERIFIED');
+    return { ok: true, authorizationGrade: true, decision: local.decision };
+  } catch { return fail('TRUST_ANCHOR_MISSING_OR_UNVERIFIED'); }
+}
+
+/** LOCAL diagnostic only: complete, untampered-by-accident record of THIS run and scope. Never authorization-grade. */
 export function verifyOneCallEvidenceRecord(text, expected) {
   try {
     const record = JSON.parse(text);
@@ -170,6 +249,6 @@ export function verifyOneCallEvidenceRecord(text, expected) {
     if (id.candidate?.version !== expected.candidate.version || id.candidate?.sha256 !== expected.candidate.sha256) return fail('CANDIDATE_MISMATCH');
     if (!SHA256.test(record.bindingSha256 ?? '') || record.bindingSha256 !== bindingDigest(record)) return fail('BINDING_MISMATCH');
     if (expected.attestationIdSha256 !== undefined && id.attestationIdSha256 !== expected.attestationIdSha256) return fail('ATTESTATION_IDENTITY_MISMATCH');
-    return { ok: true, decision: record.decision };
+    return { ok: true, decision: record.decision, classification: EVIDENCE_CLASS_LOCAL, authorizationGrade: false };
   } catch { return fail('RECORD_UNREADABLE'); }
 }
