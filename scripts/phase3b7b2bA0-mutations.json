@@ -215,7 +215,8 @@
   "id": "journal: regular-file check dropped",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (!stat.isFile()) fail('JOURNAL_CORRUPT'",
-  "replace": "if (false) fail('JOURNAL_CORRUPT'"
+  "replace": "if (false) fail('JOURNAL_CORRUPT'",
+  "equivalent": "defence in depth: a directory fails the single-link check and a FIFO (opened non-blocking) reads zero bytes, which is invalid JSON; both are still refused as JOURNAL_CORRUPT"
  },
  {
   "id": "journal: hard links allowed",
