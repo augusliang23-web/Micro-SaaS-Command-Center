@@ -1,6 +1,6 @@
 {
   "phase": "3B7B2A-pr26-helper-fixes",
-  "sourceHead": "1b6044042946b86fba5a536f0ab10f80a6055994",
+  "sourceHead": "0127da2897cc9ff331db81047b7963eb1ebd74d3",
   "node": "v20.20.2",
   "baseline": {
     "code": 0,
@@ -10,11 +10,9 @@
   },
   "summary": {
     "total": 72,
-    "caught": 65,
-    "survivedEquivalent": 6,
-    "survivedUnexplained": [
-      "preflight: a mutating call is issued"
-    ],
+    "caught": 64,
+    "survivedEquivalent": 8,
+    "survivedUnexplained": [],
     "patternErrors": []
   },
   "results": [
@@ -24,17 +22,15 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
       "id": "create: image requirement dropped",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "CAUGHT",
-      "failures": 1,
-      "caughtBy": [
-        "test/agent-console-phase3b7b2-final.test.mjs"
-      ],
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
       "equivalent": "without the image, the whole argv becomes the \"command\", which the approved-command check refuses"
     },
     {
@@ -62,7 +58,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-final.test.mjs"
+        "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
     },
     {
@@ -86,9 +82,9 @@
       "id": "create: read-only optional",
       "file": "test/helpers/ownedDocker.mjs",
       "status": "CAUGHT",
-      "failures": 1,
+      "failures": 2,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-final.test.mjs"
+        "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
     },
     {
@@ -97,7 +93,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-final.test.mjs"
+        "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
     },
     {
@@ -115,7 +111,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-final.test.mjs"
+        "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
     },
     {
@@ -250,7 +246,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -303,7 +299,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-final.test.mjs"
+        "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
     },
     {
@@ -337,9 +333,9 @@
       "id": "cleanupAll: stops at the first leftover",
       "file": "test/helpers/ownedDocker.mjs",
       "status": "CAUGHT",
-      "failures": 1,
+      "failures": 2,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-final.test.mjs"
+        "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
     },
     {
@@ -497,7 +493,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -577,7 +573,8 @@
       "file": "test/helpers/dockerPreflight.mjs",
       "status": "SURVIVED",
       "failures": 0,
-      "caughtBy": null
+      "caughtBy": null,
+      "equivalent": "the OwnedDocker allow-list refuses stop/kill/rm of any id it did not create (and create without reserved names) before the call reaches the client, so an injected mutating call is inert — the wrapper itself is the second layer"
     },
     {
       "id": "e2e: fixture never preserved",
