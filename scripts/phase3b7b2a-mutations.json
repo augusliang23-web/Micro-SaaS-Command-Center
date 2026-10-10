@@ -1,0 +1,638 @@
+[
+ {
+  "id": "create: name reservation unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (!ctx.reservedNames.has(name)) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: image requirement dropped",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (imageAt < 0) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested",
+  "equivalent": "without the image, the whole argv becomes the \"command\", which the approved-command check refuses"
+ },
+ {
+  "id": "create: duplicate image allowed",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (args.indexOf(ctx.imageRef, imageAt + 1) >= 0) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested",
+  "equivalent": "a repeated image becomes part of the command, which the approved-command check refuses"
+ },
+ {
+  "id": "create: duplicate single flag allowed",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (single.has(key)) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: unknown flag allowed",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "fail(`unknown or unapproved option ${key}`);",
+  "replace": "continue;",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: missing flag allowed",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "for (const key of SINGLE_FLAGS) if (!single.has(key)) fail(`missing ${key}`);",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested",
+  "equivalent": "every single-value flag is also compared with its required value, so an absent flag fails that comparison"
+ },
+ {
+  "id": "create: multi-flag counts unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "for (const [key, n] of Object.entries(MULTI_FLAGS)) if ((multi.get(key) ?? []).length !== n) fail(",
+  "replace": "for (const [key, n] of []) if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: read-only optional",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (readOnly !== 1) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: network unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "eq('--pull', 'never'); eq('--network', 'none');",
+  "replace": "eq('--pull', 'never');",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: pull unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "eq('--pull', 'never'); eq('--network', 'none');",
+  "replace": "eq('--network', 'none');",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: cap-drop unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "eq('--cap-drop', 'ALL'); ",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: no-new-privileges unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "eq('--security-opt', 'no-new-privileges'); ",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: ipc unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "eq('--ipc', 'private'); ",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: workdir/log-driver unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "eq('--workdir', '/workspace'); eq('--log-driver', 'none');",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: label/name match unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "name !== `cc-sandbox-agent-${id.toLowerCase()}`",
+  "replace": "false",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: exact labels unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (JSON.stringify(labels) !== JSON.stringify(['cc.sandbox.id=' + id, 'cc.sandbox.role=agent', 'cc.sandbox=1'].sort())) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: memory upper bound dropped",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "Number(mem[1]) > CREATE_BOUNDS.memoryMb[1] || ",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: swap equality dropped",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "|| swap !== single.get('--memory')",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: cpu upper bound dropped",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "cpus <= CREATE_BOUNDS.cpus[1]",
+  "replace": "true",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: pids upper bound dropped",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "Number(pids) > CREATE_BOUNDS.pids[1]",
+  "replace": "false",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: root user allowed",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "/^([1-9]\\d*):(\\d+)$/",
+  "replace": "/^(\\d+):(\\d+)$/",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: user not tied to this process",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "Number(user[1]) !== ctx.uid || ",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: workspace need not be registered",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "|| !ctx.workspaces.has(wm[1])",
+  "replace": "",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: mounts not exact",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (JSON.stringify(mounts) !== JSON.stringify(expectedMounts)) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: tmpfs not exact",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (JSON.stringify([...multi.get('--tmpfs')]) !== JSON.stringify(['/tmp:rw,noexec,nosuid,nodev,size=64m'])) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: environment not exact",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (JSON.stringify([...multi.get('--env')].sort()) !== JSON.stringify([...REQUIRED_ENV].sort())) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: command not approved",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (!approved) fail(",
+  "replace": "if (false) fail(",
+  "also": [
+   {
+    "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+    "replace": ""
+   }
+  ],
+  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+ },
+ {
+  "id": "create: production guard skipped",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "try { assertDockerArgs(args, { image: { reference: ctx.imageRef }, allowedBindSources: [wm[1], maskSrc] }); } catch (error) { fail(`production guard: ${error.message}`); }",
+  "replace": "",
+  "equivalent": "the wrapper validator is deliberately stricter than the production guard in every respect it checks, so the production guard adds no rejection beyond it (kept as an unchanged second layer)"
+ },
+ {
+  "id": "ownership: name patterns accepted",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "#isReservedName(ref) { return this.reservedNames.has(ref) || this.ownedNames.has(ref); }",
+  "replace": "#isReservedName(ref) { return /^cc-sandbox-agent-/.test(ref); }"
+ },
+ {
+  "id": "ownership: any 64-hex id accepted",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "#isOwnedId(ref) { return HEX64.test(ref) && this.owned.has(ref); }",
+  "replace": "#isOwnedId(ref) { return HEX64.test(ref); }"
+ },
+ {
+  "id": "ownership: inspect shape unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (args.length !== 4 || args[1] !== '--type=container' || !args[2].startsWith('--format=')) throw",
+  "replace": "if (false) throw"
+ },
+ {
+  "id": "ownership: stop/kill/rm shape unchecked",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (!shape) throw new PolicyError(",
+  "replace": "if (false) throw new PolicyError("
+ },
+ {
+  "id": "ownership: stream any container",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "|| !this.#isOwnedId(args[2])) throw new PolicyError('only `start -a <owned container id>` may be streamed');",
+  "replace": "|| false) throw new PolicyError('only `start -a <owned container id>` may be streamed');"
+ },
+ {
+  "id": "existence: error counted as absent",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "catch { return 'UNKNOWN'; }\n    if (r.spawnError",
+  "replace": "catch { return 'ABSENT'; }\n    if (r.spawnError"
+ },
+ {
+  "id": "existence: unrecognized answer counted as absent",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "return /no such (object|container)/i.test(r.stderr ?? '') ? 'ABSENT' : 'UNKNOWN';\n  }\n  async realState",
+  "replace": "return 'ABSENT';\n  }\n  async realState"
+ },
+ {
+  "id": "cleanupAll: stops at the first leftover",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (state !== 'ABSENT') leftovers.push(id.slice(0, 12));",
+  "replace": "if (state !== 'ABSENT') { leftovers.push(id.slice(0, 12)); break; }"
+ },
+ {
+  "id": "cleanupAll: unknown counted as removed",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "if (state !== 'ABSENT') leftovers.push(id.slice(0, 12));",
+  "replace": "if (state === 'PRESENT') leftovers.push(id.slice(0, 12));"
+ },
+ {
+  "id": "cleanupAll: a throwing removal aborts the sweep",
+  "file": "test/helpers/ownedDocker.mjs",
+  "find": "try { state = await this.forceRemove(id); } catch (error) { this.cleanupErrors.push({ id: id.slice(0, 12), error: String(error?.message ?? error).slice(0, 120) }); state = 'UNKNOWN'; }",
+  "replace": "state = await this.forceRemove(id);"
+ },
+ {
+  "id": "fence: pause not released after a failure",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "pause?.release();\n  if (starting) {",
+  "replace": "if (starting) {"
+ },
+ {
+  "id": "fence: unconfirmed stop/destroy accepted",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (res?.state !== want) throw new UnknownOutcomeError(",
+  "replace": "if (false) throw new UnknownOutcomeError("
+ },
+ {
+  "id": "fence: wait for the pre-launch inspect unbounded",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "await bounded(pause.reached, waitMs, 'start() to reach its pre-launch inspect');",
+  "replace": "await pause.reached;"
+ },
+ {
+  "id": "fence: stop/destroy wait unbounded",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "const res = await bounded(rt[op](sandboxId), settleMs, `runtime.${op}`);",
+  "replace": "const res = await rt[op](sandboxId);"
+ },
+ {
+  "id": "fence: stranded start not reported",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length || strandedStart) throw",
+  "replace": "if (leftovers.length) throw"
+ },
+ {
+  "id": "fence: launch after confirmed cancel tolerated",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "assert.equal(h.owned.count('start'), 0, `still no launch after ${op} was confirmed`);",
+  "replace": "",
+  "equivalent": "the same invariant is asserted again after the release (no Docker start command was ever issued) and through the BLOCKED outcome of start()"
+ },
+ {
+  "id": "closeOut: scratch deleted despite leftovers",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length === 0) { try { scratch?.cleanup(); } catch { /* best effort */ } } else if (scratch) h.preserved.push(scratch.root);",
+  "replace": "try { scratch?.cleanup(); } catch { /* best effort */ }"
+ },
+ {
+  "id": "dispose: state root deleted despite leftovers",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length === 0) { try { fs.rmSync(stateRoot, { recursive: true, force: true }); } catch { /* best effort */ } } else h.stateRootPreserved = true;",
+  "replace": "try { fs.rmSync(stateRoot, { recursive: true, force: true }); } catch { /* best effort */ }"
+ },
+ {
+  "id": "assertClosed: ignores leftovers",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "function assertClosed(leftovers, what) { if (leftovers.length) throw",
+  "replace": "function assertClosed(leftovers, what) { if (false) throw",
+  "equivalent": "gone() throws the same UnknownOutcomeError for the exact id right afterwards (see the combined mutation below, which IS caught)"
+ },
+ {
+  "id": "gone: absence assumed",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (state !== 'ABSENT') throw new UnknownOutcomeError(",
+  "replace": "if (false) throw new UnknownOutcomeError(",
+  "equivalent": "closeOut's exact-id sweep and assertClosed re-prove absence immediately afterwards; gone() is a second layer"
+ },
+ {
+  "id": "guard: never halts",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (failure instanceof UnknownOutcomeError || failure instanceof WaitTimeoutError || leftovers.length) guard.halted =",
+  "replace": "if (false) guard.halted ="
+ },
+ {
+  "id": "guard: unconfirmed cleanup passes",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length) throw new UnknownOutcomeError(`owned containers not confirmed absent: ${leftovers}`);",
+  "replace": ""
+ },
+ {
+  "id": "guard: halted suite still runs",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (guard.halted) { t?.skip?.(`suite halted: ${guard.halted}`); return 'skipped'; }",
+  "replace": ""
+ },
+ {
+  "id": "bounded: late rejection left unhandled",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "original.catch(() => {}); // a late rejection after the timeout must not become an unhandled rejection",
+  "replace": "",
+  "equivalent": "Promise.race subscribes to the original promise itself, so a late rejection is handled with or without the explicit catch"
+ },
+ {
+  "id": "fault matrix: continues after a failure",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (failure || preserved.length) break; // never continue to another live case after a failure or an uncertain cleanup",
+  "replace": ""
+ },
+ {
+  "id": "assertClosed and gone both ignore leftovers",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "function assertClosed(leftovers, what) { if (leftovers.length) throw",
+  "replace": "function assertClosed(leftovers, what) { if (false) throw",
+  "also": [
+   {
+    "find": "if (state !== 'ABSENT') throw new UnknownOutcomeError(`${what}: the exact owned container is ${state}, not proven absent`);",
+    "replace": "void state;"
+   }
+  ]
+ },
+ {
+  "id": "preflight: OwnedDocker built without a state root (the original bug)",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "stateRoot: stateRoot ?? temp }); // constructor/programming errors propagate",
+  "replace": "stateRoot: undefined }); // constructor/programming errors propagate"
+ },
+ {
+  "id": "preflight: programming errors swallowed",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "const owned = new OwnedDocker({ inner, imageRef, stateRoot: stateRoot ?? temp }); // constructor/programming errors propagate",
+  "replace": "let owned; try { owned = new OwnedDocker({ inner, imageRef, stateRoot: stateRoot ?? temp }); } catch { return { ok: false, reason: 'DOCKER_PROBE_FAILED' }; }"
+ },
+ {
+  "id": "preflight: non-zero daemon exit treated as available",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "if (v.spawnError || v.timedOut || v.exitCode !== 0) return",
+  "replace": "if (v.spawnError || v.timedOut) return"
+ },
+ {
+  "id": "preflight: non-Linux engine accepted",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "if (server?.Os !== 'linux') return",
+  "replace": "if (false) return"
+ },
+ {
+  "id": "preflight: missing image treated as available",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "if (img.spawnError || img.timedOut || img.exitCode !== 0) return",
+  "replace": "if (img.spawnError || img.timedOut) return"
+ },
+ {
+  "id": "preflight: platform not checked",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "info?.Architecture !== entry.arch || ",
+  "replace": ""
+ },
+ {
+  "id": "preflight: digest not checked",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "|| !(info?.RepoDigests ?? []).includes(entry.reference)",
+  "replace": ""
+ },
+ {
+  "id": "preflight: temp directory left behind",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "finally { if (temp) fs.rmSync(temp, { recursive: true, force: true }); }",
+  "replace": "finally { }"
+ },
+ {
+  "id": "preflight: a mutating call is issued",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "const v = await owned.run(['version', '--format={{json .Server}}']);",
+  "replace": "await owned.run(['rm', '--force', 'f'.repeat(64)]).catch(() => {}); const v = await owned.run(['version', '--format={{json .Server}}']);",
+  "equivalent": "the OwnedDocker allow-list refuses stop/kill/rm of any id it did not create (and create without reserved names) before the call reaches the client, so an injected mutating call is inert \u2014 the wrapper itself is the second layer"
+ },
+ {
+  "id": "e2e: fixture never preserved",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "{ keepRoot: () => preserve }",
+  "replace": "{ keepRoot: () => false }"
+ },
+ {
+  "id": "e2e: fixture always preserved",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "{ keepRoot: () => preserve }",
+  "replace": "{ keepRoot: () => true }"
+ },
+ {
+  "id": "e2e: leftovers not reported",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length) throw new UnknownOutcomeError(`end-to-end:",
+  "replace": "if (false) throw new UnknownOutcomeError(`end-to-end:"
+ },
+ {
+  "id": "e2e: approvals removed despite leftovers",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length) { preserve = true; h.preserved.push(f.root); if (approvals) h.preserved.push(approvals.dir); } else { approvals?.done(); }",
+  "replace": "if (leftovers.length) { preserve = true; h.preserved.push(f.root); } approvals?.done();"
+ },
+ {
+  "id": "e2e: owned-container sweep skipped",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "leftovers = await h.owned.cleanupAll();\n    if (leftovers.length) { preserve",
+  "replace": "leftovers = [];\n    if (leftovers.length) { preserve"
+ },
+ {
+  "id": "e2e: setup failure preserved as unknown",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length) { preserve = true;",
+  "replace": "if (true) { preserve = true;"
+ },
+ {
+  "id": "shared fixture: keepRoot ignored",
+  "file": "test/helpers/phase2Fixture.mjs",
+  "find": "if (!(typeof keepRoot === 'function' && keepRoot() === true))",
+  "replace": "if (true)"
+ },
+ {
+  "id": "shared fixture: nothing is ever removed",
+  "file": "test/helpers/phase2Fixture.mjs",
+  "find": "if (!(typeof keepRoot === 'function' && keepRoot() === true))",
+  "replace": "if (false)"
+ },
+ {
+  "id": "shared fixture: truthy keepRoot preserves",
+  "file": "test/helpers/phase2Fixture.mjs",
+  "find": "keepRoot() === true))",
+  "replace": "keepRoot()))"
+ }
+]
