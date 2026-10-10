@@ -1,4 +1,4 @@
-import { CONTAINER_ID_PATTERN, IMAGE_DIGEST_PATTERN, LABEL_KEYS, validateIdentityRecord } from './executionIdentity.mjs';
+import { CONTAINER_ID_PATTERN, IMAGE_DIGEST_PATTERN, LABEL_KEYS, validateIdentityRecord, validateIdentityRecords } from './executionIdentity.mjs';
 
 // Phase 3B7B2B-A0: OFFLINE recovery classification. A PURE function over data the caller already holds: journal records and a
 // container listing. It performs no Docker call, adopts nothing and removes nothing; its output contains no "remove" action.
@@ -47,8 +47,15 @@ function mismatches(record, c) {
  */
 export function classifyExecutions({ records, corrupt = [], containers, listingComplete }) {
   const entries = [];
-  const blocked = corrupt.length > 0 || listingComplete !== true || !Array.isArray(records) || !Array.isArray(containers);
-  const blockReason = corrupt.length > 0 ? 'JOURNAL_CORRUPT' : listingComplete !== true ? 'DOCKER_LISTING_INCOMPLETE' : 'INVALID_INPUT';
+  const corruptInput = !Array.isArray(corrupt) || corrupt.length > 0;
+  const setProblems = validateIdentityRecords(records);
+  // Array.from materializes sparse holes: a missing listing entry is malformed evidence, never absence.
+  const containerProblems = Array.isArray(containers) && (Array.from(containers).some(c => !normalizeContainer(c)) ||
+    new Set(containers.map(c => normalizeContainer(c)?.id)).size !== containers.length ||
+    new Set(containers.map(c => normalizeContainer(c)?.name)).size !== containers.length);
+  const blocked = corruptInput || listingComplete !== true || !Array.isArray(records) || !Array.isArray(containers) || setProblems.length > 0 || containerProblems;
+  const blockReason = corruptInput ? 'JOURNAL_CORRUPT' : listingComplete !== true ? 'DOCKER_LISTING_INCOMPLETE' :
+    setProblems.length ? 'INVALID_JOURNAL_SET' : containerProblems ? 'INVALID_CONTAINER_LISTING' : 'INVALID_INPUT';
   const unknown = (extra) => ({ classification: 'UNKNOWN', executionOutcome: 'UNKNOWN', operatorIntervention: true, recommendedAction: 'OPERATOR_REVIEW', eligibleForVerifiedAdoption: false, ...extra });
 
   const validRecords = [];
@@ -58,7 +65,7 @@ export function classifyExecutions({ records, corrupt = [], containers, listingC
   }
   if (blocked) {
     for (const record of validRecords) entries.push(unknown({ runId: record.runId, containerId: record.containerId, reason: blockReason }));
-    for (const raw of Array.isArray(containers) ? containers : []) entries.push(unknown({ runId: null, containerId: normalizeContainer(raw)?.id ?? null, reason: blockReason }));
+    for (const raw of Array.isArray(containers) ? containers : []) entries.push(unknown({ runId: null, containerId: normalizeContainer(raw)?.id ?? null, reason: normalizeContainer(raw) ? blockReason : 'MALFORMED_CONTAINER' }));
     return finish(entries, true);
   }
 
@@ -92,18 +99,19 @@ export function classifyExecutions({ records, corrupt = [], containers, listingC
       entries.push(unknown({ runId: null, containerId: c.id, reason: 'DUPLICATE_CONTAINER_IDENTITY' }));
       continue;
     }
-    if (!claimsOwnership(c)) { entries.push({ classification: 'OTHER', executionOutcome: null, operatorIntervention: false, recommendedAction: 'NONE', eligibleForVerifiedAdoption: false, runId: null, containerId: c.id, reason: 'NOT_CLAIMING_OWNERSHIP' }); continue; }
     const byId = recordsByContainer.get(c.id) ?? [];
     if (byId.length > 1) { for (const r of byId) matchedRecords.add(r.runId); entries.push(unknown({ runId: null, containerId: c.id, reason: 'DUPLICATE_JOURNAL_IDENTITY' })); continue; }
     if (byId.length === 1) {
       const [record] = byId; matchedRecords.add(record.runId);
       const wrong = mismatches(record, c);
       if (wrong.length > 0) { entries.push(unknown({ runId: record.runId, containerId: c.id, reason: `IDENTITY_MISMATCH:${wrong.join(',')}` })); continue; }
+      if (record.stage === 'UNKNOWN') { entries.push(unknown({ runId: record.runId, containerId: c.id, reason: 'TERMINAL_UNKNOWN' })); continue; }
       // Present and exact. A DESTROYED record with a live container is inconsistent; every other stage was interrupted by the restart.
       const reason = record.stage === 'DESTROYED' ? 'DESTROYED_RECORD_BUT_CONTAINER_PRESENT' : 'EXECUTION_INTERRUPTED';
       entries.push({ classification: record.stage === 'DESTROYED' ? 'UNKNOWN' : 'KNOWN', executionOutcome: 'UNKNOWN', operatorIntervention: record.stage === 'DESTROYED', recommendedAction: record.stage === 'DESTROYED' ? 'OPERATOR_REVIEW' : 'REPORT_TO_OPERATOR', eligibleForVerifiedAdoption: record.stage !== 'DESTROYED', runId: record.runId, containerId: c.id, reason });
       continue;
     }
+    if (!claimsOwnership(c)) { entries.push({ classification: 'OTHER', executionOutcome: null, operatorIntervention: false, recommendedAction: 'NONE', eligibleForVerifiedAdoption: false, runId: null, containerId: c.id, reason: 'NOT_CLAIMING_OWNERSHIP' }); continue; }
     // No record holds this container id. If a record claims the same sandbox/name, a lookalike (or a crash between create and journal
     // write) is possible: ambiguous, never an orphan and never adoptable.
     const sandboxId = c.labels['cc.sandbox.id'];

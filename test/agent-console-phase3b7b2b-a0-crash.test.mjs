@@ -482,3 +482,186 @@ test('the journal does not use or require Docker, a socket, a network or a crede
   assert.ok(ExecutionIdentityJournal);
   void path; void taskId;
 });
+
+test('R2 valid but conflicting identities corrupt scan after restart and block all authorization',()=>{
+  const cases=[
+    ['sandbox',(a,b)=>({...b,sandboxId:a.sandboxId,containerName:a.containerName,labels:{...a.labels}})],
+    ['container',(a,b)=>({...b,containerId:a.containerId})],
+    ['name',(a,b)=>({...b,sandboxId:a.sandboxId.toLowerCase(),containerName:a.containerName,labels:{...b.labels,'cc.sandbox.id':a.sandboxId.toLowerCase()}})],
+    ['generation',(a,b)=>({...b,taskId:a.taskId,executionGeneration:1})],
+    ['active',(a,b)=>({...b,taskId:a.taskId,executionGeneration:2})],
+    ['gap',(a,b)=>({...b,taskId:a.taskId,executionGeneration:3})],
+  ];
+  for(const [label,change] of cases){const dir=tempRoot();let j;try{
+    j=openJournal(dir.root);let a=j.createPlanned({...planned(1),sandboxId:'ABCDEF-123456'});a=j.transition(a.runId,a.revision,'CREATED',{containerId:cid('c')});let b=createdRun(j,2);j.close();
+    if(label==='gap'){a={...a,stage:'DESTROYED'};fs.writeFileSync(recordPath(dir.root,a.runId),JSON.stringify(a),{mode:0o600});}
+    b=change(a,b);fs.writeFileSync(recordPath(dir.root,b.runId),JSON.stringify(b),{mode:0o600});const before=fs.readFileSync(recordPath(dir.root,b.runId),'utf8');
+    j=openJournal(dir.root);assert.ok(j.scan().corrupt.length>0,label);assert.throws(()=>j.createPlanned(planned(3)),code('JOURNAL_CORRUPT'));assert.throws(()=>j.authorizeStart(a.runId,a.revision),code('JOURNAL_CORRUPT'));assert.equal(fs.readFileSync(recordPath(dir.root,b.runId),'utf8'),before);
+  }finally{j?.close();dir.cleanup();}}
+});
+
+test('R4 every malformed lock field blocks takeover and writer ownership checks',()=>{
+  const mutations=[l=>({...l,schemaVersion:2}),l=>({...l,token:''}),l=>({...l,token:'x'.repeat(32)}),l=>({...l,token:'a'.repeat(32)+'\n'}),l=>({...l,hostname:'h\n'}),l=>({...l,pid:-1}),l=>({...l,pid:0}),l=>({...l,pid:'777'}),l=>({...l,pid:1.5}),l=>({...l,pid:Number.MAX_SAFE_INTEGER+1}),l=>({...l,token:'A'.repeat(32)}),l=>({...l,hostname:'bad host'}),l=>({...l,hostname:'a..b'}),l=>({...l,hostname:'/tmp/h'}),l=>({...l,acquiredAt:'2026-01-01T00:00:00Z'}),l=>({...l,hostname:''}),l=>({...l,acquiredAt:'bad'}),l=>({...l,acquiredAt:'2026-02-30T00:00:00.000Z'}),l=>{const x={...l};delete x.token;return x;},l=>({...l,extra:true})];
+  for(const mutate of mutations){const fx=freshJournal({pid:777,hostname:'h'});try{const file=path.join(fx.root,'writer.lock');const lock=JSON.parse(fs.readFileSync(file,'utf8'));const body=JSON.stringify(mutate(lock));fs.writeFileSync(file,body,{mode:0o600});let aliveChecks=0;assert.throws(()=>openJournal(fx.root,{pid:888,hostname:'h',isProcessAlive:()=>{aliveChecks++;return false;}}),code('JOURNAL_LOCKED'));assert.equal(aliveChecks,0);assert.throws(()=>fx.journal.scan(),code('JOURNAL_LOCKED'));assert.equal(fs.readFileSync(file,'utf8'),body);}finally{fx.cleanup();}}
+});
+
+test('R5 exclusive temporary collision refuses without overwriting or deleting the planted file',()=>{
+  const dir=tempRoot();let j,temp;let armed=false;
+  const io={...fs,openSync(file,...args){if(armed&&file.includes(`${runId(1)}.json.tmp-`)){temp=file;fs.writeFileSync(file,'COLLISION_SENTINEL',{mode:0o600});}return fs.openSync(file,...args);}};
+  try{j=openJournal(dir.root,{fsImpl:io});armed=true;assert.throws(()=>j.createPlanned(planned(1)),code('JOURNAL_IO'));assert.equal(fs.readFileSync(temp,'utf8'),'COLLISION_SENTINEL');assert.equal(fs.existsSync(recordPath(dir.root,runId(1))),false);}finally{j?.close();dir.cleanup();}
+});
+
+test('R5 a structurally valid different read-back record is refused',()=>{
+  const dir=tempRoot();let j;let armed=false;
+  const io={...fs,renameSync(from,to){fs.renameSync(from,to);if(armed&&to===recordPath(dir.root,runId(1))){const r=JSON.parse(fs.readFileSync(to,'utf8'));fs.writeFileSync(to,JSON.stringify({...r,revision:r.revision+7}),{mode:0o600});}}};
+  try{j=openJournal(dir.root,{fsImpl:io});armed=true;assert.throws(()=>j.createPlanned(planned(1)),code('JOURNAL_IO'));}finally{j?.close();dir.cleanup();}
+});
+
+test('R5 clock rollback is rejected before invalid bytes reach durable storage',()=>{
+  const dir=tempRoot();let j;let time=Date.UTC(2026,0,1);
+  try{j=openJournal(dir.root,{now:()=>new Date(time).toISOString()});const r=createdRun(j);const before=fs.readFileSync(recordPath(dir.root,r.runId),'utf8');time-=1000;assert.throws(()=>j.transition(r.runId,r.revision,'UNKNOWN'),e=>e.code==='INVALID_INPUT');assert.equal(fs.readFileSync(recordPath(dir.root,r.runId),'utf8'),before);}finally{j?.close();dir.cleanup();}
+});
+
+test('start tickets reject same-revision on-disk stage and writer epoch changes', () => {
+  for (const change of [r => ({ ...r, stage: 'STOPPING' }), r => ({ ...r, writerEpoch: r.writerEpoch + 1 })]) {
+    const fx = freshJournal();
+    try {
+      const r = createdRun(fx.journal);
+      const ticket = fx.journal.authorizeStart(r.runId, r.revision);
+      const file = recordPath(fx.root, r.runId);
+      const altered = JSON.stringify(change(readRecordFile(fx.root, r.runId)));
+      fs.writeFileSync(file, altered, { mode: 0o600 });
+      assert.equal(fx.journal.scan().corrupt.length, 0, 'the adversarial record is structurally valid');
+      assert.throws(() => fx.journal.assertStartAuthorized(ticket), code('START_NOT_AUTHORIZED'));
+      assert.equal(fs.readFileSync(file, 'utf8'), altered);
+    } finally { fx.cleanup(); }
+  }
+});
+
+test('unrelated corruption blocks both new authorization and an existing durable start ticket', () => {
+  const fx = freshJournal();
+  try {
+    const a = createdRun(fx.journal);
+    const ticket = fx.journal.authorizeStart(a.runId, a.revision);
+    const b = createdRun(fx.journal, 2);
+    fs.writeFileSync(recordPath(fx.root, runId(9)), '{', { mode: 0o600 });
+    assert.throws(() => fx.journal.authorizeStart(b.runId, b.revision), code('JOURNAL_CORRUPT'));
+    assert.throws(() => fx.journal.assertStartAuthorized(ticket), code('JOURNAL_CORRUPT'));
+  } finally { fx.cleanup(); }
+});
+
+test('a record appearing after directory enumeration cannot be overwritten by createPlanned', () => {
+  const dir = tempRoot(); let journal; let armed = false; let planted;
+  const io = { ...fs, readdirSync(directory, ...args) {
+    const names = fs.readdirSync(directory, ...args);
+    if (armed && directory === path.join(dir.root, 'records')) {
+      armed = false;
+      planted = JSON.stringify({ ...seed, revision: 9 });
+      fs.writeFileSync(recordPath(dir.root, runId(1)), planted, { mode: 0o600 });
+    }
+    return names;
+  } };
+  let seed;
+  try {
+    journal = openJournal(dir.root, { fsImpl: io });
+    seed = journal.createPlanned(planned(1));
+    fs.rmSync(recordPath(dir.root, runId(1)));
+    armed = true;
+    assert.throws(() => journal.createPlanned(planned(1)), code('DUPLICATE_RUN'));
+    assert.equal(fs.readFileSync(recordPath(dir.root, runId(1)), 'utf8'), planted);
+  } finally { journal?.close(); dir.cleanup(); }
+});
+
+test('a readable non-regular record is refused before parsing', () => {
+  const dir = tempRoot(); let journal; let armed = false; const fds = new Set();
+  const io = { ...fs, openSync(file, ...args) {
+    const fd = fs.openSync(file, ...args);
+    if (file === recordPath(dir.root, runId(1))) fds.add(fd); else fds.delete(fd);
+    return fd;
+  }, fstatSync(fd) {
+    const stat = fs.fstatSync(fd);
+    return armed && fds.has(fd) ? Object.create(stat, { isFile: { value: () => false } }) : stat;
+  } };
+  try {
+    journal = openJournal(dir.root, { fsImpl: io });
+    createdRun(journal); armed = true;
+    assert.throws(() => journal.get(runId(1)), code('JOURNAL_CORRUPT'));
+    assert.ok(journal.scan().corrupt.length > 0);
+  } finally { journal?.close(); dir.cleanup(); }
+});
+
+test('malformed lock refusal preserves operator-required error and closed journals do not inspect it', () => {
+  const fx = freshJournal();
+  try {
+    const file = path.join(fx.root, 'writer.lock');
+    fs.writeFileSync(file, '{}', { mode: 0o600 });
+    assert.throws(() => fx.journal.scan(), code('JOURNAL_LOCKED'));
+    fx.journal.close();
+    assert.throws(() => fx.journal.scan(), code('JOURNAL_NOT_OWNER'));
+    assert.equal(fs.readFileSync(file, 'utf8'), '{}');
+  } finally { fx.cleanup(); }
+});
+
+test('lock creation refuses invalid own identity and uncertain process liveness cannot justify takeover', () => {
+  for (const overrides of [{ pid: 0 }, { pid: 1.5 }, { pid: Number.MAX_SAFE_INTEGER + 1 }, { hostname: 'bad host' }, { now: () => '2026-02-30T00:00:00.000Z' }]) {
+    const dir = tempRoot();
+    try {
+      assert.throws(() => openJournal(dir.root, overrides), code('JOURNAL_LOCKED'));
+      assert.equal(fs.existsSync(path.join(dir.root, 'writer.lock')), false);
+    } finally { dir.cleanup(); }
+  }
+  for (const alive of [null, undefined, 0, 'false']) {
+    const fx = freshJournal({ pid: 777, hostname: 'h' });
+    try {
+      const before = fs.readFileSync(path.join(fx.root, 'writer.lock'), 'utf8');
+      assert.throws(() => openJournal(fx.root, { pid: 888, hostname: 'h', isProcessAlive: () => alive }), code('JOURNAL_LOCKED'));
+      assert.equal(fs.readFileSync(path.join(fx.root, 'writer.lock'), 'utf8'), before);
+    } finally { fx.cleanup(); }
+  }
+});
+
+test('same-token replacement by a different writer is fenced and never released by close', () => {
+  for (const change of [l => ({ ...l, pid: l.pid + 1 }), l => ({ ...l, hostname: 'another-host' })]) {
+    const fx = freshJournal();
+    try {
+      const file = path.join(fx.root, 'writer.lock');
+      const replacement = JSON.stringify(change(JSON.parse(fs.readFileSync(file, 'utf8'))));
+      fs.writeFileSync(file, replacement, { mode: 0o600 });
+      assert.throws(() => fx.journal.scan(), code('JOURNAL_NOT_OWNER'));
+      fx.journal.close();
+      assert.equal(fs.readFileSync(file, 'utf8'), replacement);
+    } finally { fx.cleanup(); }
+  }
+});
+
+test('clock rollback between valid revisions is rejected before persistence', () => {
+  const dir = tempRoot(); let j; let time = Date.UTC(2026, 0, 1);
+  try {
+    j = openJournal(dir.root, { now: () => new Date(time).toISOString() });
+    const plannedRecord = j.createPlanned(planned(1));
+    time += 1000;
+    const created = j.transition(plannedRecord.runId, plannedRecord.revision, 'CREATED', { containerId: cid('c') });
+    const before = fs.readFileSync(recordPath(dir.root, created.runId), 'utf8');
+    time -= 500;
+    assert.throws(() => j.transition(created.runId, created.revision, 'UNKNOWN'), e => e.code === 'INVALID_INPUT');
+    assert.equal(fs.readFileSync(recordPath(dir.root, created.runId), 'utf8'), before);
+  } finally { j?.close(); dir.cleanup(); }
+});
+
+test('a listed record disappearing during scan is corruption, not an empty healthy journal', () => {
+  const dir = tempRoot(); let journal; let armed = false;
+  const io = { ...fs, readdirSync(directory, ...args) {
+    const names = fs.readdirSync(directory, ...args);
+    if (armed && directory === path.join(dir.root, 'records')) {
+      armed = false; fs.rmSync(recordPath(dir.root, runId(1)));
+    }
+    return names;
+  } };
+  try {
+    journal = openJournal(dir.root, { fsImpl: io });
+    journal.createPlanned(planned(1)); armed = true;
+    const scan = journal.scan();
+    assert.ok(scan.corrupt.length > 0);
+    assert.deepEqual(scan.records, []);
+  } finally { journal?.close(); dir.cleanup(); }
+});

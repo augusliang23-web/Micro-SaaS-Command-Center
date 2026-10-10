@@ -151,6 +151,9 @@ test('a container id can be recorded only on PLANNED -> CREATED, exactly once, a
     const a = fx.journal.createPlanned(planned(1));
     assert.throws(() => fx.journal.transition(runId(1), a.revision, 'CREATED'), icode('INVALID_INPUT'));
     assert.throws(() => fx.journal.transition(runId(1), a.revision, 'CREATED', { containerId: 'short' }), icode('INVALID_INPUT'));
+    const before = fs.readFileSync(recordPath(fx.root, runId(1)), 'utf8');
+    assert.throws(() => fx.journal.transition(runId(1), a.revision, 'CREATED', { containerId: null }), icode('INVALID_INPUT'));
+    assert.equal(fs.readFileSync(recordPath(fx.root, runId(1)), 'utf8'), before);
     assert.throws(() => fx.journal.transition(runId(1), a.revision, 'UNKNOWN', { containerId: cid('c') }), icode('INVALID_INPUT'));
     const created = fx.journal.transition(runId(1), a.revision, 'CREATED', { containerId: cid('c') });
     assert.equal(created.containerId, cid('c'));

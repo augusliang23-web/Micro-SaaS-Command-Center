@@ -60,7 +60,7 @@ const sameKeys = (value, keys) => {
   const own = Object.keys(value);
   return own.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 };
-const validTimestamp = (value) => {
+export const validTimestamp = (value) => {
   if (typeof value !== 'string' || !TIMESTAMP_PATTERN.test(value)) return false;
   const time = Date.parse(value);
   return Number.isFinite(time) && new Date(time).toISOString() === value;
@@ -112,6 +112,35 @@ export function validateIdentityRecord(record, { stateRootId } = {}) {
 export function assertStageTransition(from, to) {
   if (!EXECUTION_STAGES.includes(from) || !EXECUTION_STAGES.includes(to)) throw new IdentityError('ILLEGAL_TRANSITION', 'Unknown execution stage');
   if (!STAGE_TRANSITIONS[from].includes(to)) throw new IdentityError('ILLEGAL_TRANSITION', `Illegal execution stage transition ${from} -> ${to}`);
+}
+
+/** A trustworthy journal is a coherent set, not merely individually valid JSON files. */
+export function validateIdentityRecords(records, options = {}) {
+  if (!Array.isArray(records)) return ['records is not an array'];
+  const problems = [];
+  const seen = Object.fromEntries(['runId', 'sandboxId', 'containerId', 'containerName'].map(k => [k, new Set()]));
+  const tasks = new Map(); const roots = new Set();
+  for (const record of records) {
+    if (validateIdentityRecord(record, options).length) { problems.push('invalid record in identity set'); continue; }
+    roots.add(record.stateRootId);
+    for (const key of Object.keys(seen)) {
+      if (record[key] === null) continue;
+      if (seen[key].has(record[key])) problems.push(`duplicate ${key}`);
+      seen[key].add(record[key]);
+    }
+    tasks.set(record.taskId, [...(tasks.get(record.taskId) ?? []), record]);
+  }
+  if (roots.size > 1) problems.push('identity set mixes state roots');
+  for (const executions of tasks.values()) {
+    const ordered = [...executions].sort((a,b) => a.executionGeneration - b.executionGeneration);
+    ordered.forEach((record,index) => {
+      if (record.executionGeneration !== index + 1) problems.push('duplicate or non-contiguous execution generation');
+      const previous = ordered[index - 1];
+      if (previous && previous.stage !== 'DESTROYED') problems.push('conflicting active executions for one task');
+      if (previous && (record.createdAt < previous.updatedAt || record.writerEpoch < previous.writerEpoch)) problems.push('invalid execution generation history');
+    });
+  }
+  return [...new Set(problems)];
 }
 
 /**

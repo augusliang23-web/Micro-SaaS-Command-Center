@@ -2,13 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 
-import { classifyExecutions, CLASSIFICATIONS } from '../server/execution/identity/recoveryClassifier.mjs';
+import { classifyExecutions as classifyRaw, CLASSIFICATIONS } from '../server/execution/identity/recoveryClassifier.mjs';
 import { OTHER_DIGEST, cid, container, planned, runId, freshJournal, openJournal, tempRoot } from './helpers/identityFixture.mjs';
 
 // OFFLINE ONLY: classification over fake Docker data. No daemon is contacted; nothing is adopted, stopped or removed.
 
 const input = (fx, containers, extra = {}) => { const s = fx.journal.scan(); return { records: s.records, corrupt: s.corrupt, containers, listingComplete: true, ...extra }; };
 const one = (result, pred) => { const hit = result.entries.filter(pred); assert.equal(hit.length, 1, JSON.stringify(result.entries)); return hit[0]; };
+const classifyExecutions = (evidence) => {
+  let result;
+  assert.doesNotThrow(() => { result = classifyRaw(evidence); }, 'malformed evidence must be classified, never crash the caller');
+  return result;
+};
 
 function created(journal, n, ch) {
   const a = journal.createPlanned(planned(n));
@@ -153,16 +158,20 @@ test('duplicates are ambiguous: the same container id or name listed twice, or t
   try {
     const r = created(fx.journal, 1, 'c');
     const twice = classifyExecutions(input(fx, [container(r), container(r)]));
-    assert.deepEqual(twice.entries.filter((e) => e.containerId === cid('c')).map((e) => e.classification), ['UNKNOWN', 'UNKNOWN']);
+    assert.equal(twice.blocked, true);
+    assert.ok(twice.entries.every((e) => e.classification === 'UNKNOWN' && !e.eligibleForVerifiedAdoption));
     const sameId = classifyExecutions(input(fx, [container(r), container(r, { name: 'cc-sandbox-agent-run-20260101-00000abc' })]));
+    assert.equal(sameId.blocked, true);
     assert.equal(sameId.entries.some((e) => e.classification === 'KNOWN'), false, 'one id listed under two names is ambiguous');
     assert.equal(sameId.entries.some((e) => e.classification === 'MISSING'), false);
     const sameName = classifyExecutions(input(fx, [container(r), container(r, { id: cid('b') })]));
+    assert.equal(sameName.blocked, true);
     assert.equal(sameName.entries.some((e) => e.classification === 'KNOWN'), false);
     const r2 = { ...r, runId: runId(2), sandboxId: runId(2), containerName: 'cc-sandbox-agent-run-20260101-00000002', labels: { ...r.labels, 'cc.sandbox.id': runId(2) } };
     const dupRecords = classifyExecutions({ records: [r, r2], corrupt: [], containers: [container(r)], listingComplete: true });
     assert.equal(dupRecords.entries.some((e) => e.classification === 'KNOWN'), false);
-    assert.equal(dupRecords.entries.some((e) => e.reason === 'DUPLICATE_JOURNAL_IDENTITY'), true);
+    assert.equal(dupRecords.blocked, true);
+    assert.ok(dupRecords.entries.every((e) => e.reason === 'INVALID_JOURNAL_SET'));
   } finally { fx.cleanup(); }
 });
 
@@ -174,10 +183,12 @@ test('malformed container data or malformed records are UNKNOWN and never throw'
     const result = classifyExecutions({ records: [r], corrupt: [], containers: garbage, listingComplete: true });
     assert.equal(result.entries.filter((e) => e.reason === 'MALFORMED_CONTAINER').length, garbage.length);
     const unreadable = classifyExecutions({ records: [r], corrupt: [], containers: [{ id: r.containerId, name: '', labels: {} }], listingComplete: true });
-    assert.deepEqual(unreadable.entries.map((e) => `${e.classification}:${e.reason}`), ['UNKNOWN:MALFORMED_CONTAINER'], 'a present-but-unreadable container is not an absent one');
+    assert.equal(unreadable.blocked, true);
+    assert.ok(unreadable.entries.every((e) => e.classification === 'UNKNOWN'), 'a present-but-unreadable container is not an absent one');
     const bad = classifyExecutions({ records: [{ nope: true }, null, r], corrupt: [], containers: [container(r)], listingComplete: true });
     assert.equal(bad.entries.filter((e) => e.reason === 'INVALID_RECORD').length, 2);
-    assert.equal(bad.entries.find((e) => e.runId === runId(1)).classification, 'KNOWN');
+    assert.equal(bad.blocked, true);
+    assert.ok(bad.entries.every((e) => e.classification === 'UNKNOWN' && e.executionOutcome === 'UNKNOWN' && e.operatorIntervention && !e.eligibleForVerifiedAdoption));
   } finally { fx.cleanup(); }
 });
 
@@ -271,5 +282,80 @@ test('only KNOWN entries are ever eligible for verified adoption, and only with 
     const mixed = [container(r), container(r, { id: cid('f'), name: 'cc-sandbox-agent-run-20260101-00000001' })];
     const result = classifyExecutions(input(fx, mixed));
     for (const e of result.entries) assert.equal(e.eligibleForVerifiedAdoption, e.classification === 'KNOWN' && e.containerId === r.containerId);
+  } finally { fx.cleanup(); }
+});
+
+test('R1 exact recorded ID present with changed ownership is never OTHER plus SETTLED', () => {
+  const fx=freshJournal();
+  try {
+    let r=created(fx.journal,1,'c');r=fx.journal.transition(r.runId,r.revision,'DESTROYED');
+    for(const over of [{name:'foreign'},{labels:{}},{labels:{...r.labels,'cc.sandbox':'0'}},{labels:{...r.labels,'cc.sandbox.role':'verifier'}},{imageDigest:OTHER_DIGEST}]){
+      const result=classifyExecutions(input(fx,[container(r,over)]));
+      assert.equal(result.entries.some(e=>e.executionOutcome==='SETTLED'||e.classification==='OTHER'),false);
+      const e=result.entries.find(e=>e.runId===r.runId);
+      assert.equal(e.classification,'UNKNOWN');assert.equal(e.executionOutcome,'UNKNOWN');assert.equal(e.operatorIntervention,true);assert.equal(e.eligibleForVerifiedAdoption,false);
+    }
+    const absent=classifyExecutions(input(fx,[]));assert.equal(absent.entries[0].reason,'DESTROYED_AND_ABSENT');assert.equal(absent.entries[0].executionOutcome,'SETTLED');
+  } finally {fx.cleanup();}
+});
+
+test('R3 terminal UNKNOWN never becomes trusted or adoption eligible even with exact identity',()=>{
+  const fx=freshJournal();try{
+    let r=created(fx.journal,1,'c');r=fx.journal.transition(r.runId,r.revision,'UNKNOWN');
+    for(const c of [container(r),container(r,{name:'foreign'})]){const result=classifyExecutions(input(fx,[c]));const e=result.entries.find(e=>e.runId===r.runId);assert.equal(e.classification,'UNKNOWN');assert.equal(e.executionOutcome,'UNKNOWN');assert.equal(e.operatorIntervention,true);assert.equal(e.eligibleForVerifiedAdoption,false);assert.equal(e.containerId,r.containerId);}
+    assert.throws(()=>fx.journal.authorizeStart(r.runId,r.revision));
+  }finally{fx.cleanup();}
+});
+
+test('global corrupt or ambiguous recovery input never yields KNOWN or SETTLED',()=>{
+  const fx=freshJournal();try{
+    const r=created(fx.journal,1,'c');const destroyed={...r,stage:'DESTROYED'};
+    const cases=[{records:[r,null]},{records:[destroyed,{}],containers:[]},{corrupt:[{reason:'invalid'}]},{corrupt:null},{records:null},{containers:[container(r),{id:cid('e')}]},{containers:[container(r),container(r)]},{listingComplete:false}];
+    for(const over of cases){const result=classifyExecutions({records:[r],corrupt:[],containers:[container(r)],listingComplete:true,...over});assert.equal(result.blocked,true);assert.equal(result.entries.some(e=>e.classification==='KNOWN'||e.executionOutcome==='SETTLED'||e.eligibleForVerifiedAdoption),false);}
+  }finally{fx.cleanup();}
+});
+
+test('R2 classifier independently blocks all coherent-looking cross-record conflicts', () => {
+  const fx = freshJournal();
+  try {
+    const a = created(fx.journal, 1, 'c');
+    const b = created(fx.journal, 2, 'b');
+    const changes = [
+      { ...b, sandboxId: a.sandboxId, containerName: a.containerName, labels: { ...a.labels } },
+      { ...b, containerId: a.containerId },
+      { ...b, taskId: a.taskId, executionGeneration: 1 },
+      { ...b, taskId: a.taskId, executionGeneration: 2 },
+      { ...b, taskId: a.taskId, executionGeneration: 3 },
+      { ...b, stateRootId: 'f'.repeat(32) },
+    ];
+    for (const conflicting of changes) {
+      const result = classifyExecutions({ records: [a, conflicting], corrupt: [], containers: [container(a), container(conflicting)], listingComplete: true });
+      assert.equal(result.blocked, true);
+      assert.ok(result.entries.every(e => e.classification === 'UNKNOWN' && e.operatorIntervention && !e.eligibleForVerifiedAdoption));
+    }
+    const destroyed = fx.journal.transition(a.runId, a.revision, 'DESTROYED');
+    const lawful = { ...b, taskId: a.taskId, executionGeneration: 2, createdAt: destroyed.updatedAt, updatedAt: destroyed.updatedAt };
+    const clean = classifyExecutions({ records: [destroyed, lawful], corrupt: [], containers: [container(lawful)], listingComplete: true });
+    assert.equal(clean.blocked, false);
+    assert.equal(clean.entries.find(e => e.runId === a.runId).executionOutcome, 'SETTLED');
+    assert.equal(clean.entries.find(e => e.runId === b.runId).classification, 'KNOWN');
+    for (const invalid of [{ ...lawful, createdAt: a.createdAt }, { ...lawful, writerEpoch: lawful.writerEpoch + 1, executionGeneration: 4 }]) {
+      const result = classifyExecutions({ records: [destroyed, invalid], corrupt: [], containers: [], listingComplete: true });
+      assert.equal(result.blocked, true);
+      assert.ok(result.entries.every(e => e.executionOutcome === 'UNKNOWN'));
+    }
+  } finally { fx.cleanup(); }
+});
+
+test('sparse arrays are incomplete malformed evidence, never proof of container absence', () => {
+  const fx = freshJournal();
+  try {
+    const a = created(fx.journal, 1, 'c');
+    const destroyed = fx.journal.transition(a.runId, a.revision, 'DESTROYED');
+    for (const input of [{ records: [destroyed], containers: Array(1) }, { records: Array(1), containers: [] }]) {
+      const result = classifyExecutions({ ...input, corrupt: [], listingComplete: true });
+      assert.equal(result.blocked, true);
+      assert.ok(result.entries.every(e => e.classification === 'UNKNOWN' && e.executionOutcome === 'UNKNOWN'));
+    }
   } finally { fx.cleanup(); }
 });

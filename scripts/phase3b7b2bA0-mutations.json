@@ -178,7 +178,16 @@
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "|| root === path.parse(root).root) {",
   "replace": "|| false) {",
-  "equivalent": "'/' also ends with '/', which the trailing-slash rule on the same line refuses with the same JOURNAL_PATH code"
+  "equivalentWithProof": {
+   "rationale": "On the supported POSIX filesystem, the only filesystem root is /. The preceding root.endsWith('/') condition rejects it before either implementation performs filesystem operations, with identical JOURNAL_PATH refusal.",
+   "assumptions": [
+    "The supported deployment and this offline verification use POSIX Node path semantics."
+   ],
+   "evidence": [
+    "identityJournal.mjs constructor retains root.endsWith('/') in the same rejection condition.",
+    "Removing only root === path.parse(root).root cannot admit the POSIX root /."
+   ]
+  }
  },
  {
   "id": "journal: directory permissions unchecked",
@@ -203,7 +212,16 @@
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (stat.isSymbolicLink() || !stat.isDirectory()) fail('JOURNAL_PATH'",
   "replace": "if (!stat.isDirectory()) fail('JOURNAL_PATH'",
-  "equivalent": "an lstat of a symlink reports isDirectory() === false, so the second condition alone still refuses it"
+  "equivalentWithProof": {
+   "rationale": "For coherent Node lstat Stats, a symbolic-link inode is not a directory inode. Therefore isSymbolicLink() implies !isDirectory(), and removing the first disjunct preserves rejection.",
+   "assumptions": [
+    "fsImpl.lstatSync preserves the mutually exclusive Node filesystem type predicates; contradictory synthetic Stats are outside this proof."
+   ],
+   "evidence": [
+    "identityJournal.mjs #prepareDirectory uses lstatSync, not statSync.",
+    "The unchanged !stat.isDirectory() condition refuses every real symbolic link with JOURNAL_PATH."
+   ]
+  }
  },
  {
   "id": "journal: symlinks followed when reading",
@@ -215,8 +233,7 @@
   "id": "journal: regular-file check dropped",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (!stat.isFile()) fail('JOURNAL_CORRUPT'",
-  "replace": "if (false) fail('JOURNAL_CORRUPT'",
-  "equivalent": "defence in depth: a directory fails the single-link check and a FIFO (opened non-blocking) reads zero bytes, which is invalid JSON; both are still refused as JOURNAL_CORRUPT"
+  "replace": "if (false) fail('JOURNAL_CORRUPT'"
  },
  {
   "id": "journal: hard links allowed",
@@ -252,8 +269,7 @@
   "id": "journal: temp file may overwrite",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "fd = this.#fs.openSync(temp, 'wx', 0o600);",
-  "replace": "fd = this.#fs.openSync(temp, 'w', 0o600);",
-  "equivalent": "the temp name carries 32 random bits, so an exclusive-create collision cannot be provoked offline"
+  "replace": "fd = this.#fs.openSync(temp, 'w', 0o600);"
  },
  {
   "id": "journal: file fsync skipped",
@@ -270,8 +286,8 @@
  {
   "id": "journal: temp file left behind on failure",
   "file": "server/execution/identity/identityJournal.mjs",
-  "find": "try { this.#fs.rmSync(temp, { force: true }); }",
-  "replace": "try { this.#fs.rmSync(`${temp}-x`, { force: true }); }"
+  "find": "try { if (tempOwned) this.#fs.rmSync(temp, { force: true }); }",
+  "replace": "try { if (tempOwned) this.#fs.rmSync(`${temp}-x`, { force: true }); }"
  },
  {
   "id": "journal: directory flush failure swallowed",
@@ -284,7 +300,18 @@
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (payload.length > MAX_FILE_BYTES) fail('JOURNAL_IO'",
   "replace": "if (false) fail('JOURNAL_IO'",
-  "equivalent": "records are far below the limit; a write larger than 16 KiB cannot be produced through the validated schema"
+  "equivalentWithProof": {
+   "rationale": "Every value passed to private #atomicWrite is a validated identity record or bounded meta object. The maximum validated pretty-printed identity JSON including newline is 862 UTF-8 bytes, below MAX_FILE_BYTES=16384. The meta object is smaller.",
+   "assumptions": [
+    "The current exact schema and fixed derived fields remain unchanged.",
+    "Only existing private callers invoke #atomicWrite; validation succeeds before invocation."
+   ],
+   "evidence": [
+    "executionIdentity.mjs RECORD_KEYS, identifier patterns, 41-character sandboxId maximum, closed role/stage sets, fixed timestamps and positive safe integers bound every serialized field.",
+    "Maximal valid record uses verifier, START_AUTHORIZED, 41 ASCII sandbox characters, 64-hex container/digest, 32-hex root and Number.MAX_SAFE_INTEGER counts; serialization is 862 bytes.",
+    "identityJournal.mjs #openMeta passes only schemaVersion, stateRootId and epoch; #commit validates the identity before writing."
+   ]
+  }
  },
  {
   "id": "journal: lock exclusivity dropped",
@@ -296,19 +323,18 @@
   "id": "journal: malformed lock tolerated",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "fail('JOURNAL_LOCKED', 'The writer lock exists but is malformed; operator intervention is required');",
-  "replace": "return null;",
-  "equivalent": "returning null instead of failing leads to the next check, which fails the open with JOURNAL_LOCKED (or JOURNAL_NOT_OWNER on the write path): same refusal, different message"
+  "replace": "return null;"
  },
  {
   "id": "journal: other host lock taken over",
   "file": "server/execution/identity/identityJournal.mjs",
-  "find": "if (existing.hostname !== this.#hostname || this.#isProcessAlive(existing.pid))",
-  "replace": "if (this.#isProcessAlive(existing.pid))"
+  "find": "if (existing.hostname !== this.#hostname || this.#isProcessAlive(existing.pid) !== false)",
+  "replace": "if (this.#isProcessAlive(existing.pid) !== false)"
  },
  {
   "id": "journal: live holder lock taken over",
   "file": "server/execution/identity/identityJournal.mjs",
-  "find": "if (existing.hostname !== this.#hostname || this.#isProcessAlive(existing.pid))",
+  "find": "if (existing.hostname !== this.#hostname || this.#isProcessAlive(existing.pid) !== false)",
   "replace": "if (existing.hostname !== this.#hostname)"
  },
  {
@@ -320,26 +346,25 @@
  {
   "id": "journal: takeover re-check dropped",
   "file": "server/execution/identity/identityJournal.mjs",
-  "find": "if (again === null || again.token !== existing.token) fail('JOURNAL_LOCKED', 'The writer lock changed during takeover');",
+  "find": "if (again === null || JSON.stringify(again) !== JSON.stringify(existing)) fail('JOURNAL_LOCKED', 'The writer lock changed during takeover');",
   "replace": ""
  },
  {
   "id": "journal: lock ownership not fenced",
   "file": "server/execution/identity/identityJournal.mjs",
-  "find": "if (lock === null || lock.token !== this.#token) fail('JOURNAL_NOT_OWNER'",
+  "find": "if (lock === null || lock.token !== this.#token || lock.pid !== this.#pid || lock.hostname !== this.#hostname) fail('JOURNAL_NOT_OWNER'",
   "replace": "if (false) fail('JOURNAL_NOT_OWNER'"
  },
  {
   "id": "journal: closed journal still usable",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (this.#closed || this.#token === null) fail('JOURNAL_NOT_OWNER', 'The journal is closed');",
-  "replace": "",
-  "equivalent": "close() clears the token, so the lock comparison refuses a closed journal independently (the lock file is gone or carries another token)"
+  "replace": ""
  },
  {
   "id": "journal: close removes a foreign lock",
   "file": "server/execution/identity/identityJournal.mjs",
-  "find": "if (lock && lock.token === this.#token) this.#fs.rmSync(this.#lockFile());",
+  "find": "if (lock && lock.token === this.#token && lock.pid === this.#pid && lock.hostname === this.#hostname) this.#fs.rmSync(this.#lockFile());",
   "replace": "if (lock) this.#fs.rmSync(this.#lockFile());"
  },
  {
@@ -447,9 +472,8 @@
  {
   "id": "journal: authorization ignores corrupt journal",
   "file": "server/execution/identity/identityJournal.mjs",
-  "find": "    this.#assertOwner();\n    this.#healthyScan();\n    const next = this.#advance(runId, expectedRevision, 'START_AUTHORIZED', undefined);",
-  "replace": "    this.#assertOwner();\n    const next = this.#advance(runId, expectedRevision, 'START_AUTHORIZED', undefined);",
-  "equivalent": "the stage change itself validates and rewrites only the one record; the corruption guard on this path is defence in depth beside createPlanned()"
+  "find": "  #advance(runId, expectedRevision, toStage, containerId) {\n    const { records } = this.#healthyScan();",
+  "replace": "  #advance(runId, expectedRevision, toStage, containerId) {\n    const { records } = this.scan();"
  },
  {
   "id": "journal: authorization not epoch bound",
@@ -467,8 +491,7 @@
   "id": "journal: authorization stage unchecked",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (record.stage !== 'START_AUTHORIZED') return denied(",
-  "replace": "if (false) return denied(",
-  "equivalent": "every stage change bumps the revision, so the revision comparison already rejects an authorization whose record moved on"
+  "replace": "if (false) return denied("
  },
  {
   "id": "journal: authorization revision unchecked",
@@ -480,8 +503,7 @@
   "id": "journal: authorization writer epoch unchecked",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (record.revision !== authorization.revision || record.writerEpoch !== this.#epoch) return denied(",
-  "replace": "if (record.revision !== authorization.revision) return denied(",
-  "equivalent": "a record's writerEpoch always equals the authorization's epoch here (authorizeStart stamps both), which the separate epoch check already enforces"
+  "replace": "if (record.revision !== authorization.revision) return denied("
  },
  {
   "id": "journal: authorization identity unchecked",
@@ -505,8 +527,7 @@
   "id": "journal: container id format unchecked on create",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (typeof containerId !== 'string' || !CONTAINER_ID_PATTERN.test(containerId)) fail('INVALID_INPUT'",
-  "replace": "if (false) fail('INVALID_INPUT'",
-  "equivalent": "the same malformed id is rejected with the same INVALID_INPUT code by the record validation inside #commit"
+  "replace": "if (false) fail('INVALID_INPUT'"
  },
  {
   "id": "journal: duplicate container id allowed",
@@ -525,33 +546,40 @@
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (previous && (record.revision !== previous.revision + 1)) fail('STALE_REVISION', 'Revision must advance by exactly one');",
   "replace": "",
-  "equivalent": "revision is always previous + 1 by construction in #advance, so this is a defensive assertion"
+  "equivalentWithProof": {
+   "rationale": "The sole private stage-update caller builds revision as current.revision + 1 and passes the same current object as previous. Creation passes null. An overflow is rejected by record validation before the redundant assertion.",
+   "assumptions": [
+    "Private #commit is reachable only from createPlanned and #advance.",
+    "Parsed current records have ordinary data properties and are not mutated through injected callbacks."
+   ],
+   "evidence": [
+    "identityJournal.mjs #advance constructs next.revision=current.revision+1 and invokes #commit(next,current,records).",
+    "executionIdentity.mjs validateIdentityRecord requires positive safe-integer revision; #commit runs it before the revision-step assertion."
+   ]
+  }
  },
  {
   "id": "journal: existing run overwritten on create",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (!previous && this.#fs.existsSync(file)) fail('DUPLICATE_RUN'",
-  "replace": "if (false) fail('DUPLICATE_RUN'",
-  "equivalent": "createPlanned() already rejects an existing run id from its own scan before reaching this defensive check"
+  "replace": "if (false) fail('DUPLICATE_RUN'"
  },
  {
   "id": "journal: read-back verification dropped",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (JSON.stringify(onDisk) !== JSON.stringify(record)) fail('JOURNAL_IO'",
-  "replace": "if (false) fail('JOURNAL_IO'",
-  "equivalent": "would only differ if the filesystem returned data other than what was just written, which an offline test cannot make happen"
+  "replace": "if (false) fail('JOURNAL_IO'"
  },
  {
   "id": "journal: record not validated before commit",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "if (problems.length > 0) fail('INVALID_INPUT', `Refusing to persist an invalid record",
-  "replace": "if (false) fail('INVALID_INPUT', `Refusing to persist an invalid record",
-  "equivalent": "defence in depth: records are built from validated values (buildPlannedRecord validates; #advance changes only a checked stage and checked container id) so a valid input cannot reach commit invalid"
+  "replace": "if (false) fail('INVALID_INPUT', `Refusing to persist an invalid record"
  },
  {
   "id": "classifier: corrupt journal does not block",
   "file": "server/execution/identity/recoveryClassifier.mjs",
-  "find": "const blocked = corrupt.length > 0 ||",
+  "find": "const blocked = corruptInput ||",
   "replace": "const blocked = false ||"
  },
  {
@@ -594,25 +622,73 @@
   "id": "classifier: duplicate container id not ambiguous",
   "file": "server/execution/identity/recoveryClassifier.mjs",
   "find": "if (idCount.get(c.id) > 1 || nameCount.get(c.name) > 1) {",
-  "replace": "if (nameCount.get(c.name) > 1) {"
+  "replace": "if (nameCount.get(c.name) > 1) {",
+  "equivalentWithProof": {
+   "rationale": "The local duplicate-ID predicate cannot be true on an unblocked input: the unchanged global normalized-ID Set cardinality check rejects duplicate IDs and returns first.",
+   "assumptions": [
+    "Classifier inputs are stable ordinary data during the synchronous call; custom getters, proxies or callbacks that mutate inputs are outside this reachability proof.",
+    "All unchanged global validators and the early blocked return remain enabled."
+   ],
+   "evidence": [
+    "recoveryClassifier.mjs containerProblems materializes sparse holes with Array.from and rejects any normalizeContainer failure.",
+    "containerProblems rejects duplicate normalized container IDs and names before the matching loop.",
+    "blocked includes containerProblems and returns finish(entries,true) before any local container-matching branch."
+   ]
+  }
  },
  {
   "id": "classifier: duplicate container name not ambiguous",
   "file": "server/execution/identity/recoveryClassifier.mjs",
   "find": "if (idCount.get(c.id) > 1 || nameCount.get(c.name) > 1) {",
-  "replace": "if (idCount.get(c.id) > 1) {"
+  "replace": "if (idCount.get(c.id) > 1) {",
+  "equivalentWithProof": {
+   "rationale": "The local duplicate-name predicate cannot be true on an unblocked input: the unchanged global normalized-name Set cardinality check rejects duplicate names and returns first.",
+   "assumptions": [
+    "Classifier inputs are stable ordinary data during the synchronous call; custom getters, proxies or callbacks that mutate inputs are outside this reachability proof.",
+    "All unchanged global validators and the early blocked return remain enabled."
+   ],
+   "evidence": [
+    "recoveryClassifier.mjs containerProblems materializes sparse holes with Array.from and rejects any normalizeContainer failure.",
+    "containerProblems rejects duplicate normalized container IDs and names before the matching loop.",
+    "blocked includes containerProblems and returns finish(entries,true) before any local container-matching branch."
+   ]
+  }
  },
  {
   "id": "classifier: duplicate container leaves its record MISSING",
   "file": "server/execution/identity/recoveryClassifier.mjs",
   "find": "      for (const r of [...(recordsByContainer.get(c.id) ?? []), ...(recordsByName.get(c.name) ?? [])]) matchedRecords.add(r.runId);\n",
-  "replace": ""
+  "replace": "",
+  "equivalentWithProof": {
+   "rationale": "The matchedRecords update is inside the local duplicate-container branch. Both duplicate IDs and names cause the unchanged global blocked return before this branch, so deleting its update cannot affect an observable result.",
+   "assumptions": [
+    "Classifier inputs are stable ordinary data during the synchronous call; custom getters, proxies or callbacks that mutate inputs are outside this reachability proof.",
+    "All unchanged global validators and the early blocked return remain enabled."
+   ],
+   "evidence": [
+    "recoveryClassifier.mjs containerProblems materializes sparse holes with Array.from and rejects any normalizeContainer failure.",
+    "containerProblems rejects duplicate normalized container IDs and names before the matching loop.",
+    "blocked includes containerProblems and returns finish(entries,true) before any local container-matching branch."
+   ]
+  }
  },
  {
   "id": "classifier: unreadable container leaves its record MISSING",
   "file": "server/execution/identity/recoveryClassifier.mjs",
   "find": "      for (const r of recordsByContainer.get(id) ?? []) matchedRecords.add(r.runId);\n",
-  "replace": ""
+  "replace": "",
+  "equivalentWithProof": {
+   "rationale": "The matchedRecords update is inside the local !normalizeContainer branch. Every malformed entry, including sparse holes, triggers the unchanged global containerProblems return, so this update is unreachable.",
+   "assumptions": [
+    "Classifier inputs are stable ordinary data during the synchronous call; custom getters, proxies or callbacks that mutate inputs are outside this reachability proof.",
+    "All unchanged global validators and the early blocked return remain enabled."
+   ],
+   "evidence": [
+    "recoveryClassifier.mjs containerProblems materializes sparse holes with Array.from and rejects any normalizeContainer failure.",
+    "containerProblems rejects duplicate normalized container IDs and names before the matching loop.",
+    "blocked includes containerProblems and returns finish(entries,true) before any local container-matching branch."
+   ]
+  }
  },
  {
   "id": "classifier: non-owned container reported as ours",
@@ -624,7 +700,18 @@
   "id": "classifier: duplicate journal identity picks one",
   "file": "server/execution/identity/recoveryClassifier.mjs",
   "find": "if (byId.length > 1) {",
-  "replace": "if (false) {"
+  "replace": "if (false) {",
+  "equivalentWithProof": {
+   "rationale": "The local byId.length>1 branch cannot be reached: validateIdentityRecords reports duplicate non-null containerId values, and setProblems blocks and returns before building recordsByContainer.",
+   "assumptions": [
+    "Classifier inputs are stable ordinary data during the synchronous call; custom getters, proxies or callbacks that mutate inputs are outside this reachability proof.",
+    "All unchanged global validators and the early blocked return remain enabled."
+   ],
+   "evidence": [
+    "executionIdentity.mjs validateIdentityRecords reports every duplicate non-null containerId in its seen set.",
+    "recoveryClassifier.mjs blocked includes setProblems.length>0 and returns before recordsByContainer is built."
+   ]
+  }
  },
  {
   "id": "classifier: identity mismatch accepted as KNOWN",
@@ -703,5 +790,137 @@
   "file": "server/execution/identity/recoveryClassifier.mjs",
   "find": "if (validateIdentityRecord(record).length > 0) entries.push(",
   "replace": "if (false) entries.push("
+ },
+ {
+  "id": "classifier: global identity set corruption does not block",
+  "file": "server/execution/identity/recoveryClassifier.mjs",
+  "find": "|| setProblems.length > 0 ||",
+  "replace": "|| false ||"
+ },
+ {
+  "id": "classifier: global malformed container evidence does not block",
+  "file": "server/execution/identity/recoveryClassifier.mjs",
+  "find": "Array.from(containers).some(c => !normalizeContainer(c)) ||",
+  "replace": "false ||"
+ },
+ {
+  "id": "classifier: global duplicate container ids do not block",
+  "file": "server/execution/identity/recoveryClassifier.mjs",
+  "find": "new Set(containers.map(c => normalizeContainer(c)?.id)).size !== containers.length ||",
+  "replace": "false ||"
+ },
+ {
+  "id": "classifier: global duplicate container names do not block",
+  "file": "server/execution/identity/recoveryClassifier.mjs",
+  "find": "new Set(containers.map(c => normalizeContainer(c)?.name)).size !== containers.length",
+  "replace": "false"
+ },
+ {
+  "id": "classifier: sparse listing holes not materialized",
+  "file": "server/execution/identity/recoveryClassifier.mjs",
+  "find": "Array.from(containers).some(c => !normalizeContainer(c))",
+  "replace": "containers.some(c => !normalizeContainer(c))"
+ },
+ {
+  "id": "classifier: terminal UNKNOWN exact identity becomes adoptable",
+  "file": "server/execution/identity/recoveryClassifier.mjs",
+  "find": "if (record.stage === 'UNKNOWN') { entries.push(unknown({ runId: record.runId, containerId: c.id, reason: 'TERMINAL_UNKNOWN' })); continue; }",
+  "replace": ""
+ },
+ {
+  "id": "classifier: OTHER precedes exact recorded container ID",
+  "file": "server/execution/identity/recoveryClassifier.mjs",
+  "find": "    const byId = recordsByContainer.get(c.id) ?? [];",
+  "replace": "    if (!claimsOwnership(c)) { entries.push({ classification: 'OTHER', executionOutcome: null, operatorIntervention: false, recommendedAction: 'NONE', eligibleForVerifiedAdoption: false, runId: null, containerId: c.id, reason: 'NOT_CLAIMING_OWNERSHIP' }); continue; }\n    const byId = recordsByContainer.get(c.id) ?? [];",
+  "also": [
+   {
+    "find": "    if (!claimsOwnership(c)) { entries.push({ classification: 'OTHER', executionOutcome: null, operatorIntervention: false, recommendedAction: 'NONE', eligibleForVerifiedAdoption: false, runId: null, containerId: c.id, reason: 'NOT_CLAIMING_OWNERSHIP' }); continue; }\n",
+    "replace": ""
+   }
+  ]
+ },
+ {
+  "id": "journal: strict existing lock validation bypassed",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "if (lock !== null && !validLock(lock)) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "journal: generated writer identity validation bypassed",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "if (!validLock(body)) fail('JOURNAL_LOCKED', 'Invalid writer identity; operator intervention is required');",
+  "replace": ""
+ },
+ {
+  "id": "journal: writer lock exact fields unchecked",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "sameKeys(lock, LOCK_KEYS) && lock.schemaVersion",
+  "replace": "true && lock.schemaVersion"
+ },
+ {
+  "id": "journal: writer lock schemaVersion unchecked",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "lock.schemaVersion === IDENTITY_SCHEMA_VERSION &&",
+  "replace": "true &&"
+ },
+ {
+  "id": "journal: writer lock token unchecked",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "typeof lock.token === 'string' && lock.token.length === 32 && /^[0-9a-f]{32}$/.test(lock.token) &&",
+  "replace": "true &&"
+ },
+ {
+  "id": "journal: writer lock PID unchecked",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "Number.isSafeInteger(lock.pid) && lock.pid > 0 &&",
+  "replace": "true &&"
+ },
+ {
+  "id": "journal: writer lock hostname unchecked",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "typeof lock.hostname === 'string' && lock.hostname.length <= 253 && !/[^A-Za-z0-9_.-]/.test(lock.hostname) && lock.hostname.split('.').every(label => /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9])?$/.test(label)) &&",
+  "replace": "true &&"
+ },
+ {
+  "id": "journal: writer lock acquiredAt unchecked",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "validTimestamp(lock.acquiredAt);",
+  "replace": "true;"
+ },
+ {
+  "id": "journal: ownership PID not fenced",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": " || lock.pid !== this.#pid",
+  "replace": ""
+ },
+ {
+  "id": "journal: ownership hostname not fenced",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": " || lock.hostname !== this.#hostname",
+  "replace": ""
+ },
+ {
+  "id": "journal: close removes a lock with foreign PID",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": " && lock.pid === this.#pid",
+  "replace": ""
+ },
+ {
+  "id": "journal: close removes a lock with foreign hostname",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": " && lock.hostname === this.#hostname",
+  "replace": ""
+ },
+ {
+  "id": "journal: writer lock token trailing newline accepted",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "lock.token.length === 32 &&",
+  "replace": ""
+ },
+ {
+  "id": "journal: writer lock hostname trailing newline accepted",
+  "file": "server/execution/identity/identityJournal.mjs",
+  "find": "!/[^A-Za-z0-9_.-]/.test(lock.hostname) &&",
+  "replace": ""
  }
 ]

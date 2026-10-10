@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { RUN_ID_PATTERN } from '../../tasks/types.mjs';
 import {
   IDENTITY_SCHEMA_VERSION, STATE_ROOT_ID_PATTERN, TERMINAL_STAGES, CONTAINER_ID_PATTERN,
-  assertStageTransition, buildPlannedRecord, validateIdentityRecord,
+  assertStageTransition, buildPlannedRecord, validateIdentityRecord, validateIdentityRecords, validTimestamp,
 } from './executionIdentity.mjs';
 
 // Phase 3B7B2B-A0: ExecutionIdentityJournal. A durable, single-writer record of which container belongs to which execution.
@@ -30,6 +30,10 @@ const RECORD_FILE = /^(RUN-\d{8}-[0-9a-f]{8})\.json$/;
 const TEMP_FILE = /^RUN-\d{8}-[0-9a-f]{8}\.json\.tmp-\d+-[0-9a-f]{8}$/;
 const META_KEYS = ['schemaVersion', 'stateRootId', 'epoch'];
 const LOCK_KEYS = ['schemaVersion', 'token', 'pid', 'hostname', 'acquiredAt'];
+const validLock = lock => sameKeys(lock, LOCK_KEYS) && lock.schemaVersion === IDENTITY_SCHEMA_VERSION &&
+  typeof lock.token === 'string' && lock.token.length === 32 && /^[0-9a-f]{32}$/.test(lock.token) && Number.isSafeInteger(lock.pid) && lock.pid > 0 &&
+  typeof lock.hostname === 'string' && lock.hostname.length <= 253 && !/[^A-Za-z0-9_.-]/.test(lock.hostname) && lock.hostname.split('.').every(label => /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9])?$/.test(label)) &&
+  validTimestamp(lock.acquiredAt);
 
 const hex = (bytes) => randomBytes(bytes).toString('hex');
 const sameKeys = (value, keys) => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every((k) => Object.hasOwn(value, k));
@@ -110,9 +114,10 @@ export class ExecutionIdentityJournal {
     const temp = `${file}.tmp-${this.#pid}-${hex(4)}`;
     const payload = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
     if (payload.length > MAX_FILE_BYTES) fail('JOURNAL_IO', 'A journal record is larger than allowed');
-    let fd;
+    let fd; let tempOwned = false;
     try {
       fd = this.#fs.openSync(temp, 'wx', 0o600);
+      tempOwned = true;
       let offset = 0;
       while (offset < payload.length) {
         const written = this.#fs.writeSync(fd, payload, offset, payload.length - offset);
@@ -125,7 +130,7 @@ export class ExecutionIdentityJournal {
       this.#fs.renameSync(temp, file);
     } catch (error) {
       if (fd !== undefined) { try { this.#fs.closeSync(fd); } catch { /* already failing */ } }
-      try { this.#fs.rmSync(temp, { force: true }); } catch { /* a leftover temp file is reported by scan() */ }
+      try { if (tempOwned) this.#fs.rmSync(temp, { force: true }); } catch { /* a leftover temp file is reported by scan() */ }
       throw error instanceof JournalError ? error : new JournalError('JOURNAL_IO', `A journal write failed: ${error?.code ?? 'error'}`);
     }
     try {
@@ -141,6 +146,7 @@ export class ExecutionIdentityJournal {
   #createLock() {
     const token = hex(16);
     const body = { schemaVersion: IDENTITY_SCHEMA_VERSION, token, pid: this.#pid, hostname: this.#hostname, acquiredAt: this.#now() };
+    if (!validLock(body)) fail('JOURNAL_LOCKED', 'Invalid writer identity; operator intervention is required');
     let fd;
     try {
       fd = this.#fs.openSync(this.#lockFile(), 'wx', 0o600);
@@ -157,7 +163,7 @@ export class ExecutionIdentityJournal {
 
   #readLock() {
     const lock = this.#readJson(this.#lockFile());
-    if (lock !== null && !(sameKeys(lock, LOCK_KEYS) && typeof lock.token === 'string' && Number.isSafeInteger(lock.pid) && typeof lock.hostname === 'string')) {
+    if (lock !== null && !validLock(lock)) {
       fail('JOURNAL_LOCKED', 'The writer lock exists but is malformed; operator intervention is required');
     }
     return lock;
@@ -172,7 +178,7 @@ export class ExecutionIdentityJournal {
     if (direct) { this.#token = direct; return; }
     const existing = this.#readLock();
     if (existing === null) fail('JOURNAL_LOCKED', 'The writer lock changed while opening; retry');
-    if (existing.hostname !== this.#hostname || this.#isProcessAlive(existing.pid)) fail('JOURNAL_LOCKED', 'Another Command Center process holds the journal');
+    if (existing.hostname !== this.#hostname || this.#isProcessAlive(existing.pid) !== false) fail('JOURNAL_LOCKED', 'Another Command Center process holds the journal');
     const takeover = path.join(this.#root, 'takeover.lock');
     let fd;
     try { fd = this.#fs.openSync(takeover, 'wx', 0o600); } catch (error) {
@@ -182,7 +188,7 @@ export class ExecutionIdentityJournal {
     try {
       this.#fs.closeSync(fd);
       const again = this.#readLock();
-      if (again === null || again.token !== existing.token) fail('JOURNAL_LOCKED', 'The writer lock changed during takeover');
+      if (again === null || JSON.stringify(again) !== JSON.stringify(existing)) fail('JOURNAL_LOCKED', 'The writer lock changed during takeover');
       this.#fs.rmSync(this.#lockFile());
       const created = this.#createLock();
       if (!created) fail('JOURNAL_LOCKED', 'Another process took the writer lock during takeover');
@@ -195,13 +201,13 @@ export class ExecutionIdentityJournal {
   #assertOwner() {
     if (this.#closed || this.#token === null) fail('JOURNAL_NOT_OWNER', 'The journal is closed');
     const lock = this.#readLock();
-    if (lock === null || lock.token !== this.#token) fail('JOURNAL_NOT_OWNER', 'This process no longer holds the journal writer lock');
+    if (lock === null || lock.token !== this.#token || lock.pid !== this.#pid || lock.hostname !== this.#hostname) fail('JOURNAL_NOT_OWNER', 'This process no longer holds the journal writer lock');
   }
 
   #releaseLock() {
     try {
       const lock = this.#readLock();
-      if (lock && lock.token === this.#token) this.#fs.rmSync(this.#lockFile());
+      if (lock && lock.token === this.#token && lock.pid === this.#pid && lock.hostname === this.#hostname) this.#fs.rmSync(this.#lockFile());
     } catch { /* leave a stale lock rather than remove someone else's */ }
     this.#token = null;
   }
@@ -260,10 +266,11 @@ export class ExecutionIdentityJournal {
     for (const name of this.#fs.readdirSync(this.#recordsDir).sort()) {
       const match = RECORD_FILE.exec(name);
       if (match) {
-        try { records.push(this.#readRecord(match[1])); } catch (error) { corrupt.push({ file: name, reason: error?.message ?? 'unreadable' }); }
+        try { const record = this.#readRecord(match[1]); if (record === null) fail('JOURNAL_CORRUPT', 'Listed record disappeared'); records.push(record); } catch (error) { corrupt.push({ file: name, reason: error?.message ?? 'unreadable' }); }
       } else if (TEMP_FILE.test(name)) leftoverTemp.push(name);
       else corrupt.push({ file: name, reason: 'unexpected entry in the records directory' });
     }
+    for (const reason of validateIdentityRecords(records, { stateRootId: this.#stateRootId })) corrupt.push({ file: null, reason });
     return { records, corrupt, leftoverTemp, stateRootId: this.#stateRootId, epoch: this.#epoch };
   }
 
@@ -288,7 +295,7 @@ export class ExecutionIdentityJournal {
     if (sameTask.some((r) => r.stage !== 'DESTROYED')) fail('ACTIVE_EXECUTION_EXISTS', 'This task already has an execution that is not DESTROYED');
     const executionGeneration = sameTask.reduce((max, r) => Math.max(max, r.executionGeneration), 0) + 1;
     const record = buildPlannedRecord(input, { stateRootId: this.#stateRootId, writerEpoch: this.#epoch, executionGeneration, now: this.#now() });
-    return this.#commit(record, null);
+    return this.#commit(record, null, records);
   }
 
   /** Compare-and-set stage change. START_AUTHORIZED is reachable only through authorizeStart(). */
@@ -304,7 +311,6 @@ export class ExecutionIdentityJournal {
    */
   authorizeStart(runId, expectedRevision) {
     this.#assertOwner();
-    this.#healthyScan();
     const next = this.#advance(runId, expectedRevision, 'START_AUTHORIZED', undefined);
     return Object.freeze({ taskId: next.taskId, runId: next.runId, sandboxId: next.sandboxId, containerId: next.containerId, revision: next.revision, epoch: this.#epoch, stateRootId: this.#stateRootId });
   }
@@ -312,6 +318,7 @@ export class ExecutionIdentityJournal {
   /** Re-reads the disk. A launch is allowed only if this exact authorization is still the current, durable state. */
   assertStartAuthorized(authorization) {
     this.#assertOwner();
+    this.#healthyScan();
     const denied = (why) => fail('START_NOT_AUTHORIZED', `Launch is not authorized: ${why}`);
     if (!authorization || typeof authorization !== 'object') return denied('no authorization');
     const record = this.#readRecord(authorization.runId);
@@ -324,6 +331,7 @@ export class ExecutionIdentityJournal {
   }
 
   #advance(runId, expectedRevision, toStage, containerId) {
+    const { records } = this.#healthyScan();
     const current = this.#readRecord(runId);
     if (current === null) fail('NOT_FOUND', 'No such execution record');
     if (!Number.isSafeInteger(expectedRevision) || current.revision !== expectedRevision) fail('STALE_REVISION', 'The record changed since it was read');
@@ -334,11 +342,13 @@ export class ExecutionIdentityJournal {
       if (this.#healthyScan().records.some((r) => r.containerId === containerId)) fail('DUPLICATE_CONTAINER', 'This container id is already recorded');
       next.containerId = containerId;
     } else if (containerId !== undefined) fail('INVALID_INPUT', 'A container id can be recorded only when moving PLANNED -> CREATED');
-    return this.#commit(next, current);
+    return this.#commit(next, current, records);
   }
 
-  #commit(record, previous) {
+  #commit(record, previous, records) {
     const problems = validateIdentityRecord(record, { stateRootId: this.#stateRootId });
+    problems.push(...validateIdentityRecords([...records.filter(r => !previous || r.runId !== record.runId), record], { stateRootId: this.#stateRootId }));
+    if (previous && record.updatedAt < previous.updatedAt) problems.push('updatedAt precedes previous revision');
     if (problems.length > 0) fail('INVALID_INPUT', `Refusing to persist an invalid record: ${problems.join('; ')}`);
     if (previous && (record.revision !== previous.revision + 1)) fail('STALE_REVISION', 'Revision must advance by exactly one');
     const file = this.#recordFile(record.runId);
