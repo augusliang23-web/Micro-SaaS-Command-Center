@@ -157,7 +157,8 @@
   "equivalentWithProof": {
    "rationale": "The explicit 1..200 bound is also enforced by diffDigestOf, which validatePendingRecord calls on the manifest; an empty or oversized list throws there and is reported as a problem, so the record is refused either way.",
    "assumptions": [
-    "validatePendingRecord always evaluates the diffDigest/manifest consistency check after the manifest shape check."
+    "validatePendingRecord always evaluates the diffDigest/manifest consistency check after the manifest shape check.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "diffDigestOf throws BoundaryError unless 1 <= files.length <= 200 (approvalGate.mjs).",
@@ -185,7 +186,8 @@
   "equivalentWithProof": {
    "rationale": "A manifest with a duplicate path is also refused by diffDigestOf (it throws on a repeated path), and the throw is reported as a problem, so the record is invalid with or without the local duplicate check.",
    "assumptions": [
-    "validatePendingRecord evaluates diffDigestOf for every manifest that passes the shape check."
+    "validatePendingRecord evaluates diffDigestOf for every manifest that passes the shape check.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "diffDigestOf tracks seen paths and throws 'Malformed or duplicate diff manifest entry'.",
@@ -411,7 +413,8 @@
   "equivalentWithProof": {
    "rationale": "Each later revision is compared with the exact record applyStepAdvance/applyStatusChange would build from the previous one. Those builders copy every immutable fact from the previous record, so a changed immutable fact makes the whole-record comparison fail; the IMMUTABLE check only provides an earlier, clearer message.",
    "assumptions": [
-    "Every revision after the first is either a single step change or a single status change, both compared with same(expected, rec)."
+    "Every revision after the first is either a single step change or a single status change, both compared with same(expected, rec).",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "applyStepAdvance and applyStatusChange start from { ...prev } and change only steps/status/revision/updatedAt/expectedHead/action.",
@@ -427,7 +430,8 @@
   "equivalentWithProof": {
    "rationale": "The expected record is built with updatedAt = max(prev.updatedAt, rec.updatedAt), so a revision whose updatedAt precedes the previous one differs from the expected record and fails the whole-record comparison.",
    "assumptions": [
-    "Chain steps are validated with the comparison against the rebuilt record."
+    "Chain steps are validated with the comparison against the rebuilt record.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "applyStepAdvance and applyStatusChange set updatedAt to the later of prev.updatedAt and now.",
@@ -449,7 +453,8 @@
   "equivalentWithProof": {
    "rationale": "A revision that changes neither a step nor the status falls into the status branch, where applyStatusChange(prev, sameStatus) always throws (NOT_OPEN for a closed record, STATUS_TRANSITION for OPEN -> OPEN); the throw is reported as a problem. The explicit check only gives a clearer message.",
    "assumptions": [
-    "rec.status === prev.status implies no legal status change exists."
+    "rec.status === prev.status implies no legal status change exists.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "applyStatusChange refuses 'OPEN' as a target (not in REVOKED/SUPERSEDED/INTERRUPTED) and refuses any change from a non-OPEN record.",
@@ -551,17 +556,7 @@
   "id": "store: directory canonical path unchecked",
   "file": "server/execution/continuation/pendingActionStore.mjs",
   "find": "if (this.#fs.realpathSync(dir) !== dir) fail('STORE_PATH'",
-  "replace": "if (false) fail('STORE_PATH'",
-  "equivalentWithProof": {
-   "rationale": "A store directory that is a symlink is refused by the lstat check; a symlink anywhere above the root is refused by the canonical-ancestor check before anything is created; records/ and tasks/ are direct children of the already canonical root and are lstat-checked. realpath(dir) === dir can therefore only be false for a path the other checks already refused.",
-   "assumptions": [
-    "The root's nearest existing ancestor is canonical (checked first) and every store directory is lstat-checked."
-   ],
-   "evidence": [
-    "#assertCanonicalAncestor runs before the first mkdir.",
-    "#checkDirectory refuses symlinks via lstat; tests: 'the storage root must be ...', 'records/ and tasks/ may not be symlinks'."
-   ]
-  }
+  "replace": "if (false) fail('STORE_PATH'"
  },
  {
   "id": "store: symlinks followed when reading",
@@ -607,7 +602,8 @@
   "equivalentWithProof": {
    "rationale": "If #readJson returned null for invalid JSON, #loadChain's 'a revision file vanished' check fails closed on the null, so a revision with invalid JSON is still RECORD_CORRUPT. For the task marker the separate JSON.parse in #readMarker has its own failure.",
    "assumptions": [
-    "A null entry is never accepted into a chain."
+    "A null entry is never accepted into a chain.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "#loadChain: if (record === null) fail('RECORD_CORRUPT', ...).",
@@ -655,17 +651,7 @@
   "id": "store: temp file exclusivity dropped",
   "file": "server/execution/continuation/pendingActionStore.mjs",
   "find": "fd = this.#fs.openSync(temp, 'wx', 0o600);",
-  "replace": "fd = this.#fs.openSync(temp, 'w', 0o600);",
-  "equivalentWithProof": {
-   "rationale": "The temp file name carries 32 random bits plus the pid, so an exclusive-create collision with an existing file cannot be provoked deterministically offline; with a unique name 'w' and 'wx' behave identically.",
-   "assumptions": [
-    "The temp name is unique per call."
-   ],
-   "evidence": [
-    "#stage builds the name from the target name, process id and four random bytes.",
-    "Both modes create a new file when the name does not exist."
-   ]
-  }
+  "replace": "fd = this.#fs.openSync(temp, 'w', 0o600);"
  },
  {
   "id": "store: failed temp write not cleaned up",
@@ -683,17 +669,7 @@
   "id": "store: oversized records accepted on write",
   "file": "server/execution/continuation/pendingActionStore.mjs",
   "find": "if (payload.length > MAX_RECORD_BYTES) fail('WRITE_FAILED'",
-  "replace": "if (false) fail('WRITE_FAILED'",
-  "equivalentWithProof": {
-   "rationale": "A validated record is bounded by 200 manifest entries of at most about 700 bytes and cannot approach 128 KiB; the same limit is enforced when reading, so an oversized file can never be accepted.",
-   "assumptions": [
-    "All records pass validatePendingRecord before they reach #stage."
-   ],
-   "evidence": [
-    "MAX_MANIFEST_FILES is 200 and every path is at most 512 characters.",
-    "#readText refuses any file larger than MAX_RECORD_BYTES (corruption test: oversized file)."
-   ]
-  }
+  "replace": "if (false) fail('WRITE_FAILED'"
  },
  {
   "id": "store: pending id not validated",
@@ -733,7 +709,8 @@
   "equivalentWithProof": {
    "rationale": "An empty chain is refused by validatePendingChain ('history is empty'), which #loadChain always runs; the explicit zero-length check only fails earlier.",
    "assumptions": [
-    "#loadChain always calls validatePendingChain before returning."
+    "#loadChain always calls validatePendingChain before returning.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "validatePendingChain returns ['history is empty'] for an empty array.",
@@ -761,7 +738,8 @@
   "equivalentWithProof": {
    "rationale": "A revision file that disappears between listing and reading yields null; a null entry cannot satisfy record.pendingId === pendingId and validatePendingChain rejects it, so the history is still refused as corrupt.",
    "assumptions": [
-    "A null chain entry is refused by the pendingId comparison or by chain validation."
+    "A null chain entry is refused by the pendingId comparison or by chain validation.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "#loadChain compares record?.pendingId for every entry.",
@@ -802,7 +780,7 @@
  {
   "id": "store: marker shape unchecked",
   "file": "server/execution/continuation/pendingActionStore.mjs",
-  "find": "if (!marker || typeof marker !== 'object' || Object.keys(marker).sort().join() !== 'pendingId,schemaVersion,taskId' ||",
+  "find": "if (!marker || typeof marker !== 'object' || Object.keys(marker).sort().join() !== 'generation,pendingId,schemaVersion,taskId' ||",
   "replace": "if (false ||"
  },
  {
@@ -814,14 +792,14 @@
  {
   "id": "store: second pending per task allowed",
   "file": "server/execution/continuation/pendingActionStore.mjs",
-  "find": "if (error.code !== 'TASK_ALREADY_PENDING') throw error;",
-  "replace": "return;"
+  "find": "this.#publish(this.#tasks, temp, markerFile, marker, () => new PendingStoreError('TASK_ALREADY_PENDING', 'This task already holds a pending action'));",
+  "replace": "try { this.#publish(this.#tasks, temp, markerFile, marker, () => new PendingStoreError('TASK_ALREADY_PENDING', 'This task already holds a pending action')); } catch (error) { if (error.code !== 'TASK_ALREADY_PENDING') throw error; }"
  },
  {
   "id": "store: any status releases the task",
   "file": "server/execution/continuation/pendingActionStore.mjs",
-  "find": "if (!held || !['REVOKED', 'SUPERSEDED'].includes(held.status)) fail(",
-  "replace": "if (!held) fail("
+  "find": "if (held && !['REVOKED', 'SUPERSEDED'].includes(held.status)) fail(",
+  "replace": "if (false) fail("
  },
  {
   "id": "store: COMPLETED releases the task",
@@ -842,10 +820,10 @@
   "replace": "if (true) { try { this.#fs.rmSync(dir, { recursive: true, force: true }); }"
  },
  {
-  "id": "store: failed create keeps the claim",
+  "id": "store: failed create deletes immutable claim",
   "file": "server/execution/continuation/pendingActionStore.mjs",
-  "find": "try { if (this.#readMarker(record.taskId) === pendingId) this.#fs.rmSync(markerFile, { force: true }); } catch { /* the marker then fails closed */ }",
-  "replace": ""
+  "find": "// Published markers are never removed, including on definite record-write failure. Missing records block later claims.",
+  "replace": "for (const name of this.#fs.readdirSync(this.#tasks)) if (name.startsWith(record.taskId + '.')) this.#fs.rmSync(path.join(this.#tasks, name), { force: true });"
  },
  {
   "id": "store: ambiguous create rolled back",
@@ -873,7 +851,8 @@
   "equivalentWithProof": {
    "rationale": "The pure transition functions (applyStepAdvance and applyStatusChange) apply the same revision limit before the store reaches this line, with the same REVISION_LIMIT code.",
    "assumptions": [
-    "Every #commit builder is applyStepAdvance or applyStatusChange."
+    "Every #commit builder is applyStepAdvance or applyStatusChange.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "Both pure functions refuse at prev.revision >= MAX_REVISION (store test: the revision limit is enforced).",
@@ -889,7 +868,8 @@
   "equivalentWithProof": {
    "rationale": "Both pure builders validate their result and throw INVALID_TRANSITION before returning; the store re-check is defence in depth.",
    "assumptions": [
-    "The builder callbacks are only applyStepAdvance and applyStatusChange."
+    "The builder callbacks are only applyStepAdvance and applyStatusChange.",
+    "Reaudited for Issue #29: equivalence covers accepted/rejected records and persistent effects under these fixed dependencies; no probability argument is used."
    ],
    "evidence": [
     "applyStepAdvance and applyStatusChange end with validatePendingRecord(next) and refuse on problems.",
@@ -898,10 +878,10 @@
   }
  },
  {
-  "id": "store: release after REVOKED skipped",
+  "id": "store: terminal status deletes immutable claim",
   "file": "server/execution/continuation/pendingActionStore.mjs",
-  "find": "if (['REVOKED', 'SUPERSEDED'].includes(next.status)) {",
-  "replace": "if (false) {"
+  "find": "return this.#commit(pendingId, expectedRevision, (prev, now) => applyStatusChange(prev, status, now));",
+  "replace": "const next = this.#commit(pendingId, expectedRevision, (prev, now) => applyStatusChange(prev, status, now)); for (const name of this.#fs.readdirSync(this.#tasks)) if (name.startsWith(next.taskId + '.')) this.#fs.rmSync(path.join(this.#tasks, name), { force: true }); return next;"
  },
  {
   "id": "state: PUBLISHING is not active",
@@ -980,5 +960,41 @@
   "file": "server/tasks/taskStore.mjs",
   "find": "!(typeof next.commitSha === 'string' && next.pr && typeof next.pr.verifiedAt === 'string')",
   "replace": "!(typeof next.commitSha === 'string')"
+ },
+ {
+  "id": "store: temp cleanup ignores ownership",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (created) { try { this.#fs.rmSync(temp",
+  "replace": "if (true) { try { this.#fs.rmSync(temp"
+ },
+ {
+  "id": "store: create size preflight removed",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "    this.#serialized(record); // size validation BEFORE any persistent claim or record-directory creation\n",
+  "replace": ""
+ },
+ {
+  "id": "store: marker generation continuity unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (!match || match[1] !== taskId || Number(match[2]) !== history.length + 1)",
+  "replace": "if (!match || match[1] !== taskId)"
+ },
+ {
+  "id": "store: marker generation identity unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "|| marker.generation !== history.length + 1 ||",
+  "replace": "||"
+ },
+ {
+  "id": "store: duplicate generation pending identity accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "|| seen.has(marker.pendingId))",
+  "replace": "|| false)"
+ },
+ {
+  "id": "store: nonterminal marker predecessor accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (history.length && !['REVOKED', 'SUPERSEDED'].includes(history.at(-1).record.status))",
+  "replace": "if (false)"
  }
 ]

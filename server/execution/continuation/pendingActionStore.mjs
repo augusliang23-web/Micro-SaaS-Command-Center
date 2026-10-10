@@ -13,7 +13,7 @@ import {
 //
 // Layout under one server-chosen root (owner-only):
 //   records/<pendingId>/<revision, 10 digits>.json   one IMMUTABLE file per revision, mode 0600
-//   tasks/<taskId>.open                              exclusive marker: this task has a pending action (see "invariants")
+//   tasks/<taskId>.<10-digit-generation>.open                              exclusive marker: this task has a pending action (see "invariants")
 //
 // Compare-and-set without a lock: a new revision is written to a temp file and then PUBLISHED with link(2), which fails with EEXIST if
 // that revision already exists. Two writers (threads, processes) racing for revision N+1 therefore resolve atomically: exactly one wins,
@@ -38,8 +38,8 @@ const fail = (code, message) => { throw new PendingStoreError(code, message); };
 
 const REVISION_FILE = /^(\d{10})\.json$/;
 const TEMP_FILE = /^\d{10}\.json\.tmp-\d+-[0-9a-f]{8}$/;
-const MARKER_FILE = /^(CC-\d{8}-[0-9a-f]{8})\.open$/;
-const MARKER_TEMP = /^CC-\d{8}-[0-9a-f]{8}\.open\.tmp-\d+-[0-9a-f]{8}$/;
+const MARKER_FILE = /^(CC-\d{8}-[0-9a-f]{8})\.(\d{10})\.open$/;
+const MARKER_TEMP = /^CC-\d{8}-[0-9a-f]{8}\.\d{10}\.open\.tmp-\d+-[0-9a-f]{8}$/;
 const revisionName = (n) => `${String(n).padStart(10, '0')}.json`;
 
 export class PendingActionStore {
@@ -123,13 +123,19 @@ export class PendingActionStore {
   }
 
   /** Writes `value` to a temp file in `dir`, fsyncs it, and returns its path. Throws WRITE_FAILED (nothing published). */
-  #stage(dir, finalName, value) {
-    const temp = path.join(dir, `${finalName}.tmp-${this.#pid}-${this.#randomHex(4)}`);
+  #serialized(value) {
     const payload = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
     if (payload.length > MAX_RECORD_BYTES) fail('WRITE_FAILED', 'The record is larger than allowed');
-    let fd;
+    return payload;
+  }
+
+  #stage(dir, finalName, value) {
+    const temp = path.join(dir, `${finalName}.tmp-${this.#pid}-${this.#randomHex(4)}`);
+    const payload = this.#serialized(value);
+    let fd; let created = false;
     try {
       fd = this.#fs.openSync(temp, 'wx', 0o600);
+      created = true;
       let offset = 0;
       while (offset < payload.length) {
         const written = this.#fs.writeSync(fd, payload, offset, payload.length - offset);
@@ -142,7 +148,7 @@ export class PendingActionStore {
       return temp;
     } catch (error) {
       if (fd !== undefined) { try { this.#fs.closeSync(fd); } catch { /* already failing */ } }
-      try { this.#fs.rmSync(temp, { force: true }); } catch { /* a leftover temp file is reported by list() */ }
+      if (created) { try { this.#fs.rmSync(temp, { force: true }); } catch { /* a leftover temp file is reported by list() */ } }
       throw error instanceof PendingStoreError ? error : new PendingStoreError('WRITE_FAILED', `A write failed before publication: ${error?.code ?? 'error'}`);
     }
   }
@@ -228,28 +234,38 @@ export class PendingActionStore {
 
   /** The pending action currently held by a task, or null. A marker that names a missing or corrupt record throws (fail closed). */
   getByTask(taskId) {
-    const marker = this.#readMarker(taskId);
-    if (marker === null) return null;
-    const record = this.get(marker);
-    if (record === null) fail('RECORD_CORRUPT', 'The task marker names a pending action that does not exist');
-    if (record.taskId !== taskId) fail('RECORD_CORRUPT', 'The task marker names another task\'s pending action');
-    return record;
+    const history = this.#markerHistory(taskId);
+    return history.at(-1)?.record ?? null;
   }
 
-  #markerFile(taskId) {
+  #markerFile(taskId, generation) {
     if (typeof taskId !== 'string' || !TASK_ID_PATTERN.test(taskId)) fail('INVALID_ID', 'taskId is malformed');
-    return path.join(this.#tasks, `${taskId}.open`);
+    return path.join(this.#tasks, `${taskId}.${String(generation).padStart(10, '0')}.open`);
   }
 
-  #readMarker(taskId) {
-    const text = this.#readText(this.#markerFile(taskId));
-    if (text === null) return null; // absent. A file whose JSON is `null` is NOT absent: it is malformed and fails closed below.
-    let marker;
-    try { marker = JSON.parse(text); } catch { return fail('RECORD_CORRUPT', 'A task marker is not valid JSON'); }
-    if (!marker || typeof marker !== 'object' || Object.keys(marker).sort().join() !== 'pendingId,schemaVersion,taskId' || marker.schemaVersion !== 1 || marker.taskId !== taskId || !PENDING_ID_PATTERN.test(marker.pendingId ?? '')) {
-      fail('RECORD_CORRUPT', 'A task marker is malformed');
+  // Immutable history: terminal predecessors cannot return to OPEN. A stale snapshot can only lose exclusive publication.
+  #markerHistory(taskId) {
+    this.#markerFile(taskId, 1); // validate before using the id as a prefix
+    this.#checkDirectory(this.#tasks);
+    const names = this.#fs.readdirSync(this.#tasks).filter((n) => n.startsWith(`${taskId}.`)).sort();
+    const history = []; const seen = new Set();
+    for (const name of names) {
+      const match = MARKER_FILE.exec(name);
+      if (!match || match[1] !== taskId || Number(match[2]) !== history.length + 1) fail('RECORD_CORRUPT', 'Task marker history is invalid, interrupted or has a generation gap');
+      const text = this.#readText(path.join(this.#tasks, name));
+      let marker;
+      try { marker = JSON.parse(text); } catch { return fail('RECORD_CORRUPT', 'A task marker is not valid JSON'); }
+      if (!marker || typeof marker !== 'object' || Object.keys(marker).sort().join() !== 'generation,pendingId,schemaVersion,taskId' || marker.schemaVersion !== 1 || marker.taskId !== taskId || marker.generation !== history.length + 1 || !PENDING_ID_PATTERN.test(marker.pendingId ?? '') || seen.has(marker.pendingId)) {
+        fail('RECORD_CORRUPT', 'A task marker is malformed');
+      }
+      const record = this.get(marker.pendingId);
+      if (record === null) fail('RECORD_CORRUPT', 'The task marker names a pending action that does not exist');
+      if (record.taskId !== taskId) fail('RECORD_CORRUPT', 'The task marker names another task\'s pending action');
+      if (history.length && !['REVOKED', 'SUPERSEDED'].includes(history.at(-1).record.status)) fail('RECORD_CORRUPT', 'A nonterminal predecessor has a later generation');
+      seen.add(marker.pendingId);
+      history.push({ marker, record });
     }
-    return marker.pendingId;
+    return history;
   }
 
   // ------------------------------------------------------------ writing
@@ -257,14 +273,14 @@ export class PendingActionStore {
   /**
    * Creates revision 1. The id is chosen by the store. Refuses a task that already holds a pending action. The marker is created
    * exclusively BEFORE the record; if that is all that survives a crash it names a missing record and every later create for the task
-   * fails closed (TASK_ALREADY_PENDING) until an operator removes it.
+   * fails closed (TASK_ALREADY_PENDING) pending a separately reviewed operator decision.
    */
   create(input, { ttlMs } = {}) {
     const pendingId = `PND-${this.#randomHex(16)}`;
     if (!PENDING_ID_PATTERN.test(pendingId)) fail('INVALID_ID', 'The generated pendingId is malformed');
     const record = buildInitialRecord(input, { pendingId, now: this.#now(), ...(ttlMs === undefined ? {} : { ttlMs }) });
-    const markerFile = this.#markerFile(record.taskId);
-    this.#claimTask(record.taskId, pendingId, markerFile);
+    this.#serialized(record); // size validation BEFORE any persistent claim or record-directory creation
+    this.#claimTask(record.taskId, pendingId);
     const dir = this.#recordDir(pendingId);
     let madeDir = false; // never delete a directory this call did not create
     try {
@@ -274,31 +290,30 @@ export class PendingActionStore {
       const temp = this.#stage(dir, revisionName(1), record);
       this.#publish(dir, temp, path.join(dir, revisionName(1)), record, () => new PendingStoreError('DUPLICATE_PENDING', 'This pending identity already exists'));
     } catch (error) {
-      if (error.code !== 'WRITE_AMBIGUOUS') { // definitely not applied: release the claim so the task is not blocked by a record that never existed
+      if (error.code !== 'WRITE_AMBIGUOUS') { // definitely not applied: remove only our record directory; retain the immutable claim
         if (madeDir) { try { this.#fs.rmSync(dir, { recursive: true, force: true }); } catch { /* reported by list() */ } }
-        try { if (this.#readMarker(record.taskId) === pendingId) this.#fs.rmSync(markerFile, { force: true }); } catch { /* the marker then fails closed */ }
+        // Published markers are never removed, including on definite record-write failure. Missing records block later claims.
       }
       throw error;
     }
     return this.#loadChain(pendingId).record;
   }
 
-  #claimTask(taskId, pendingId, markerFile) {
-    const marker = { schemaVersion: 1, taskId, pendingId };
-    const attempt = () => {
-      const temp = this.#stage(this.#tasks, `${taskId}.open`, marker);
-      this.#publish(this.#tasks, temp, markerFile, marker, () => new PendingStoreError('TASK_ALREADY_PENDING', 'This task already holds a pending action'));
-    };
-    try { attempt(); return; } catch (error) {
-      if (error.code !== 'TASK_ALREADY_PENDING') throw error;
+  #claimTask(taskId, pendingId) {
+    let history;
+    try { history = this.#markerHistory(taskId); } catch (error) {
+      if (error instanceof PendingActionError) fail('TASK_ALREADY_PENDING', 'Task marker history is unreadable; refusing a new claim');
+      throw error;
     }
-    // A marker whose pending action ended as REVOKED or SUPERSEDED is released and the claim retried exactly once. Anything else
-    // (OPEN, COMPLETED, INTERRUPTED, missing, corrupt) keeps the task held: fail closed.
-    const heldBy = this.#readMarker(taskId);
-    const held = heldBy === null ? null : this.get(heldBy);
-    if (!held || !['REVOKED', 'SUPERSEDED'].includes(held.status)) fail('TASK_ALREADY_PENDING', 'This task already holds a pending action');
-    this.#fs.rmSync(markerFile, { force: true });
-    attempt();
+    const held = history.at(-1)?.record;
+    if (held && !['REVOKED', 'SUPERSEDED'].includes(held.status)) fail('TASK_ALREADY_PENDING', 'This task already holds a pending action');
+    const generation = history.length + 1;
+    if (generation > 9999999999) fail('TASK_ALREADY_PENDING', 'Task marker generation limit reached');
+    const marker = { schemaVersion: 1, taskId, pendingId, generation };
+    const markerFile = this.#markerFile(taskId, generation);
+    const temp = this.#stage(this.#tasks, path.basename(markerFile), marker);
+    // No retry on collision: an intervening terminal decision must not let the losing invocation claim another generation.
+    this.#publish(this.#tasks, temp, markerFile, marker, () => new PendingStoreError('TASK_ALREADY_PENDING', 'This task already holds a pending action'));
   }
 
   /**
@@ -311,12 +326,7 @@ export class PendingActionStore {
 
   /** OPEN -> REVOKED | SUPERSEDED | INTERRUPTED. Records a decision; it does not execute anything. */
   setStatus(pendingId, expectedRevision, status) {
-    const next = this.#commit(pendingId, expectedRevision, (prev, now) => applyStatusChange(prev, status, now));
-    if (['REVOKED', 'SUPERSEDED'].includes(next.status)) {
-      // Releasing the task is best effort; a marker that survives is handled by #claimTask and only ever blocks (fails closed).
-      try { if (this.#readMarker(next.taskId) === next.pendingId) this.#fs.rmSync(this.#markerFile(next.taskId), { force: true }); } catch { /* fail closed */ }
-    }
-    return next;
+    return this.#commit(pendingId, expectedRevision, (prev, now) => applyStatusChange(prev, status, now));
   }
 
   #commit(pendingId, expectedRevision, build) {

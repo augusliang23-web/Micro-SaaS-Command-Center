@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 
 import { PendingActionStore, PendingStoreError } from '../server/execution/continuation/pendingActionStore.mjs';
 import { PendingActionError, applyStepAdvance, buildInitialRecord } from '../server/execution/continuation/pendingActionTypes.mjs';
-import { clock, counterHex, finishAll, freshStore, h, pendingInput, readRev, revisionFile, taskId, tempRoot } from './helpers/pendingFixture.mjs';
+import { clock, counterHex, finishAll, freshStore, h, pendingInput, readRev, revisionFile, taskId, tempRoot, sizedInput } from './helpers/pendingFixture.mjs';
 import { guarded } from './helpers/pendingFixture.mjs';
 const test = guarded(nodeTest);
 
@@ -39,7 +39,7 @@ test('create: the store chooses the id, revision 1 is durable, files are owner-o
     assert.equal(fs.statSync(fx.root).mode & 0o777, 0o700);
     for (const d of ['records', 'tasks', `records/${r.pendingId}`]) assert.equal(fs.statSync(path.join(fx.root, d)).mode & 0o777, 0o700, d);
     assert.equal(fs.statSync(revisionFile(fx.root, r.pendingId, 1)).mode & 0o777, 0o600);
-    assert.equal(fs.statSync(path.join(fx.root, 'tasks', `${taskId(1)}.open`)).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(markerPath(fx.root)).mode & 0o777, 0o600);
     assert.equal(fs.statSync(revisionFile(fx.root, r.pendingId, 1)).nlink, 1);
     assert.deepEqual(fs.readdirSync(path.join(fx.root, 'records', r.pendingId)), ['0000000001.json']);
     assert.deepEqual(fx.store.get(r.pendingId), r);
@@ -157,6 +157,7 @@ test('duplicate pending identity is rejected without touching the existing recor
     const first = store.create(pendingInput(1));
     const bytes = fs.readFileSync(revisionFile(dir.root, first.pendingId, 1));
     assert.throws(() => store.create(pendingInput(2)), code('DUPLICATE_PENDING'));
+    assert.equal(fs.existsSync(revisionFile(dir.root, first.pendingId, 1)), true, 'existing revision must survive');
     assert.deepEqual(fs.readFileSync(revisionFile(dir.root, first.pendingId, 1)), bytes);
     assert.equal(fs.existsSync(path.join(dir.root, 'tasks', `${taskId(2)}.open`)), false, 'the failed create did not leave task 2 blocked');
     assert.equal(store.get(first.pendingId).taskId, taskId(1));
@@ -199,11 +200,11 @@ test('one pending action per TASK: a second create is refused; only REVOKED or S
   } finally { fx.cleanup(); }
 });
 
-test('a surviving marker for a REVOKED pending action is cleaned on the next create; a marker for anything else, missing or corrupt fails closed', () => {
+test('a surviving marker for a REVOKED pending action is retained on the next create; a marker for anything else, missing or corrupt fails closed', () => {
   const fx = freshStore();
   try {
     const a = idOf(fx.store);
-    const marker = path.join(fx.root, 'tasks', `${taskId(1)}.open`);
+    const marker = markerPath(fx.root);
     const markerBytes = fs.readFileSync(marker);
     fx.store.setStatus(a.pendingId, 1, 'REVOKED');
     fs.writeFileSync(marker, markerBytes, { mode: 0o600 }); // the best-effort release "crashed"
@@ -220,9 +221,9 @@ test('a surviving marker for a REVOKED pending action is cleaned on the next cre
   try {
     const own = idOf(forged.store);
     const other = forged.store.create(pendingInput(2));
-    const marker = path.join(forged.root, 'tasks', `${taskId(1)}.open`);
+    const marker = markerPath(forged.root);
     const put = (value) => fs.writeFileSync(marker, typeof value === 'string' ? value : JSON.stringify(value), { mode: 0o600 });
-    const good = { schemaVersion: 1, taskId: taskId(1), pendingId: own.pendingId };
+    const good = { schemaVersion: 1, generation: 1, taskId: taskId(1), pendingId: own.pendingId };
     put(good); assert.equal(forged.store.getByTask(taskId(1)).pendingId, own.pendingId);
     put({ ...good, pendingId: other.pendingId });
     assert.throws(() => forged.store.getByTask(taskId(1)), code('RECORD_CORRUPT'), "a marker naming another task's record");
@@ -237,19 +238,21 @@ test('a surviving marker for a REVOKED pending action is cleaned on the next cre
   } finally { forged.cleanup(); }
 });
 
-test('revoking or superseding releases the task marker immediately; other endings keep it', () => {
+test('revoking or superseding preserves all marker generations; other endings block reclaim', () => {
   const fx = freshStore();
   try {
-    const marker = path.join(fx.root, 'tasks', `${taskId(1)}.open`);
+    let generation = 0;
     for (const to of ['REVOKED', 'SUPERSEDED']) {
-      const r = idOf(fx.store);
+      const r = idOf(fx.store); generation += 1;
+      const marker = markerPath(fx.root, 1, generation);
       assert.equal(fs.existsSync(marker), true);
       fx.store.setStatus(r.pendingId, 1, to);
-      assert.equal(fs.existsSync(marker), false, to);
+      assert.equal(fs.existsSync(marker), true, to);
     }
     const r = idOf(fx.store);
     fx.store.setStatus(r.pendingId, 1, 'INTERRUPTED');
-    assert.equal(fs.existsSync(marker), true, 'INTERRUPTED keeps the task held');
+    assert.equal(fs.existsSync(markerPath(fx.root, 1, 3)), true);
+    assert.throws(() => idOf(fx.store), code('TASK_ALREADY_PENDING'));
   } finally { fx.cleanup(); }
 });
 
@@ -328,9 +331,10 @@ test('failed publication (link fails for a reason other than EEXIST): WRITE_FAIL
     const store = new PendingActionStore({ root: dir.root, now: clock(), fsImpl: faulty({ link: (a, b) => { if (armed && String(b).includes('/records/')) throw Object.assign(new Error('EXDEV'), { code: 'EXDEV' }); } }) });
     assert.throws(() => store.create(pendingInput(1)), code('WRITE_FAILED'));
     assert.deepEqual(fs.readdirSync(path.join(dir.root, 'records')), [], 'the half-created pending directory was removed');
-    assert.deepEqual(fs.readdirSync(path.join(dir.root, 'tasks')), [], 'the task claim was released');
+    assert.equal(fs.readdirSync(path.join(dir.root, 'tasks')).length, 1, 'the immutable claim survives failure');
+    assert.throws(() => store.create(pendingInput(1)), code('TASK_ALREADY_PENDING'));
     armed = false;
-    const r = store.create(pendingInput(1));
+    const r = store.create(pendingInput(2));
     armed = true;
     assert.throws(() => store.advanceStep(r.pendingId, 1, step('COMMIT', 'CLAIMED')), code('WRITE_FAILED'));
     assert.deepEqual(fs.readdirSync(path.join(dir.root, 'records', r.pendingId)), ['0000000001.json']);
@@ -422,11 +426,11 @@ test('crash after the temp file was written but before publication: the leftover
     const r = idOf(fx.store);
     const leftover = path.join(fx.root, 'records', r.pendingId, '0000000002.json.tmp-4242-deadbeef');
     fs.writeFileSync(leftover, '{"half":', { mode: 0o600 });
-    fs.writeFileSync(path.join(fx.root, 'tasks', `${taskId(9)}.open.tmp-4242-deadbeef`), '{', { mode: 0o600 });
+    fs.writeFileSync(path.join(fx.root, 'tasks', `${taskId(9)}.0000000001.open.tmp-4242-deadbeef`), '{', { mode: 0o600 });
     assert.deepEqual(fx.store.get(r.pendingId), r);
     const list = fx.store.list();
     assert.deepEqual(list.corrupt, []);
-    assert.deepEqual(list.leftoverTemp.sort(), [`${r.pendingId}/0000000002.json.tmp-4242-deadbeef`, `tasks/${taskId(9)}.open.tmp-4242-deadbeef`]);
+    assert.deepEqual(list.leftoverTemp.sort(), [`${r.pendingId}/0000000002.json.tmp-4242-deadbeef`, `tasks/${taskId(9)}.0000000001.open.tmp-4242-deadbeef`]);
     assert.equal(fx.store.advanceStep(r.pendingId, 1, step('COMMIT', 'CLAIMED')).revision, 2, 'a stale temp file does not block or satisfy the next revision');
     assert.equal(fs.existsSync(leftover), true);
   } finally { fx.cleanup(); }
@@ -478,7 +482,7 @@ const CORRUPTIONS = {
   'pendingId of another record': (fx) => rewrite(fx, 3, (r) => { r.pendingId = `PND-${'9'.repeat(32)}`; }),
   'file names lie about the order (revision 2 renamed to 3)': (fx) => fs.renameSync(revisionFile(fx.root, fx.id, 2), revisionFile(fx.root, fx.id, 3).replace('0000000003', '0000000004')),
   'gap in the history (revision 2 deleted)': (fx) => fs.rmSync(revisionFile(fx.root, fx.id, 2)),
-  'oversized file (valid JSON padded past the limit)': (fx) => fs.writeFileSync(revisionFile(fx.root, fx.id, 3), `${fs.readFileSync(revisionFile(fx.root, fx.id, 3), 'utf8')}${' '.repeat(140_000)}`, { mode: 0o600 }),
+  'oversized file (valid JSON padded past the limit)': (fx) => fs.writeFileSync(revisionFile(fx.root, fx.id, 3), `${fs.readFileSync(revisionFile(fx.root, fx.id, 3), 'utf8')}${' '.repeat(270_000)}`, { mode: 0o600 }),
   'group/world readable': (fx) => fs.chmodSync(revisionFile(fx.root, fx.id, 3), 0o644),
   'revision file is a symlink': (fx) => { const out = path.join(fx.base, 'outside.json'); fs.copyFileSync(revisionFile(fx.root, fx.id, 3), out); fs.rmSync(revisionFile(fx.root, fx.id, 3)); fs.symlinkSync(out, revisionFile(fx.root, fx.id, 3)); },
   'revision file has a second hard link': (fx) => fs.linkSync(revisionFile(fx.root, fx.id, 3), path.join(fx.base, 'alias.json')),
@@ -640,4 +644,214 @@ test('source scope: the pending modules import only the task types, the pure dif
   const imports = [...text.matchAll(/from '([^']+)'/g)].map((m) => m[1]).sort();
   assert.deepEqual(imports, ['../../tasks/types.mjs', '../../tasks/types.mjs', '../approvalGate.mjs', '../identity/executionIdentity.mjs', './pendingActionTypes.mjs', 'node:crypto', 'node:fs', 'node:path'].sort());
   assert.ok(PendingStoreError);
+});
+
+// Security remediation: regressions first, with deterministic filesystem interleavings.
+const markerPath = (root, n = 1, generation = 1) => path.join(root, 'tasks', `${taskId(n)}.${String(generation).padStart(10, '0')}.open`);
+
+test('R1 published generations survive revoke and failed create, and are never reclaimed by deletion', () => {
+  const fx = freshStore();
+  try {
+    const first = idOf(fx.store);
+    assert.equal(fs.existsSync(markerPath(fx.root)), true, 'generation 1 must be published');
+    const bytes = fs.readFileSync(markerPath(fx.root));
+    fx.store.setStatus(first.pendingId, 1, 'REVOKED');
+    const next = idOf(fx.store);
+    assert.equal(fs.existsSync(markerPath(fx.root)), true, 'published generation must survive');
+    assert.deepEqual(fs.readFileSync(markerPath(fx.root)), bytes);
+    assert.equal(JSON.parse(fs.readFileSync(markerPath(fx.root, 1, 2))).pendingId, next.pendingId);
+  } finally { fx.cleanup(); }
+});
+
+test('R2 deterministic temp collision preserves preexisting bytes and refuses publication', () => {
+  const fx = freshStore({ randomHex: counterHex() });
+  try {
+    const r = idOf(fx.store);
+    const colliding = new PendingActionStore({ root: fx.root, now: clock(), randomHex: () => 'deadbeef' });
+    const tmp = `${revisionFile(fx.root, r.pendingId, 2)}.tmp-${process.pid}-deadbeef`;
+    fs.writeFileSync(tmp, 'owned-by-other-invocation', { mode: 0o600 });
+    assert.throws(() => colliding.setStatus(r.pendingId, 1, 'REVOKED'), code('WRITE_FAILED'));
+    assert.equal(fs.existsSync(tmp), true, 'preexisting collision file must survive');
+    assert.equal(fs.readFileSync(tmp, 'utf8'), 'owned-by-other-invocation');
+    assert.equal(fs.existsSync(revisionFile(fx.root, r.pendingId, 2)), false);
+    assert.equal(fx.store.get(r.pendingId).revision, 1);
+  } finally { fx.cleanup(); }
+});
+
+for (const bytes of [138114, 262143, 262144, 262145]) {
+  test(`R3 serialized record boundary ${bytes} bytes with UTF-8 paths`, () => {
+    const fx = freshStore();
+    try {
+      const input = sizedInput(bytes);
+      const measured = Buffer.byteLength(JSON.stringify(buildInitialRecord(input, { pendingId: `PND-${'1'.repeat(32)}`, now: '2026-01-01T00:00:00.000Z' }), null, 2) + '\n');
+      assert.equal(measured, bytes);
+      assert.equal(input.manifest.files.length, 200);
+      assert.ok(input.manifest.files.every((f) => f.path.length === 512));
+      if (bytes <= 262144) {
+        const r = fx.store.create(input);
+        assert.equal(fs.statSync(revisionFile(fx.root, r.pendingId, 1)).size, bytes);
+      } else {
+        assert.throws(() => fx.store.create(input), code('WRITE_FAILED'));
+        assert.deepEqual(fs.readdirSync(path.join(fx.root, 'records')), []);
+        assert.deepEqual(fs.readdirSync(path.join(fx.root, 'tasks')), []);
+      }
+    } finally { fx.cleanup(); }
+  });
+}
+
+test('R3 next revision growing beyond the bound is refused before temp creation and publication', () => {
+  const fx = freshStore();
+  try {
+    const r = fx.store.create(sizedInput(262144));
+    assert.throws(() => fx.store.setStatus(r.pendingId, 1, 'INTERRUPTED'), code('WRITE_FAILED'));
+    assert.deepEqual(fs.readdirSync(path.join(fx.root, 'records', r.pendingId)), ['0000000001.json']);
+    assert.deepEqual(fx.store.get(r.pendingId), r);
+  } finally { fx.cleanup(); }
+});
+
+// Each child uses the actual store and real files. A pipe barrier fixes the publication interleaving without timing guesses.
+function processClaim(root, n = 1, mode = 'barrier', revokeId = null) {
+  const fixtureUrl = new URL('./helpers/pendingFixture.mjs', import.meta.url).href;
+  const script = `import fs from 'node:fs';
+    import { PendingActionStore } from ${JSON.stringify(STORE_URL)};
+    import { pendingInput } from ${JSON.stringify(fixtureUrl)};
+    const mode = ${JSON.stringify(mode)};
+    const gate = (label = 'READY') => { process.stdout.write(label + '\\n'); const byte = Buffer.alloc(1); if (fs.readSync(0, byte, 0, 1, null) !== 1) process.exit(78); };
+    const io = { ...fs, constants: fs.constants,
+      readdirSync: (p) => { const names = fs.readdirSync(p); if (mode === 'barrier' && String(p).endsWith('/tasks')) gate('SNAPSHOT'); return names; },
+      mkdirSync: (p, o) => { if (mode === 'crash-after' && String(p).includes('/records/PND-')) process.exit(77); return fs.mkdirSync(p, o); },
+      linkSync: (a, b) => {
+        if (String(b).endsWith('.open') || (mode === 'revoke' && String(b).endsWith('0000000002.json'))) {
+          if (mode === 'crash-before') process.exit(77);
+          if (mode === 'barrier' || mode === 'revoke') gate();
+        }
+        return fs.linkSync(a, b);
+      }
+    };
+    const s = new PendingActionStore({ root: ${JSON.stringify(root)}, fsImpl: io, now: () => '2026-01-01T00:00:30.000Z' });
+    try {
+      const r = ${revokeId ? `s.setStatus(${JSON.stringify(revokeId)}, 1, 'REVOKED')` : `s.create(pendingInput(${n}))`};
+      process.stdout.write('OK:' + r.pendingId + '\\n');
+    } catch(e) {
+      if (!(e instanceof Error) || !e.code) throw e;
+      process.stdout.write('ERR:' + e.code + '\\n');
+    }`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let output = ''; let stderr = ''; let readyResolve; let readyReject; let snapshotResolve; let snapshotReject;
+  const snapshot = new Promise((resolve, reject) => { snapshotResolve = resolve; snapshotReject = reject; });
+  // A rejected snapshot is observed even for modes without a snapshot barrier.
+  snapshot.catch(() => {});
+  const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+  const timer = setTimeout(() => { child.kill('SIGKILL'); readyReject(new Error('child barrier timeout')); snapshotReject(new Error('child snapshot timeout')); }, 15000);
+  child.stdout.on('data', (d) => { output += d; if (output.includes('READY\n')) readyResolve(); if (output.includes('SNAPSHOT\n')) snapshotResolve(); });
+  child.stderr.on('data', (d) => { stderr += d; });
+  const done = new Promise((resolve, reject) => {
+    child.on('error', (e) => { clearTimeout(timer); readyReject(e); snapshotReject(e); reject(e); });
+    child.on('close', (status, signal) => { clearTimeout(timer); if (mode === 'barrier' && !output.includes('READY\n')) readyReject(new Error('child exited before publication barrier')); else readyResolve(); if (mode === 'barrier' && !output.includes('SNAPSHOT\n')) snapshotReject(new Error('child exited before history snapshot barrier')); else snapshotResolve(); resolve({ output, stderr, status, signal }); });
+  });
+  return { ready, snapshot, continueSnapshot: () => child.stdin.write('x'), done, release: () => child.stdin.end('x'), kill: () => child.kill('SIGKILL') };
+}
+
+for (const terminal of [null, 'REVOKED', 'SUPERSEDED']) {
+  test(`R1 independent OS processes claim the same generation from ${terminal ?? 'empty history'} exactly once`, async () => {
+    const fx = freshStore(); let children = [];
+    try {
+      if (terminal) { const old = idOf(fx.store); fx.store.setStatus(old.pendingId, 1, terminal); }
+      children = [processClaim(fx.root), processClaim(fx.root)];
+      await Promise.all(children.map((c) => c.snapshot)); children.forEach((c) => c.continueSnapshot());
+      await Promise.all(children.map((c) => c.ready));
+      children.forEach((c) => c.release());
+      const outcomes = await Promise.all(children.map((c) => c.done));
+      for (const r of outcomes) { assert.equal(r.status, 0, r.stderr); assert.equal(r.signal, null); assert.equal(r.stderr, ''); }
+      assert.equal(outcomes.filter((r) => /OK:PND-/.test(r.output)).length, 1, JSON.stringify(outcomes));
+      assert.equal(outcomes.filter((r) => /ERR:TASK_ALREADY_PENDING/.test(r.output)).length, 1, JSON.stringify(outcomes));
+      assert.equal(fx.store.getByTask(taskId(1)).status, 'OPEN');
+      assert.equal(fs.readdirSync(path.join(fx.root, 'tasks')).length, terminal ? 2 : 1);
+    } finally { children.forEach((c) => c.kill()); fx.cleanup(); }
+  });
+}
+
+test('R1 revoke versus create: uncommitted revoke blocks; published revoke allows exactly one later claim', async () => {
+  const fx = freshStore(); let child;
+  try {
+    const old = idOf(fx.store);
+    child = processClaim(fx.root, 1, 'revoke', old.pendingId);
+    await child.ready;
+    assert.throws(() => idOf(fx.store), code('TASK_ALREADY_PENDING'));
+    child.release();
+    const result = await child.done;
+    assert.equal(result.status, 0, result.stderr); assert.match(result.output, /OK:/);
+    const next = idOf(fx.store);
+    assert.notEqual(next.pendingId, old.pendingId);
+    assert.throws(() => idOf(fx.store), code('TASK_ALREADY_PENDING'));
+  } finally { child?.kill(); fx.cleanup(); }
+});
+
+for (const mode of ['crash-before', 'crash-after']) {
+  test(`R1 process ${mode} marker publication leaves interrupted history that fails closed`, async () => {
+    const fx = freshStore();
+    try {
+      const child = processClaim(fx.root, 1, mode); const outcome = await child.done;
+      assert.equal(outcome.status, 77, outcome.stderr);
+      assert.equal(fs.readdirSync(path.join(fx.root, 'records')).length, 0);
+      assert.equal(fs.readdirSync(path.join(fx.root, 'tasks')).length, 1);
+      assert.throws(() => idOf(fx.store), code('TASK_ALREADY_PENDING'));
+      assert.throws(() => fx.store.getByTask(taskId(1)), code('RECORD_CORRUPT'));
+    } finally { fx.cleanup(); }
+  });
+}
+
+test('R1 different tasks pass independent process barriers within the same project', async () => {
+  const fx = freshStore(); let children = [];
+  try {
+    children = [processClaim(fx.root, 1), processClaim(fx.root, 2)];
+    await Promise.all(children.map((c) => c.snapshot)); children.forEach((c) => c.continueSnapshot());
+    await Promise.all(children.map((c) => c.ready)); children.forEach((c) => c.release());
+    for (const r of await Promise.all(children.map((c) => c.done))) { assert.equal(r.status, 0, r.stderr); assert.match(r.output, /OK:/); }
+    assert.equal(fx.store.getByTask(taskId(1)).status, 'OPEN');
+    assert.equal(fx.store.getByTask(taskId(2)).status, 'OPEN');
+  } finally { children.forEach((c) => c.kill()); fx.cleanup(); }
+});
+
+for (const invalid of ['legacy', 'gap', 'duplicate-id', 'bad-generation', 'nonterminal-predecessor', 'UNKNOWN']) {
+  test(`R1 strict marker history rejects ${invalid}`, () => {
+    const fx = freshStore();
+    try {
+      const a = idOf(fx.store);
+      const first = markerPath(fx.root); const marker = JSON.parse(fs.readFileSync(first));
+      if (invalid === 'legacy') fs.renameSync(first, path.join(fx.root, 'tasks', `${taskId(1)}.open`));
+      if (invalid === 'gap') fs.renameSync(first, markerPath(fx.root, 1, 2));
+      if (invalid === 'duplicate-id') {
+        fx.store.setStatus(a.pendingId, 1, 'REVOKED');
+        fs.writeFileSync(markerPath(fx.root, 1, 2), JSON.stringify({ ...marker, generation: 2 }), { mode: 0o600 });
+      }
+      if (invalid === 'bad-generation') fs.writeFileSync(first, JSON.stringify({ ...marker, generation: 2 }), { mode: 0o600 });
+      if (invalid === 'nonterminal-predecessor') {
+        const input = pendingInput(1); const id = `PND-${'f'.repeat(32)}`;
+        fs.mkdirSync(path.join(fx.root, 'records', id), { mode: 0o700 });
+        fs.writeFileSync(revisionFile(fx.root, id, 1), JSON.stringify(buildInitialRecord(input, { pendingId: id, now: a.createdAt })), { mode: 0o600 });
+        fs.writeFileSync(markerPath(fx.root, 1, 2), JSON.stringify({ ...marker, generation: 2, pendingId: id }), { mode: 0o600 });
+      }
+      if (invalid === 'UNKNOWN') {
+        const r = readRev(fx.root, a.pendingId, 1); r.status = 'UNKNOWN';
+        fs.writeFileSync(revisionFile(fx.root, a.pendingId, 1), JSON.stringify(r), { mode: 0o600 });
+      }
+      assert.throws(() => fx.store.getByTask(taskId(1)), code('RECORD_CORRUPT'));
+      assert.throws(() => idOf(fx.store), code('TASK_ALREADY_PENDING'));
+    } finally { fx.cleanup(); }
+  });
+}
+
+test('directory canonical check catches an ancestor replacement after constructor preflight', () => {
+  const dir = tempRoot();
+  const ancestor = path.join(dir.base, 'ancestor'); const moved = path.join(dir.base, 'moved');
+  fs.mkdirSync(ancestor, { mode: 0o700 }); let swapped = false;
+  const root = path.join(ancestor, 'pending');
+  const io = { ...fs, constants: fs.constants, realpathSync: (p) => {
+    const canonical = fs.realpathSync(p);
+    if (!swapped && p === ancestor) { swapped = true; fs.renameSync(ancestor, moved); fs.symlinkSync(moved, ancestor); }
+    return canonical;
+  } };
+  try { assert.throws(() => new PendingActionStore({ root, fsImpl: io }), code('STORE_PATH')); }
+  finally { dir.cleanup(); }
 });

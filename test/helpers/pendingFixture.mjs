@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 
+import { PendingActionError } from '../../server/execution/continuation/pendingActionTypes.mjs';
 import { PendingActionStore } from '../../server/execution/continuation/pendingActionStore.mjs';
 import { diffDigestOf } from '../../server/execution/approvalGate.mjs';
 
@@ -70,16 +71,29 @@ export function finishAll(store, record) {
 }
 
 /**
- * Wraps node:test's `test` so that an UNEXPECTED exception escaping a test body is reported as an assertion failure
- * ("the code under test threw where the test expected a result"). Import-time, syntax and timeout failures are NOT converted.
+ * Wraps node:test's `test` so that an UNEXPECTED domain exception escaping a test body is reported as an assertion failure
+ * ("the code under test threw where the test expected a result"). Import-time, syntax, OS/infrastructure and timeout failures are NOT converted.
  */
 export const guarded = (nodeTest) => (name, a, b) => {
   const [opts, fn] = typeof a === 'function' ? [undefined, a] : [a, b];
   const run = async (t) => {
     try { return await fn(t); } catch (error) {
-      if (error instanceof assert.AssertionError) throw error;
+      if (!(error instanceof PendingActionError || error instanceof TypeError || error instanceof RangeError)) throw error;
       throw new assert.AssertionError({ message: `Unexpected ${error?.name ?? 'error'}: ${String(error?.message ?? error).slice(0, 300)}`, actual: error?.code ?? error?.name, expected: 'no unexpected exception', operator: 'unexpected-exception' });
     }
   };
   return opts ? nodeTest(name, opts, run) : nodeTest(name, run);
 };
+
+/** Exact serialized size using valid 512-character paths, replacing ASCII with two-byte UTF-8 characters. */
+export function sizedInput(bytes = 138114) {
+  let extra = bytes - 138114;
+  assert.ok(extra >= 0 && extra <= 200 * 509 * 2);
+  const files = Array.from({ length: 200 }, (_, i) => {
+    const three = Math.min(Math.floor(extra / 2), 509); extra -= three * 2;
+    const two = three < 509 && extra > 0 ? 1 : 0; extra -= two;
+    return { path: String(i).padStart(3, '0') + '界'.repeat(three) + 'é'.repeat(two) + 'x'.repeat(509 - three - two), sha256: h('a', 64), size: 1048576, exec: false };
+  });
+  // For larger sizes use three-byte characters instead (keeps path character limits intact).
+  return pendingInput(1, { manifest: { files }, diffDigest: diffDigestOf(files) });
+}

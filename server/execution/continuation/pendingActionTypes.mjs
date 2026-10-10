@@ -22,7 +22,7 @@ export const DEFAULT_PENDING_LIFETIME_MS = 60 * 60 * 1000;
 export const MAX_REVISION = 32;
 export const MAX_MANIFEST_FILES = 200;
 export const MAX_MANIFEST_FILE_BYTES = 1024 * 1024;
-export const MAX_RECORD_BYTES = 128 * 1024;
+export const MAX_RECORD_BYTES = 256 * 1024;
 
 export const PENDING_ID_PATTERN = /^PND-[0-9a-f]{32}$/;
 const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;

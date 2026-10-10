@@ -167,6 +167,29 @@ async function runTests(dir, files) {
   };
 }
 
+async function harnessSelfTest() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-mutation-integrity-'));
+  const guardedURL = new URL('../test/helpers/pendingFixture.mjs', import.meta.url).href;
+  const cases = [
+    ['green', "import test from 'node:test'; test('green', () => {});", 'green'],
+    ['assertion', "import test from 'node:test'; import assert from 'node:assert/strict'; test('assertion', () => assert.equal(1, 2));", 'caught'],
+    ['syntax', "import test from 'node:test'; test('broken', =>);", 'infrastructure'],
+    ['import', "import './missing-dependency.mjs';", 'infrastructure'],
+    ['os', `import test from 'node:test'; import { guarded } from ${JSON.stringify(guardedURL)}; guarded(test)('os', () => { throw Object.assign(new Error('disk failure'), { code: 'EIO' }); });`, 'infrastructure'],
+    ['timeout', "import test from 'node:test'; test('timeout', { timeout: 10 }, async () => new Promise(resolve => setTimeout(resolve, 100)));", 'infrastructure'],
+  ];
+  try {
+    fs.writeFileSync(path.join(dir, 'mutation-reporter.mjs'), REPORTER);
+    for (const [name, body, expected] of cases) {
+      fs.writeFileSync(path.join(dir, 'probe.test.mjs'), body);
+      const result = await runTests(dir, ['probe.test.mjs']);
+      const actual = result.problems.length ? 'infrastructure' : result.assertionFailures.length ? 'caught' : result.code === 0 && result.fail === 0 && result.pass === result.tests ? 'green' : 'invalid';
+      if (actual !== expected) throw new Error(`Harness self-test ${name}: expected ${expected}, got ${actual}`);
+    }
+    return { status: 'PASS', cases: cases.map(([name]) => name), count: cases.length };
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
 async function main() {
   if (CHECK_ONLY) {
     const { selected } = catalogAt(ROOT);
@@ -182,6 +205,9 @@ async function main() {
   }
   if (WORKERS === null) throw new Error('--workers must be an integer between 1 and 8');
   if (args.includes('--no-baseline')) throw new Error('--no-baseline cannot produce valid mutation evidence; an unmutated green baseline is mandatory');
+  const harnessIntegrity = await harnessSelfTest();
+  console.log(`harness integrity: ${harnessIntegrity.count}/${harnessIntegrity.count} PASS`);
+  if (args.includes('--self-test')) return 0;
   const start = provenance();
   if (start.worktree !== start.gitTopLevel || start.participatingStatus || !matchesCommit(start)) throw new Error('Executable verification inputs must match a committed code HEAD; commit them before collecting evidence');
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-identity-mutations-'));
@@ -269,7 +295,7 @@ async function main() {
     report = {
       phase: '3B7B2B-A1-0-pending-action-foundation', status: valid ? 'PASS' : 'HOLD', sourceHead: start.sourceHead,
       evidenceScope: ONLY ? 'SELECTED_MUTATIONS_ONLY' : 'FULL_CATALOG', node: process.version,
-      provenance: { start, end, snapshotFingerprint, sourceUnchanged }, baseline, summary, results,
+      provenance: { start, end, snapshotFingerprint, sourceUnchanged }, harnessIntegrity, baseline, summary, results,
     };
     exitCode = valid ? 0 : 1;
   } finally { fs.rmSync(temporaryRoot, { recursive: true, force: true }); }
