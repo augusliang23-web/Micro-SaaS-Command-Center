@@ -23,7 +23,8 @@
     "replace": ""
    }
   ],
-  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+  "note": "production argv guard switched off so the wrapper's own check is what is tested",
+  "equivalent": "without the image, the whole argv becomes the \"command\", which the approved-command check refuses"
  },
  {
   "id": "create: duplicate image allowed",
@@ -36,7 +37,8 @@
     "replace": ""
    }
   ],
-  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+  "note": "production argv guard switched off so the wrapper's own check is what is tested",
+  "equivalent": "a repeated image becomes part of the command, which the approved-command check refuses"
  },
  {
   "id": "create: duplicate single flag allowed",
@@ -75,7 +77,8 @@
     "replace": ""
    }
   ],
-  "note": "production argv guard switched off so the wrapper's own check is what is tested"
+  "note": "production argv guard switched off so the wrapper's own check is what is tested",
+  "equivalent": "every single-value flag is also compared with its required value, so an absent flag fails that comparison"
  },
  {
   "id": "create: multi-flag counts unchecked",
@@ -470,7 +473,8 @@
   "id": "assertClosed: ignores leftovers",
   "file": "test/helpers/realDockerScenarios.mjs",
   "find": "function assertClosed(leftovers, what) { if (leftovers.length) throw",
-  "replace": "function assertClosed(leftovers, what) { if (false) throw"
+  "replace": "function assertClosed(leftovers, what) { if (false) throw",
+  "equivalent": "gone() throws the same UnknownOutcomeError for the exact id right afterwards (see the combined mutation below, which IS caught)"
  },
  {
   "id": "gone: absence assumed",
@@ -509,5 +513,17 @@
   "file": "test/helpers/realDockerScenarios.mjs",
   "find": "if (failure || preserved.length) break; // never continue to another live case after a failure or an uncertain cleanup",
   "replace": ""
+ },
+ {
+  "id": "assertClosed and gone both ignore leftovers",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "function assertClosed(leftovers, what) { if (leftovers.length) throw",
+  "replace": "function assertClosed(leftovers, what) { if (false) throw",
+  "also": [
+   {
+    "find": "if (state !== 'ABSENT') throw new UnknownOutcomeError(`${what}: the exact owned container is ${state}, not proven absent`);",
+    "replace": "void state;"
+   }
+  ]
  }
 ]

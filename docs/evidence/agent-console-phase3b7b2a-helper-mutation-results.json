@@ -1,39 +1,25 @@
 {
   "phase": "3B7B2A-pr26-helper-fixes",
-  "sourceHead": "83ee454cd7b2a7c849ecf8504a6170775e6e0a2c",
+  "sourceHead": "9aa778c03f67a757915dccf26d9952ea831c8e33",
   "node": "v20.20.2",
   "baseline": {
     "code": 0,
-    "tests": 51,
-    "pass": 51,
+    "tests": 55,
+    "pass": 55,
     "fail": 0
   },
   "summary": {
     "total": 53,
-    "caught": 31,
-    "survivedEquivalent": 1,
+    "caught": 42,
+    "survivedEquivalent": 4,
     "survivedUnexplained": [
       "create: name reservation unchecked",
       "create: image requirement dropped",
       "create: duplicate image allowed",
-      "create: unknown flag allowed",
       "create: missing flag allowed",
-      "create: pull unchecked",
-      "create: cap-drop unchecked",
-      "create: no-new-privileges unchecked",
-      "create: ipc unchecked",
-      "create: workdir/log-driver unchecked",
       "create: memory upper bound dropped",
       "create: root user allowed",
-      "create: mounts not exact",
-      "create: tmpfs not exact",
-      "cleanupAll: a throwing removal aborts the sweep",
-      "fence: stranded start not reported",
-      "fence: launch after confirmed cancel tolerated",
-      "assertClosed: ignores leftovers",
-      "gone: absence assumed",
-      "bounded: late rejection left unhandled",
-      "fault matrix: continues after a failure"
+      "assertClosed: ignores leftovers"
     ],
     "patternErrors": []
   },
@@ -71,9 +57,11 @@
     {
       "id": "create: unknown flag allowed",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: missing flag allowed",
@@ -112,37 +100,47 @@
     {
       "id": "create: pull unchecked",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: cap-drop unchecked",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: no-new-privileges unchecked",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: ipc unchecked",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: workdir/log-driver unchecked",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: label/name match unchecked",
@@ -224,16 +222,20 @@
     {
       "id": "create: mounts not exact",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: tmpfs not exact",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: environment not exact",
@@ -328,7 +330,7 @@
       "id": "cleanupAll: stops at the first leftover",
       "file": "test/helpers/ownedDocker.mjs",
       "status": "CAUGHT",
-      "failures": 1,
+      "failures": 2,
       "caughtBy": [
         "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
@@ -337,7 +339,7 @@
       "id": "cleanupAll: unknown counted as removed",
       "file": "test/helpers/ownedDocker.mjs",
       "status": "CAUGHT",
-      "failures": 1,
+      "failures": 2,
       "caughtBy": [
         "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
@@ -345,9 +347,11 @@
     {
       "id": "cleanupAll: a throwing removal aborts the sweep",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "fence: pause not released after a failure",
@@ -388,22 +392,25 @@
     {
       "id": "fence: stranded start not reported",
       "file": "test/helpers/realDockerScenarios.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "fence: launch after confirmed cancel tolerated",
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "SURVIVED",
       "failures": 0,
-      "caughtBy": null
+      "caughtBy": null,
+      "equivalent": "the same invariant is asserted again after the release (no Docker start command was ever issued) and through the BLOCKED outcome of start()"
     },
     {
       "id": "closeOut: scratch deleted despite leftovers",
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "CAUGHT",
-      "failures": 1,
+      "failures": 2,
       "caughtBy": [
         "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
@@ -429,13 +436,14 @@
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "SURVIVED",
       "failures": 0,
-      "caughtBy": null
+      "caughtBy": null,
+      "equivalent": "closeOut's exact-id sweep and assertClosed re-prove absence immediately afterwards; gone() is a second layer"
     },
     {
       "id": "guard: never halts",
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "CAUGHT",
-      "failures": 1,
+      "failures": 2,
       "caughtBy": [
         "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
@@ -453,7 +461,7 @@
       "id": "guard: halted suite still runs",
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "CAUGHT",
-      "failures": 1,
+      "failures": 2,
       "caughtBy": [
         "test/agent-console-phase3b7b2-safety.test.mjs"
       ]
@@ -463,14 +471,17 @@
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "SURVIVED",
       "failures": 0,
-      "caughtBy": null
+      "caughtBy": null,
+      "equivalent": "Promise.race subscribes to the original promise itself, so a late rejection is handled with or without the explicit catch"
     },
     {
       "id": "fault matrix: continues after a failure",
       "file": "test/helpers/realDockerScenarios.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     }
   ]
 }

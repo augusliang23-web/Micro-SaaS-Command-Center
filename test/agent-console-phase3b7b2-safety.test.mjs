@@ -84,6 +84,25 @@ test('create: weakened or contradictory values are refused', () => {
   rejected(fx, withOpt(fx, ro, '--read-only=true'), '--read-only=true');
 });
 
+test('create: a consistent name and id that was NEVER reserved is refused (reservation, not consistency, grants ownership)', () => {
+  const fx = createFixture();
+  const other = 'p3b7b2-unres1'; const otherName = `cc-sandbox-agent-${other}`;
+  const args = fx.args.map((a) => a.split(fx.sandboxId).join(other).split(fx.name).join(otherName));
+  assert.ok(args.some((a) => a === `--name=${otherName}`) && args.some((a) => a === `--label=cc.sandbox.id=${other}`));
+  rejected(fx, args, 'unreserved but internally consistent');
+  fx.owned.reserveSandbox(other);
+  assert.doesNotThrow(() => validateCreate(args, fx.ctx), 'the same argv is accepted once the test reserves that exact name');
+});
+
+test('create: memory and memory-swap raised TOGETHER above the bound are refused; so is a root user even when the process uid is root', () => {
+  const fx = createFixture();
+  const both = fx.args.map((a) => (a.startsWith('--memory=') ? '--memory=4096m' : a.startsWith('--memory-swap=') ? '--memory-swap=4096m' : a));
+  rejected(fx, both, 'memory 4096m with equal swap');
+  const rootCtx = { ...fx.ctx, uid: 0, gid: 0 };
+  const rootArgs = fx.args.map((a) => (a.startsWith('--user=') ? '--user=0:0' : a));
+  assert.throws(() => validateCreate(rootArgs, rootCtx), PolicyError, 'root is refused by the non-root rule itself');
+});
+
 test('create: ownership labels must be exactly cc.sandbox=1, a matching cc.sandbox.id and role=agent', () => {
   const fx = createFixture();
   const L = (prefix) => fx.args.findIndex((a) => a.startsWith(prefix));
