@@ -177,7 +177,8 @@
   "id": "journal: filesystem root allowed",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "|| root === path.parse(root).root) {",
-  "replace": "|| false) {"
+  "replace": "|| false) {",
+  "equivalent": "'/' also ends with '/', which the trailing-slash rule on the same line refuses with the same JOURNAL_PATH code"
  },
  {
   "id": "journal: directory permissions unchecked",

@@ -384,8 +384,9 @@ test('a FIFO planted at a record path is corruption and never blocks the process
   const fx = freshJournal();
   try {
     createdRun(fx.journal, 2);
-    const made = spawnSync('/usr/bin/mkfifo', [recordPath(fx.root, runId(1))]);
-    if (made.status !== 0) { fs.writeFileSync(`${fx.base}/skip`, ''); return; }
+    const made = spawnSync('/usr/bin/mkfifo', ['-m', '600', recordPath(fx.root, runId(1))]);
+    assert.equal(made.status, 0, 'mkfifo must be available to run this test');
+    assert.equal(fs.statSync(recordPath(fx.root, runId(1))).isFIFO(), true);
     const scan = fx.journal.scan();
     assert.equal(scan.corrupt.length, 1);
     assert.throws(() => fx.journal.get(runId(1)), code('JOURNAL_CORRUPT'));
