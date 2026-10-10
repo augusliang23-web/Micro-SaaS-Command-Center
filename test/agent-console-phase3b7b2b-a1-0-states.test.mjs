@@ -160,7 +160,7 @@ test('G7-G9: no resume, no approval consumption, no new route and no new executi
   assert.deepEqual([...routes.matchAll(/router\.(get|post|put|patch|delete)\('([^']*)'/g)].map((m) => `${m[1]} ${m[2]}`), ['post /', 'get /', 'get /:taskId']);
   // Nothing outside the continuation modules and tests imports them.
   const importers = [];
-  const walk = (dir) => { for (const e of fs.readdirSync(new URL(`../${dir}`, import.meta.url), { withFileTypes: true })) { const rel = `${dir}/${e.name}`; if (e.isDirectory()) { if (!['node_modules', '.git', 'dist'].includes(e.name)) walk(rel); } else if (/\.(mjs|ts|tsx|js)$/.test(e.name) && /continuation\/pendingAction/.test(read(rel))) importers.push(rel); } };
+  const walk = (dir) => { if (!fs.existsSync(new URL(`../${dir}`, import.meta.url))) return; for (const e of fs.readdirSync(new URL(`../${dir}`, import.meta.url), { withFileTypes: true })) { const rel = `${dir}/${e.name}`; if (e.isDirectory()) { if (!['node_modules', '.git', 'dist'].includes(e.name)) walk(rel); } else if (/\.(mjs|ts|tsx|js)$/.test(e.name) && /continuation\/pendingAction/.test(read(rel))) importers.push(rel); } };
   for (const d of ['server', 'src']) walk(d);
   for (const f of ['server.ts']) assert.equal(importers.includes(f), false);
   assert.deepEqual(importers.filter((f) => !f.startsWith('server/execution/continuation/')), [], 'no production code imports the pending-action modules yet');
