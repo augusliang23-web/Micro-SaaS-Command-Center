@@ -1,0 +1,894 @@
+[
+ {
+  "id": "contract: schemaVersion unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (r.schemaVersion !== PENDING_SCHEMA_VERSION) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: exact key set not enforced",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!exactKeys(r, RECORD_KEYS)) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "contract: pendingId unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (typeof r.pendingId !== 'string' || !PENDING_ID_PATTERN.test(r.pendingId)) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: revision range unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!isCount(r.revision, MAX_REVISION)) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: taskId unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (typeof r.taskId !== 'string' || !TASK_ID_PATTERN.test(r.taskId)) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: projectId unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (typeof r.projectId !== 'string' || !PROJECT_ID.test(r.projectId)) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: runId unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (typeof r.runId !== 'string' || !RUN_ID_PATTERN.test(r.runId)) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: branch unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (typeof r.branch !== 'string' || !BRANCH.test(r.branch) ||",
+  "replace": "if (false ||"
+ },
+ {
+  "id": "contract: branch not tied to the task",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "|| !r.branch.startsWith(`agent/${r.taskId}-`)) problems.push",
+  "replace": "|| false) problems.push"
+ },
+ {
+  "id": "contract: object ids unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (typeof r[k] !== 'string' || !SHA1.test(r[k])) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: diffDigest format unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (typeof r.diffDigest !== 'string' || !SHA256.test(r.diffDigest)) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: authenticity label unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (r.authenticity !== PENDING_AUTHENTICITY) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: status unknown accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!PENDING_STATUSES.includes(r.status)) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: identity shape unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!exactKeys(id, IDENTITY_KEYS) || !IDENTITY_STATES.includes(id.state)) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: NOT_JOURNALED may carry journal references",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (id.stateRootId !== null || id.executionGeneration !== null || id.runId !== null) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: JOURNALED need not name this run",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "|| !isCount(id.executionGeneration) || id.runId !== r.runId) {",
+  "replace": "|| !isCount(id.executionGeneration)) {"
+ },
+ {
+  "id": "contract: JOURNALED root unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "typeof id.stateRootId !== 'string' || !STATE_ROOT_ID.test(id.stateRootId) ||",
+  "replace": ""
+ },
+ {
+  "id": "contract: verification kind unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "|| v.kind !== 'command_result' ||",
+  "replace": "||"
+ },
+ {
+  "id": "contract: verification need not have passed",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "|| v.passed !== true ||",
+  "replace": "||"
+ },
+ {
+  "id": "contract: verification grade unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "|| !canSupportPass(v.grade)) {",
+  "replace": "|| false) {"
+ },
+ {
+  "id": "contract: verification evidence id unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "typeof v.evidenceId !== 'string' || !EVIDENCE_ID.test(v.evidenceId) ||",
+  "replace": ""
+ },
+ {
+  "id": "contract: verification shape unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!exactKeys(v, VERIFICATION_KEYS) ||",
+  "replace": "if (false ||"
+ },
+ {
+  "id": "contract: guard snapshot unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!exactKeys(g, GUARD_KEYS) ||",
+  "replace": "if (false ||"
+ },
+ {
+  "id": "contract: guard digests unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "|| GUARD_KEYS.slice(1).some((k) => typeof g[k] !== 'string' || !SHA256.test(g[k]))) problems.push",
+  "replace": "|| false) problems.push"
+ },
+ {
+  "id": "contract: manifest shape unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!exactKeys(manifest, ['files']) || !Array.isArray(manifest.files)) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "contract: manifest size bound unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (files.length < 1 || files.length > MAX_MANIFEST_FILES) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "contract: manifest entry shape unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!exactKeys(f, deleted ? FILE_KEYS_DELETED : FILE_KEYS_LIVE) ||",
+  "replace": "if (false ||"
+ },
+ {
+  "id": "contract: manifest path safety unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "|| !safeRelativePath(f.path) || seen.has(f.path)) {",
+  "replace": "|| seen.has(f.path)) {"
+ },
+ {
+  "id": "contract: manifest duplicate paths allowed",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "|| !safeRelativePath(f.path) || seen.has(f.path)) {",
+  "replace": "|| !safeRelativePath(f.path)) {"
+ },
+ {
+  "id": "contract: manifest content fields unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!deleted && !(SHA256.test(f.sha256) &&",
+  "replace": "if (false && !(SHA256.test(f.sha256) &&"
+ },
+ {
+  "id": "contract: manifest size bound per file unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "&& f.size <= MAX_MANIFEST_FILE_BYTES &&",
+  "replace": "&&"
+ },
+ {
+  "id": "contract: manifest digest unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (diffDigestOf(files) !== r.diffDigest) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: step shape unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!exactKeys(steps, PENDING_ACTIONS) ||",
+  "replace": "if (false ||"
+ },
+ {
+  "id": "contract: step order unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (steps[a] !== 'PENDING' && PENDING_ACTIONS.slice(0, i).some((earlier) => steps[earlier] !== 'DONE')) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: action need not follow the steps",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (r.action !== next) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: COMPLETED not tied to the steps",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if ((r.status === 'COMPLETED') !== allDone) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: revoke allowed while a step is in flight",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (['REVOKED', 'SUPERSEDED'].includes(r.status) && PENDING_ACTIONS.some(",
+  "replace": "if (false && PENDING_ACTIONS.some("
+ },
+ {
+  "id": "contract: expectedHead rule dropped",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (steps.COMMIT === 'DONE' ? r.expectedHead === r.baseSha : r.expectedHead !== r.baseSha) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: timestamps unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "for (const k of ['createdAt', 'updatedAt', 'expiresAt']) if (!validTimestamp(r[k])) problems.push",
+  "replace": "for (const k of ['createdAt', 'updatedAt', 'expiresAt']) if (false) problems.push"
+ },
+ {
+  "id": "contract: updatedAt before createdAt accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "&& r.updatedAt < r.createdAt) problems.push",
+  "replace": "&& false) problems.push"
+ },
+ {
+  "id": "contract: lifetime unbounded",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (life <= 0 || life > MAX_PENDING_LIFETIME_MS) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "contract: hostile prototype accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "&& Object.getPrototypeOf(v) === Object.prototype;",
+  "replace": "&& true;"
+ },
+ {
+  "id": "contract: expiry compared wrongly",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "export const isExpired = (record, nowIso) => Date.parse(nowIso) >= Date.parse(record.expiresAt);",
+  "replace": "export const isExpired = (record, nowIso) => Date.parse(nowIso) > Date.parse(record.expiresAt);"
+ },
+ {
+  "id": "build: create input not exact",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!exactKeys(input, CREATE_KEYS)) throw",
+  "replace": "if (!isPlain(input)) throw"
+ },
+ {
+  "id": "build: lifetime bounds dropped",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!Number.isSafeInteger(ttlMs) || ttlMs < 1000 || ttlMs > MAX_PENDING_LIFETIME_MS) throw",
+  "replace": "if (false) throw"
+ },
+ {
+  "id": "build: clock unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!validTimestamp(now)) throw new PendingActionError('INVALID_INPUT', 'The clock returned an invalid time');",
+  "replace": ""
+ },
+ {
+  "id": "build: new record not validated",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "  if (problems.length) throw new PendingActionError('INVALID_INPUT', `Invalid pending action:",
+  "replace": "  if (false) throw new PendingActionError('INVALID_INPUT', `Invalid pending action:"
+ },
+ {
+  "id": "build: expectedHead not the base",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "action: 'COMMIT', branch: input.branch, baseSha: input.baseSha, expectedHead: input.baseSha,",
+  "replace": "action: 'COMMIT', branch: input.branch, baseSha: input.baseSha, expectedHead: input.treeSha,"
+ },
+ {
+  "id": "advance: closed record can advance",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (prev.status !== 'OPEN') refuse('NOT_OPEN', `The pending action is ${prev.status}`);",
+  "replace": ""
+ },
+ {
+  "id": "advance: revision limit unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (prev.revision >= MAX_REVISION) refuse('REVISION_LIMIT', 'The pending action reached its revision limit');\n  if (action !== prev.action)",
+  "replace": "if (action !== prev.action)"
+ },
+ {
+  "id": "advance: action order unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (action !== prev.action) refuse('ACTION_ORDER'",
+  "replace": "if (false) refuse('ACTION_ORDER'"
+ },
+ {
+  "id": "advance: step skipping allowed",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (STEP_STATES.indexOf(to) !== STEP_STATES.indexOf(prev.steps[action]) + 1) refuse(",
+  "replace": "if (STEP_STATES.indexOf(to) <= STEP_STATES.indexOf(prev.steps[action])) refuse("
+ },
+ {
+  "id": "advance: expired record can be claimed",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (to === 'CLAIMED' && isExpired(prev, now)) refuse(",
+  "replace": "if (false) refuse("
+ },
+ {
+  "id": "advance: commit id unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (typeof commitSha !== 'string' || !SHA1.test(commitSha) || commitSha === prev.baseSha) refuse(",
+  "replace": "if (false) refuse("
+ },
+ {
+  "id": "advance: commit id accepted at other steps",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "} else if (commitSha !== undefined) refuse('INVALID_INPUT', 'commitSha is accepted only when COMMIT becomes DONE');",
+  "replace": "}"
+ },
+ {
+  "id": "advance: expectedHead not updated",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "    next.expectedHead = commitSha;\n",
+  "replace": ""
+ },
+ {
+  "id": "advance: last step does not complete",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "  if (next.action === null) next.status = 'COMPLETED';\n",
+  "replace": ""
+ },
+ {
+  "id": "advance: result not validated",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "  const problems = validatePendingRecord(next);\n  if (problems.length) refuse('INVALID_TRANSITION', problems.join('; '));\n  return next;\n}\n\n/** OPEN",
+  "replace": "  return next;\n}\n\n/** OPEN"
+ },
+ {
+  "id": "status: arbitrary status can be set",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!['REVOKED', 'SUPERSEDED', 'INTERRUPTED'].includes(to)) refuse(",
+  "replace": "if (false) refuse("
+ },
+ {
+  "id": "status: closed record can change status",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (prev.status !== 'OPEN') refuse('NOT_OPEN', `The pending action is already ${prev.status}`);",
+  "replace": ""
+ },
+ {
+  "id": "status: in-flight revoke not refused",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "  const next = { ...prev, status: to, revision: prev.revision + 1, updatedAt: now < prev.updatedAt ? prev.updatedAt : now };\n  const problems = validatePendingRecord(next);\n  if (problems.length) refuse(",
+  "replace": "  const next = { ...prev, status: to, revision: prev.revision + 1, updatedAt: now < prev.updatedAt ? prev.updatedAt : now };\n  const problems = [];\n  if (problems.length) refuse("
+ },
+ {
+  "id": "chain: empty history accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!Array.isArray(chain) || chain.length === 0) return ['history is empty'];",
+  "replace": "if (!Array.isArray(chain)) return ['history is empty'];"
+ },
+ {
+  "id": "chain: revision numbering unchecked",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (rec.revision !== i + 1) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "chain: first revision not fresh",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (rec.status !== 'OPEN' || PENDING_ACTIONS.some((a) => rec.steps[a] !== 'PENDING') || rec.updatedAt !== rec.createdAt) problems.push",
+  "replace": "if (false) problems.push"
+ },
+ {
+  "id": "chain: immutable facts may change",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (IMMUTABLE.some((k) => !same(prev[k], rec[k]))) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "chain: time may go backwards",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (rec.updatedAt < prev.updatedAt) problems.push(`revision ${rec.revision} moves time backwards`);",
+  "replace": ""
+ },
+ {
+  "id": "chain: multi-step changes accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "} else problems.push(`revision ${rec.revision} changes more than one step`);",
+  "replace": "}"
+ },
+ {
+  "id": "chain: no-op revisions accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (rec.status === prev.status) problems.push(`revision ${rec.revision} changes nothing`);",
+  "replace": "if (false) problems.push(`revision ${rec.revision} changes nothing`);"
+ },
+ {
+  "id": "chain: step result not compared",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!same(expected, rec)) problems.push(`revision ${rec.revision} is not the result of a single legal step`);",
+  "replace": ""
+ },
+ {
+  "id": "chain: status result not compared",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!same(applyStatusChange(prev, rec.status, rec.updatedAt < prev.updatedAt ? prev.updatedAt : rec.updatedAt), rec)) problems.push(`revision ${rec.revision} is not a single legal status change`);",
+  "replace": ""
+ },
+ {
+  "id": "identity: NOT_JOURNALED can be proven",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (record.executionIdentity.state !== 'JOURNALED') return no('NOT_JOURNALED_NO_PROVEN_IDENTITY');",
+  "replace": ""
+ },
+ {
+  "id": "identity: missing journal accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!Array.isArray(journalRecords)) return no('JOURNAL_UNAVAILABLE');",
+  "replace": ""
+ },
+ {
+  "id": "identity: unmatched journal record accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (!match) return no('JOURNAL_RECORD_NOT_FOUND');",
+  "replace": ""
+ },
+ {
+  "id": "identity: unsettled executions accepted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "if (own.some((j) => j.stage !== 'DESTROYED')) return no('UNSETTLED_EXECUTION_FOR_TASK');",
+  "replace": ""
+ },
+ {
+  "id": "identity: journal root not compared",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "&& j.stateRootId === id.stateRootId && j.executionGeneration",
+  "replace": "&& j.executionGeneration"
+ },
+ {
+  "id": "identity: generation not compared",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "&& j.executionGeneration === id.executionGeneration);",
+  "replace": "&& true);"
+ },
+ {
+  "id": "identity: other tasks consulted",
+  "file": "server/execution/continuation/pendingActionTypes.mjs",
+  "find": "const own = journalRecords.filter((j) => isPlain(j) && j.taskId === record.taskId);",
+  "replace": "const own = journalRecords.filter((j) => isPlain(j));"
+ },
+ {
+  "id": "store: root normalization unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "|| path.normalize(root) !== root || root.endsWith('/') ||",
+  "replace": "|| root.endsWith('/') ||"
+ },
+ {
+  "id": "store: trailing slash accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "|| path.normalize(root) !== root || root.endsWith('/') ||",
+  "replace": "|| path.normalize(root) !== root ||"
+ },
+ {
+  "id": "store: canonical ancestor unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (this.#fs.realpathSync(cursor) !== cursor) fail('STORE_PATH'",
+  "replace": "if (false) fail('STORE_PATH'"
+ },
+ {
+  "id": "store: directory type unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (stat.isSymbolicLink() || !stat.isDirectory()) fail('STORE_PATH'",
+  "replace": "if (false) fail('STORE_PATH'"
+ },
+ {
+  "id": "store: directory owner unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (this.#uid !== undefined && stat.uid !== this.#uid) fail('STORE_PERMISSIONS'",
+  "replace": "if (false) fail('STORE_PERMISSIONS'"
+ },
+ {
+  "id": "store: directory permissions unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if ((stat.mode & 0o077) !== 0) fail('STORE_PERMISSIONS'",
+  "replace": "if (false) fail('STORE_PERMISSIONS'"
+ },
+ {
+  "id": "store: directory canonical path unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (this.#fs.realpathSync(dir) !== dir) fail('STORE_PATH'",
+  "replace": "if (false) fail('STORE_PATH'"
+ },
+ {
+  "id": "store: symlinks followed when reading",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "this.#fs.constants.O_RDONLY | this.#fs.constants.O_NOFOLLOW | this.#fs.constants.O_NONBLOCK",
+  "replace": "this.#fs.constants.O_RDONLY | this.#fs.constants.O_NONBLOCK"
+ },
+ {
+  "id": "store: FIFO can block",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "this.#fs.constants.O_RDONLY | this.#fs.constants.O_NOFOLLOW | this.#fs.constants.O_NONBLOCK",
+  "replace": "this.#fs.constants.O_RDONLY | this.#fs.constants.O_NOFOLLOW"
+ },
+ {
+  "id": "store: hard links accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (stat.nlink !== 1) fail(",
+  "replace": "if (false) fail("
+ },
+ {
+  "id": "store: file owner unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (this.#uid !== undefined && stat.uid !== this.#uid) fail('RECORD_CORRUPT'",
+  "replace": "if (false) fail('RECORD_CORRUPT'"
+ },
+ {
+  "id": "store: file permissions unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if ((stat.mode & 0o077) !== 0) fail('RECORD_CORRUPT'",
+  "replace": "if (false) fail('RECORD_CORRUPT'"
+ },
+ {
+  "id": "store: file size unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (stat.size > MAX_RECORD_BYTES) fail('RECORD_CORRUPT'",
+  "replace": "if (false) fail('RECORD_CORRUPT'"
+ },
+ {
+  "id": "store: invalid JSON tolerated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "try { return JSON.parse(text); } catch { return fail('RECORD_CORRUPT', 'A store file is not valid JSON'); }",
+  "replace": "try { return JSON.parse(text); } catch { return null; }"
+ },
+ {
+  "id": "store: publication not exclusive",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "try { this.#fs.linkSync(temp, finalPath); } catch (error) {",
+  "replace": "try { this.#fs.renameSync(temp, finalPath); } catch (error) {"
+ },
+ {
+  "id": "store: existing revision not detected",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (error?.code === 'EEXIST') throw onExists();",
+  "replace": "if (error?.code === 'EEXIST') return;"
+ },
+ {
+  "id": "store: post-publication failure reported as success",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "throw new PendingStoreError('WRITE_AMBIGUOUS', 'The write may be on disk but could not be confirmed; treat the outcome as UNKNOWN');",
+  "replace": "return;"
+ },
+ {
+  "id": "store: read-back not compared",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (JSON.stringify(this.#readJson(finalPath)) !== JSON.stringify(expectedValue)) throw new Error('read-back differs');",
+  "replace": ""
+ },
+ {
+  "id": "store: directory fsync skipped",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "      this.#dirFsync(dir);\n      if (JSON.stringify",
+  "replace": "      if (JSON.stringify"
+ },
+ {
+  "id": "store: file fsync skipped",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "      this.#fs.fsyncSync(fd);\n      this.#fs.closeSync(fd);\n      fd = undefined;\n      return temp;",
+  "replace": "      this.#fs.closeSync(fd);\n      fd = undefined;\n      return temp;"
+ },
+ {
+  "id": "store: temp file exclusivity dropped",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "fd = this.#fs.openSync(temp, 'wx', 0o600);",
+  "replace": "fd = this.#fs.openSync(temp, 'w', 0o600);",
+  "equivalentWithProof": {
+   "rationale": "The temp file name carries 32 random bits plus the pid, so an exclusive-create collision with an existing file cannot be provoked deterministically offline; with a unique name 'w' and 'wx' behave identically.",
+   "assumptions": [
+    "The temp name is unique per call."
+   ],
+   "evidence": [
+    "#stage builds the name from the target name, process id and four random bytes.",
+    "Both modes create a new file when the name does not exist."
+   ]
+  }
+ },
+ {
+  "id": "store: failed temp write not cleaned up",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "try { this.#fs.rmSync(temp, { force: true }); } catch { /* a leftover temp file is reported by list() */ }",
+  "replace": ""
+ },
+ {
+  "id": "store: partial writes accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "|| written <= 0 || written > payload.length - offset) fail('WRITE_FAILED'",
+  "replace": "|| false) fail('WRITE_FAILED'"
+ },
+ {
+  "id": "store: oversized records accepted on write",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (payload.length > MAX_RECORD_BYTES) fail('WRITE_FAILED'",
+  "replace": "if (false) fail('WRITE_FAILED'",
+  "equivalentWithProof": {
+   "rationale": "A validated record is bounded by 200 manifest entries of at most about 700 bytes and cannot approach 128 KiB; the same limit is enforced when reading, so an oversized file can never be accepted.",
+   "assumptions": [
+    "All records pass validatePendingRecord before they reach #stage."
+   ],
+   "evidence": [
+    "MAX_MANIFEST_FILES is 200 and every path is at most 512 characters.",
+    "#readText refuses any file larger than MAX_RECORD_BYTES (corruption test: oversized file)."
+   ]
+  }
+ },
+ {
+  "id": "store: pending id not validated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (typeof pendingId !== 'string' || !PENDING_ID_PATTERN.test(pendingId)) fail('INVALID_ID'",
+  "replace": "if (false) fail('INVALID_ID'"
+ },
+ {
+  "id": "store: task id not validated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (typeof taskId !== 'string' || !TASK_ID_PATTERN.test(taskId)) fail('INVALID_ID'",
+  "replace": "if (false) fail('INVALID_ID'"
+ },
+ {
+  "id": "store: symlinked pending directory followed",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "    this.#checkDirectory(dir); // before reading: a symlinked pending directory is never followed\n",
+  "replace": ""
+ },
+ {
+  "id": "store: unexpected entries accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "else fail('RECORD_CORRUPT', 'An unexpected entry is in a pending-action directory');",
+  "replace": ""
+ },
+ {
+  "id": "store: gaps in the history accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (Number(match[1]) !== chain.length) fail('RECORD_CORRUPT'",
+  "replace": "if (false) fail('RECORD_CORRUPT'"
+ },
+ {
+  "id": "store: empty history accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (chain.length === 0) fail('RECORD_CORRUPT'",
+  "replace": "if (false) fail('RECORD_CORRUPT'"
+ },
+ {
+  "id": "store: revision of another record accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (record?.pendingId !== pendingId) fail('RECORD_CORRUPT'",
+  "replace": "if (false) fail('RECORD_CORRUPT'"
+ },
+ {
+  "id": "store: history not validated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "const problems = validatePendingChain(chain);\n    if (problems.length) fail(",
+  "replace": "const problems = [];\n    if (problems.length) fail("
+ },
+ {
+  "id": "store: vanished revision tolerated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (record === null) fail('RECORD_CORRUPT', 'A revision file vanished while reading');",
+  "replace": ""
+ },
+ {
+  "id": "store: corrupt entries skipped in list",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "} catch (error) { corrupt.push({ id: name, reason: error?.message ?? 'unreadable' }); }",
+  "replace": "} catch (error) { /* skipped */ }"
+ },
+ {
+  "id": "store: unexpected records entries ignored",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (!PENDING_ID_PATTERN.test(name)) { corrupt.push({ id: name, reason: 'unexpected entry in the records directory' }); continue; }",
+  "replace": "if (!PENDING_ID_PATTERN.test(name)) continue;"
+ },
+ {
+  "id": "store: unexpected task entries ignored",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "else if (!MARKER_FILE.test(name)) corrupt.push({ id: `tasks/${name}`, reason: 'unexpected entry in the tasks directory' });",
+  "replace": ""
+ },
+ {
+  "id": "store: marker naming a missing record tolerated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (record === null) fail('RECORD_CORRUPT', 'The task marker names a pending action that does not exist');",
+  "replace": "if (record === null) return null;"
+ },
+ {
+  "id": "store: marker naming another task tolerated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (record.taskId !== taskId) fail('RECORD_CORRUPT'",
+  "replace": "if (false) fail('RECORD_CORRUPT'"
+ },
+ {
+  "id": "store: marker shape unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (!marker || typeof marker !== 'object' || Object.keys(marker).sort().join() !== 'pendingId,schemaVersion,taskId' ||",
+  "replace": "if (false ||"
+ },
+ {
+  "id": "store: marker task unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "|| marker.taskId !== taskId ||",
+  "replace": "||"
+ },
+ {
+  "id": "store: second pending per task allowed",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (error.code !== 'TASK_ALREADY_PENDING') throw error;",
+  "replace": "return;"
+ },
+ {
+  "id": "store: any status releases the task",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (!held || !['REVOKED', 'SUPERSEDED'].includes(held.status)) fail(",
+  "replace": "if (!held) fail("
+ },
+ {
+  "id": "store: COMPLETED releases the task",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "['REVOKED', 'SUPERSEDED'].includes(held.status)",
+  "replace": "['REVOKED', 'SUPERSEDED', 'COMPLETED'].includes(held.status)"
+ },
+ {
+  "id": "store: duplicate pending directory tolerated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "throw error?.code === 'EEXIST' ? new PendingStoreError('DUPLICATE_PENDING'",
+  "replace": "if (error?.code === 'EEXIST') { madeDir = true; } else throw error?.code === 'EEXIST' ? new PendingStoreError('DUPLICATE_PENDING'"
+ },
+ {
+  "id": "store: foreign directory deleted on failure",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (madeDir) { try { this.#fs.rmSync(dir, { recursive: true, force: true }); }",
+  "replace": "if (true) { try { this.#fs.rmSync(dir, { recursive: true, force: true }); }"
+ },
+ {
+  "id": "store: failed create keeps the claim",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "try { if (this.#readMarker(record.taskId) === pendingId) this.#fs.rmSync(markerFile, { force: true }); } catch { /* the marker then fails closed */ }",
+  "replace": ""
+ },
+ {
+  "id": "store: ambiguous create rolled back",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (error.code !== 'WRITE_AMBIGUOUS') { // definitely not applied",
+  "replace": "if (true) { // definitely not applied"
+ },
+ {
+  "id": "store: stale revision accepted",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== prev.revision) fail(",
+  "replace": "if (false) fail("
+ },
+ {
+  "id": "store: missing pending action tolerated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (!loaded) fail('NOT_FOUND', 'No such pending action');",
+  "replace": ""
+ },
+ {
+  "id": "store: revision limit unchecked",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (prev.revision >= MAX_REVISION) fail('REVISION_LIMIT', 'The pending action reached its revision limit');\n    const next",
+  "replace": "const next",
+  "equivalentWithProof": {
+   "rationale": "The pure transition functions (applyStepAdvance and applyStatusChange) apply the same revision limit before the store reaches this line, with the same REVISION_LIMIT code.",
+   "assumptions": [
+    "Every #commit builder is applyStepAdvance or applyStatusChange."
+   ],
+   "evidence": [
+    "Both pure functions refuse at prev.revision >= MAX_REVISION (store test: the revision limit is enforced).",
+    "validatePendingRecord rejects any revision above MAX_REVISION."
+   ]
+  }
+ },
+ {
+  "id": "store: next record not validated",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "const problems = validatePendingRecord(next);\n    if (problems.length) fail('INVALID_TRANSITION', problems.join('; '));\n    const dir",
+  "replace": "const dir",
+  "equivalentWithProof": {
+   "rationale": "Both pure builders validate their result and throw INVALID_TRANSITION before returning; the store re-check is defence in depth.",
+   "assumptions": [
+    "The builder callbacks are only applyStepAdvance and applyStatusChange."
+   ],
+   "evidence": [
+    "applyStepAdvance and applyStatusChange end with validatePendingRecord(next) and refuse on problems.",
+    "The history validation on the next read would reject an invalid revision as corruption."
+   ]
+  }
+ },
+ {
+  "id": "store: release after REVOKED skipped",
+  "file": "server/execution/continuation/pendingActionStore.mjs",
+  "find": "if (['REVOKED', 'SUPERSEDED'].includes(next.status)) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "state: PUBLISHING is not active",
+  "file": "server/tasks/types.mjs",
+  "find": "'VERIFYING', 'PUBLISHING']);",
+  "replace": "'VERIFYING']);"
+ },
+ {
+  "id": "state: AWAITING_APPROVAL is active",
+  "file": "server/tasks/types.mjs",
+  "find": "export const ACTIVE_TASK_STATUSES = Object.freeze(['QUEUED', 'STARTING', 'RUNNING', 'VERIFYING', 'PUBLISHING']);",
+  "replace": "export const ACTIVE_TASK_STATUSES = Object.freeze(['QUEUED', 'STARTING', 'RUNNING', 'VERIFYING', 'PUBLISHING', 'AWAITING_APPROVAL']);"
+ },
+ {
+  "id": "state: AWAITING_APPROVAL missing from statuses",
+  "file": "server/tasks/types.mjs",
+  "find": "  'AWAITING_APPROVAL',\n  'PUBLISHING',\n  'COMPLETED',",
+  "replace": "  'PUBLISHING',\n  'COMPLETED',"
+ },
+ {
+  "id": "state: VERIFYING cannot await approval",
+  "file": "server/tasks/stateTransitions.mjs",
+  "find": "VERIFYING: Object.freeze(['COMPLETED', 'AWAITING_APPROVAL', ...errors]),",
+  "replace": "VERIFYING: Object.freeze(['COMPLETED', ...errors]),"
+ },
+ {
+  "id": "state: VERIFYING cannot complete (V1 default)",
+  "file": "server/tasks/stateTransitions.mjs",
+  "find": "VERIFYING: Object.freeze(['COMPLETED', 'AWAITING_APPROVAL', ...errors]),",
+  "replace": "VERIFYING: Object.freeze(['AWAITING_APPROVAL', ...errors]),"
+ },
+ {
+  "id": "state: AWAITING_APPROVAL can complete directly",
+  "file": "server/tasks/stateTransitions.mjs",
+  "find": "AWAITING_APPROVAL: Object.freeze(['PUBLISHING', 'BLOCKED', 'CANCELLED', 'UNKNOWN']),",
+  "replace": "AWAITING_APPROVAL: Object.freeze(['PUBLISHING', 'COMPLETED', 'BLOCKED', 'CANCELLED', 'UNKNOWN']),"
+ },
+ {
+  "id": "state: AWAITING_APPROVAL cannot be cancelled",
+  "file": "server/tasks/stateTransitions.mjs",
+  "find": "AWAITING_APPROVAL: Object.freeze(['PUBLISHING', 'BLOCKED', 'CANCELLED', 'UNKNOWN']),",
+  "replace": "AWAITING_APPROVAL: Object.freeze(['PUBLISHING', 'BLOCKED', 'UNKNOWN']),"
+ },
+ {
+  "id": "state: PUBLISHING can be cancelled",
+  "file": "server/tasks/stateTransitions.mjs",
+  "find": "PUBLISHING: Object.freeze(['AWAITING_APPROVAL', 'COMPLETED', 'BLOCKED', 'FAILED', 'UNKNOWN']),",
+  "replace": "PUBLISHING: Object.freeze(['AWAITING_APPROVAL', 'COMPLETED', 'BLOCKED', 'FAILED', 'CANCELLED', 'UNKNOWN']),"
+ },
+ {
+  "id": "state: PUBLISHING cannot return to approval",
+  "file": "server/tasks/stateTransitions.mjs",
+  "find": "PUBLISHING: Object.freeze(['AWAITING_APPROVAL', 'COMPLETED', 'BLOCKED', 'FAILED', 'UNKNOWN']),",
+  "replace": "PUBLISHING: Object.freeze(['COMPLETED', 'BLOCKED', 'FAILED', 'UNKNOWN']),"
+ },
+ {
+  "id": "state: PUBLISHING can start from VERIFYING",
+  "file": "server/tasks/stateTransitions.mjs",
+  "find": "VERIFYING: Object.freeze(['COMPLETED', 'AWAITING_APPROVAL', ...errors]),",
+  "replace": "VERIFYING: Object.freeze(['COMPLETED', 'AWAITING_APPROVAL', 'PUBLISHING', ...errors]),"
+ },
+ {
+  "id": "state: completion guard dropped",
+  "file": "server/tasks/taskStore.mjs",
+  "find": "if (current.status === 'PUBLISHING' && next.status === 'COMPLETED' && !(",
+  "replace": "if (false && !("
+ },
+ {
+  "id": "state: completion needs no commit",
+  "file": "server/tasks/taskStore.mjs",
+  "find": "!(typeof next.commitSha === 'string' && next.pr && typeof next.pr.verifiedAt === 'string')",
+  "replace": "!(next.pr && typeof next.pr.verifiedAt === 'string')"
+ },
+ {
+  "id": "state: completion needs no verified PR",
+  "file": "server/tasks/taskStore.mjs",
+  "find": "!(typeof next.commitSha === 'string' && next.pr && typeof next.pr.verifiedAt === 'string')",
+  "replace": "!(typeof next.commitSha === 'string')"
+ }
+]
