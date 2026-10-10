@@ -1,0 +1,1042 @@
+{
+  "phase": "3B7B2B-A0-execution-identity",
+  "sourceHead": "85c861dc974fbc18c4e82262f081abb69a79c52c",
+  "node": "v20.20.2",
+  "baseline": {
+    "code": 0,
+    "tests": 112,
+    "pass": 112,
+    "fail": 0
+  },
+  "summary": {
+    "total": 115,
+    "caught": 101,
+    "survivedEquivalent": 14,
+    "survivedUnexplained": [],
+    "patternErrors": []
+  },
+  "results": [
+    {
+      "id": "identity: schemaVersion unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: exact key set not enforced",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: taskId pattern unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: runId pattern unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: sandboxId pattern unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: role set unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: stage name unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: container id format unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: image digest format unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: executionGeneration unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: revision unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: writerEpoch unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: stateRootId format unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: foreign stateRootId accepted",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: timestamp round trip skipped",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: updatedAt before createdAt accepted",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: container name not derived",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: labels shape unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: label values unchecked",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: PLANNED may carry a container id",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: later stage without container id",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: PLANNED may jump to START_AUTHORIZED",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: DESTROYED is not terminal",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: UNKNOWN is not terminal",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: transition table not enforced",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: planned input extra keys allowed",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: hostile prototype allowed",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "identity: planned record not validated",
+      "file": "server/execution/identity/executionIdentity.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: root normalization unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: filesystem root allowed",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "'/' also ends with '/', which the trailing-slash rule on the same line refuses with the same JOURNAL_PATH code"
+    },
+    {
+      "id": "journal: directory permissions unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: directory owner unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: canonical path unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: directory lstat symlink test dropped",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "an lstat of a symlink reports isDirectory() === false, so the second condition alone still refuses it"
+    },
+    {
+      "id": "journal: symlinks followed when reading",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: regular-file check dropped",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "defence in depth: a directory fails the single-link check and a FIFO (opened non-blocking) reads zero bytes, which is invalid JSON; both are still refused as JOURNAL_CORRUPT"
+    },
+    {
+      "id": "journal: hard links allowed",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: file owner unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: file permissions unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: file size unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: invalid JSON tolerated",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: temp file may overwrite",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "the temp name carries 32 random bits, so an exclusive-create collision cannot be provoked offline"
+    },
+    {
+      "id": "journal: file fsync skipped",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: over-long write accepted",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: temp file left behind on failure",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: directory flush failure swallowed",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: oversized record accepted",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "records are far below the limit; a write larger than 16 KiB cannot be produced through the validated schema"
+    },
+    {
+      "id": "journal: lock exclusivity dropped",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 7,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: malformed lock tolerated",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "returning null instead of failing leads to the next check, which fails the open with JOURNAL_LOCKED (or JOURNAL_NOT_OWNER on the write path): same refusal, different message"
+    },
+    {
+      "id": "journal: other host lock taken over",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: live holder lock taken over",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: takeover serialization dropped",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: takeover re-check dropped",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: lock ownership not fenced",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: closed journal still usable",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "close() clears the token, so the lock comparison refuses a closed journal independently (the lock file is gone or carries another token)"
+    },
+    {
+      "id": "journal: close removes a foreign lock",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: meta missing next to records tolerated",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: epoch does not advance",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: meta shape unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: meta epoch unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: failed open keeps the lock",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: runId pattern unchecked in paths",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: run id inside record unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: record validation skipped on read",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 6,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: unexpected directory entries ignored",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: temp files reported as corrupt records",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: corrupt journal does not block planning",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 15,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: duplicate run allowed",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: duplicate sandbox allowed",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: second active execution per task allowed",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: UNKNOWN does not block a retry",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: execution generation not advanced",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: START_AUTHORIZED writable via transition",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: authorization ignores corrupt journal",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 13,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-crash.test.mjs"
+      ],
+      "equivalent": "the stage change itself validates and rewrites only the one record; the corruption guard on this path is defence in depth beside createPlanned()"
+    },
+    {
+      "id": "journal: authorization not epoch bound",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: authorization not journal bound",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: authorization stage unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "every stage change bumps the revision, so the revision comparison already rejects an authorization whose record moved on"
+    },
+    {
+      "id": "journal: authorization revision unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: authorization writer epoch unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "a record's writerEpoch always equals the authorization's epoch here (authorizeStart stamps both), which the separate epoch check already enforces"
+    },
+    {
+      "id": "journal: authorization identity unchecked",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: stale revision accepted",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: stage transition not enforced",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: container id format unchecked on create",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "the same malformed id is rejected with the same INVALID_INPUT code by the record validation inside #commit"
+    },
+    {
+      "id": "journal: duplicate container id allowed",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: container id rewritable later",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-journal.test.mjs"
+      ]
+    },
+    {
+      "id": "journal: revision must advance by one",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "revision is always previous + 1 by construction in #advance, so this is a defensive assertion"
+    },
+    {
+      "id": "journal: existing run overwritten on create",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "createPlanned() already rejects an existing run id from its own scan before reaching this defensive check"
+    },
+    {
+      "id": "journal: read-back verification dropped",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "would only differ if the filesystem returned data other than what was just written, which an offline test cannot make happen"
+    },
+    {
+      "id": "journal: record not validated before commit",
+      "file": "server/execution/identity/identityJournal.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "defence in depth: records are built from validated values (buildPlannedRecord validates; #advance changes only a checked stage and checked container id) so a valid input cannot reach commit invalid"
+    },
+    {
+      "id": "classifier: corrupt journal does not block",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: incomplete listing does not block",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: container id format unchecked",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: container name unchecked",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: container labels unchecked",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: image digest format unchecked",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: ownership claim by name ignored",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: duplicate container id not ambiguous",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: duplicate container name not ambiguous",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: duplicate container leaves its record MISSING",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: unreadable container leaves its record MISSING",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: non-owned container reported as ours",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: duplicate journal identity picks one",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: identity mismatch accepted as KNOWN",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: name mismatch ignored",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: image mismatch ignored",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: label mismatch ignored",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: DESTROYED record with live container is KNOWN",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: lookalike treated as orphan",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: lookalike leaves its record MISSING",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: partial ownership claim becomes ORPHAN",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: orphan not flagged for the operator",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: interrupted record is SETTLED when absent",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: DESTROYED container eligible for adoption",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: auto cleanup claimed",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    },
+    {
+      "id": "classifier: invalid record trusted",
+      "file": "server/execution/identity/recoveryClassifier.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2b-a0-classification.test.mjs"
+      ]
+    }
+  ]
+}
