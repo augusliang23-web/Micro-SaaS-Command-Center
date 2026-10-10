@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Phase 3B7B2A (PR 26) test-helper reproducible mutation check (OFFLINE; fake Docker only; no network, no real Docker, no provider, no agent).
+// `also` edits (e.g. switching off the unchanged production argv guard so that the wrapper's OWN check is what is being tested) are applied first.
 // It mutates the TEST HELPERS (ownedDocker.mjs, realDockerScenarios.mjs) and requires the offline safety/dry-run tests to catch each mutation.
 //
 //   node scripts/phase3b7b2aMutationCheck.mjs [--workers N] [--out file.json] [--only text] [--check-patterns] [--no-baseline]
@@ -34,7 +35,9 @@ const tiersFor = () => [[T.safety], [T.dryrun]];
 const mutations = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/phase3b7b2a-mutations.json'), 'utf8')).filter((m) => !ONLY || m.id.includes(ONLY));
 const count = (text, needle) => (needle === '' ? 0 : text.split(needle).length - 1);
 
-const patternErrors = mutations.filter((m) => count(fs.readFileSync(path.join(ROOT, m.file), 'utf8'), m.find) !== 1).map((m) => m.id);
+const editsOf = (m) => [...(m.also ?? []), { find: m.find, replace: m.replace }];
+const applyEdits = (text, m) => editsOf(m).reduce((t, e) => t.replace(e.find, () => e.replace), text);
+const patternErrors = mutations.filter((m) => editsOf(m).some((e) => count(fs.readFileSync(path.join(ROOT, m.file), 'utf8'), e.find) !== 1)).map((m) => m.id);
 if (patternErrors.length) console.log('PATTERN ERRORS (must match exactly once):', patternErrors);
 if (CHECK_ONLY) { console.log(`${mutations.length} mutations, ${patternErrors.length} pattern errors`); process.exit(patternErrors.length ? 1 : 0); }
 
@@ -74,7 +77,7 @@ async function one(m) {
   const target = path.join(dir, m.file);
   const original = fs.readFileSync(path.join(ROOT, m.file), 'utf8');
   try {
-    fs.writeFileSync(target, original.replace(m.find, () => m.replace));
+    fs.writeFileSync(target, applyEdits(original, m));
     let caughtBy = null; let failures = 0;
     for (const tier of m.tiers ?? tiersFor(m.file)) {
       const r = await runTests(dir, tier);

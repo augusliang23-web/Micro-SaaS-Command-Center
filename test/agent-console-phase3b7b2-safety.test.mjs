@@ -6,7 +6,7 @@ import path from 'node:path';
 import { OwnedDocker, PolicyError, validateCreate } from './helpers/ownedDocker.mjs';
 import { createFixture } from './helpers/createArgsFixture.mjs';
 import {
-  PINNED_REF, UnknownOutcomeError, WaitTimeoutError, bounded, createHarness, createSuiteGuard, fenceBeforeLaunch,
+  PINNED_REF, UnknownOutcomeError, WaitTimeoutError, bounded, createHarness, createSuiteGuard, fenceBeforeLaunch, rawReadbackFaults, unconfirmedDestroy, unconfirmedStop, issuedLaunchStop, rawReadbackReal, adapterRealRun,
 } from './helpers/realDockerScenarios.mjs';
 import { EffectDocker, makeClock, TASK, RUN } from './helpers/dockerPathFixture.mjs';
 import { buildScenarioCommand } from '../server/execution/containerAgentAdapter.mjs';
@@ -293,8 +293,8 @@ test('fence scenario: a start() that cannot be settled after release is reported
   h.runtime.start = async (...a) => { await orig(...a); return new Promise(() => {}); }; // settles never, even after the pause is released
   let error = null;
   try { await fenceBeforeLaunch(h, 'stop', { waitMs: 1000, settleMs: 300 }); } catch (e) { error = e; }
-  assert.ok(error instanceof UnknownOutcomeError || error instanceof WaitTimeoutError, String(error));
-  if (error instanceof UnknownOutcomeError) assert.match(error.message, /never settled|not confirmed|local state preserved/);
+  assert.ok(error instanceof UnknownOutcomeError, `a stranded start must be UNKNOWN (and halt the suite), got ${error?.name}`);
+  assert.match(error.message, /a pending start\(\) never settled/);
   assert.equal(h.owned.count('start'), 0);
   await h.dispose();
 });
@@ -366,6 +366,19 @@ test('cleanupAll: an UNKNOWN existence answer is reported as a leftover, never c
   fx.inner.run = async (args, ...rest) => (args[0] === 'inspect' ? { exitCode: 1, stdout: '', stderr: 'permission denied while trying to connect', spawnError: null, timedOut: false } : realRun(args, ...rest));
   assert.deepEqual(await d.cleanupAll(), [id.slice(0, 12)]);
   fx.inner.run = realRun;
+  assert.deepEqual(await d.cleanupAll(), []);
+});
+
+test('cleanupAll: even if forceRemove itself throws for one id the sweep still attempts every other id', async () => {
+  const fx = createFixture(); const d = fx.owned;
+  const ids = await createOwned(d, fx, 3);
+  const real = d.forceRemove.bind(d);
+  d.forceRemove = async (id) => { if (id === ids[0]) throw new Error('unexpected failure'); return real(id); };
+  const leftovers = await d.cleanupAll();
+  assert.deepEqual(leftovers, [ids[0].slice(0, 12)]);
+  assert.equal(await d.existence(ids[1]), 'ABSENT'); assert.equal(await d.existence(ids[2]), 'ABSENT');
+  assert.ok(d.cleanupErrors.some((e) => e.error.includes('unexpected failure')));
+  d.forceRemove = real;
   assert.deepEqual(await d.cleanupAll(), []);
 });
 
@@ -450,3 +463,43 @@ test('suite guard: after an UNKNOWN outcome, a timeout or an unconfirmed cleanup
   assert.equal(g4.halted, null);
   assert.equal(RUN.length > 0 && makeClock !== undefined, true);
 });
+
+test('every other scenario also reports UNKNOWN (never a pass) when its container cannot be removed, and keeps the scratch workspace', async () => {
+  for (const [label, scenario] of [['unconfirmedDestroy', unconfirmedDestroy], ['unconfirmedStop', unconfirmedStop], ['issuedLaunchStop', issuedLaunchStop], ['rawReadbackReal', rawReadbackReal]]) {
+    const inner = new EffectDocker();
+    const h = createHarness({ inner, mode: 'dry' });
+    inner.ignoreRm = true; // the removal can never be confirmed
+    let error = null;
+    try { await scenario(h); } catch (e) { error = e; }
+    assert.ok(error instanceof UnknownOutcomeError, `${label}: ${error?.name}: ${String(error?.message).slice(0, 120)}`);
+    assert.ok(h.preserved.length >= 1 && fs.existsSync(h.preserved[0]), `${label}: scratch preserved`);
+    inner.ignoreRm = false;
+    assert.deepEqual(await h.dispose(), [], label);
+    for (const kept of h.preserved) fs.rmSync(kept, { recursive: true, force: true });
+  }
+});
+
+test('the live fault matrix STOPS at the first failure or uncertain cleanup — it never moves on to another live case', async () => {
+  const h = createHarness({ inner: new EffectDocker(), mode: 'dry' });
+  const rt = h.newRuntime();
+  rt.prepare = async () => { throw new Error('prepare exploded'); };
+  h.newRuntime = () => rt;
+  await assert.rejects(rawReadbackFaults(h), /FAULT-INJECTED response was delivered|exploded/); // the first case fails (its fault never reached a container)
+  assert.equal(h.owned.workspaces.size, 1, 'exactly one case was attempted');
+  await h.dispose();
+});
+
+test('a failed single-container scenario halts the guarded suite (UNKNOWN is never silently followed by another live test)', async () => {
+  const guard = createSuiteGuard();
+  const inner = new EffectDocker();
+  inner.ignoreRm = true;
+  const t = { skip: () => {} };
+  const first = createHarness({ inner, mode: 'dry' });
+  await assert.rejects(guard.run(first, adapterRealRunUnconfirmed, t), UnknownOutcomeError);
+  assert.ok(guard.halted);
+  const second = createHarness({ inner: new EffectDocker(), mode: 'dry' });
+  assert.equal(await guard.run(second, async () => { throw new Error('must not run'); }, t), 'skipped');
+  inner.ignoreRm = false; await first.dispose(); await second.dispose();
+  for (const kept of first.preserved) fs.rmSync(kept, { recursive: true, force: true });
+});
+async function adapterRealRunUnconfirmed(h) { await unconfirmedDestroy(h); void adapterRealRun; }
