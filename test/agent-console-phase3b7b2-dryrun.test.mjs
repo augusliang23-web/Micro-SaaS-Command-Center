@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 
-import { OwnedDocker, PolicyError } from './helpers/ownedDocker.mjs';
+import { PolicyError } from './helpers/ownedDocker.mjs';
+import { createFixture } from './helpers/createArgsFixture.mjs';
 import {
   DAMAGE, PINNED_REF, adapterRealRun, createHarness, endToEnd, fenceBeforeLaunch, issuedLaunchStop, rawReadbackFaults, rawReadbackReal, unconfirmedDestroy, unconfirmedStop,
 } from './helpers/realDockerScenarios.mjs';
@@ -13,13 +14,10 @@ import { EffectDocker } from './helpers/dockerPathFixture.mjs';
 // code, the policy and the runtime/adapter call shapes are proven coherent BEFORE a daemon is involved, and (3) statically
 // inspects the integration file for forbidden operations. Passing here is NOT evidence about a real daemon.
 
-const owned = () => new OwnedDocker({ inner: new EffectDocker(), imageRef: PINNED_REF });
-const createArgs = (name = 'cc-sandbox-agent-p3b7b2-abc123', extra = []) => ['create', `--name=${name}`, '--label=cc.sandbox=1', '--pull=never', '--network=none', '--memory=64m', '--memory-swap=64m', '--cpus=0.5', '--pids-limit=32', '--user=501:20', ...extra, PINNED_REF, 'true'];
-
-// ---------- 1. OwnedDocker allow-list ----------
+// Create-shape, ownership and cleanup contracts are covered exhaustively in agent-console-phase3b7b2-safety.test.mjs.
 
 test('policy: every verb outside the allow-list is refused, including ps, images, pull, build, run, system and network', async () => {
-  const d = owned();
+  const { owned: d } = createFixture();
   for (const args of [['ps', '-a'], ['ps'], ['images'], ['images', '-q'], ['pull', PINNED_REF], ['build', '.'], ['run', '-d', PINNED_REF], ['system', 'prune', '-f'], ['network', 'ls'], ['volume', 'ls'],
     ['container', 'prune'], ['rename', 'a', 'b'], ['exec', 'x', 'sh'], ['cp', 'a', 'b'], ['logs', 'x'], ['info'], ['version'], ['version', '--format=a', 'b'], [], ['']]) {
     await assert.rejects(d.run(args), (e) => e instanceof PolicyError, JSON.stringify(args));
@@ -29,42 +27,19 @@ test('policy: every verb outside the allow-list is refused, including ps, images
   await assert.rejects(d.run([5]), PolicyError);
 });
 
-test('policy: image inspect is limited to the pinned digest; container inspect to owned ids and task-owned names', async () => {
-  const d = owned();
+test('policy: image inspect is limited to the pinned digest', async () => {
+  const { owned: d } = createFixture();
   await assert.rejects(d.run(['image', 'inspect', '--format={{json .}}', 'busybox:latest']), PolicyError);
   await assert.rejects(d.run(['image', 'inspect', '--format={{json .}}', `busybox@sha256:${'a'.repeat(64)}`]), PolicyError);
   await assert.rejects(d.run(['image', 'ls']), PolicyError);
   await d.run(['image', 'inspect', '--format={{json .}}', PINNED_REF]);
-  for (const ref of ['some-other-container', 'a'.repeat(64), 'cc-sandbox-verifier-x', 'cc-sandbox-agent-other', '/etc', '', 'cc-sandbox-agent-run-1-2']) {
-    await assert.rejects(d.run(['inspect', '--type=container', '--format={{json .}}', ref]), PolicyError, ref);
-  }
-  await d.run(['inspect', '--type=container', '--format={{json .}}', 'cc-sandbox-agent-p3b7b2-abc123']);
-  await d.run(['inspect', '--type=container', '--format={{json .}}', 'cc-sandbox-agent-run-99990101-abcd1234']);
-});
-
-test('policy: create needs NO_NETWORK, no-pull, the label, the pinned image and a task-owned name; unsafe options are refused', async () => {
-  const d = owned();
-  for (const args of [
-    ['create', '--name=cc-sandbox-agent-p3b7b2-x1', '--label=cc.sandbox=1', '--pull=never', PINNED_REF], // no network option
-    ['create', '--name=cc-sandbox-agent-p3b7b2-x1', '--label=cc.sandbox=1', '--pull=never', '--network=bridge', PINNED_REF],
-    ['create', '--name=cc-sandbox-agent-p3b7b2-x1', '--label=cc.sandbox=1', '--network=none', PINNED_REF], // may pull
-    ['create', '--name=cc-sandbox-agent-p3b7b2-x1', '--pull=never', '--network=none', PINNED_REF], // unlabelled
-    ['create', '--name=cc-sandbox-agent-p3b7b2-x1', '--label=cc.sandbox=1', '--pull=never', '--network=none', 'busybox:latest'],
-    ['create', '--name=unrelated-name', '--label=cc.sandbox=1', '--pull=never', '--network=none', PINNED_REF],
-    ['create', '--label=cc.sandbox=1', '--pull=never', '--network=none', PINNED_REF],
-    ...['--privileged', '--cap-add=ALL', '--device=/dev/sda', '--volume=/:/h', '-v', '--pid=host', '--ipc=host', '--mount=type=bind,src=/var/run/docker.sock,dst=/s'].map((x) => createArgs('cc-sandbox-agent-p3b7b2-x1', [x])),
-    createArgs('cc-sandbox-agent-p3b7b2-x1', ['--network=host']),
-  ]) await assert.rejects(d.run(args), PolicyError, JSON.stringify(args).slice(0, 120));
-  assert.equal(d.owned.size, 0);
-  const made = await d.run(createArgs());
-  assert.equal(made.exitCode, 0); assert.equal(d.owned.size, 1);
 });
 
 test('policy: stop, kill, rm and start act only on container ids this wrapper created', async () => {
-  const d = owned();
-  const id = (await d.run(createArgs())).stdout.trim();
+  const fx = createFixture(); const d = fx.owned;
+  const id = (await d.run(fx.args)).stdout.trim();
   const other = 'f'.repeat(64);
-  for (const args of [['stop', '--time=2', other], ['kill', other], ['rm', '--force', other], ['rm', '--force', 'cc-sandbox-agent-p3b7b2-abc123'], ['stop', 'name']]) await assert.rejects(d.run(args), PolicyError, JSON.stringify(args));
+  for (const args of [['stop', '--time=2', other], ['kill', other], ['rm', '--force', other], ['rm', '--force', fx.name], ['stop', 'name']]) await assert.rejects(d.run(args), PolicyError, JSON.stringify(args));
   assert.throws(() => d.stream(['start', '-a', other]), PolicyError);
   assert.throws(() => d.stream(['start', id]), PolicyError);
   assert.throws(() => d.stream(['start', '-a', id, 'extra']), PolicyError);
@@ -77,14 +52,14 @@ test('policy: stop, kill, rm and start act only on container ids this wrapper cr
 });
 
 test('observation, pause, fault injection and swallowing are separated and counted', async () => {
-  const d = owned();
-  const id = (await d.run(createArgs())).stdout.trim();
-  d.inner.containers.get('cc-sandbox-agent-p3b7b2-abc123').started = true;
+  const fx = createFixture(); const d = fx.owned;
+  const id = (await d.run(fx.args)).stdout.trim();
+  d.inner.containers.get(fx.name).started = true;
   const real = await d.run(['inspect', '--type=container', '--format={{json .}}', id]);
   assert.equal(d.observed.length, 1); assert.equal(d.faultsApplied, 0);
   assert.equal(JSON.parse(real.stdout).State.ExitCode, 0);
   // faults apply only to EXITED-state responses of owned containers, and are counted
-  d.inner.containers.get('cc-sandbox-agent-p3b7b2-abc123').running = false;
+  d.inner.containers.get(fx.name).running = false;
   d.inner.streams.push({ args: ['start', '-a', id] });
   d.faults = (st) => { delete st.OOMKilled; };
   const hurt = JSON.parse((await d.run(['inspect', '--type=container', '--format={{json .}}', id])).stdout);
@@ -98,15 +73,16 @@ test('observation, pause, fault injection and swallowing are separated and count
   assert.equal(d.swallowed, 1); assert.equal(await d.existence(id), 'PRESENT');
   d.swallow = new Set();
   assert.equal(await d.forceRemove(id), 'ABSENT');
-  // pause
-  const id2 = (await d.run(createArgs('cc-sandbox-agent-p3b7b2-def456'))).stdout.trim();
+  // pause: held after Docker answered, and release() is idempotent
+  const id2 = (await d.run(fx.args.map((a) => a.split(fx.name).join(fx.name) ))).stdout.trim();
   const pause = d.armPause(2);
   let done = 0;
   const p = (async () => { await d.run(['inspect', '--type=container', '--format={{json .}}', id2]); done = 1; await d.run(['inspect', '--type=container', '--format={{json .}}', id2]); done = 2; })();
   await pause.reached;
   assert.equal(done, 1, 'the second inspect is held after Docker answered');
-  pause.release(); await p;
+  pause.release(); pause.release(); await p;
   assert.equal(done, 2);
+  assert.equal(pause.released, true);
   await d.cleanupAll();
 });
 
@@ -163,15 +139,17 @@ test('inspection: every test in the integration file is skipped when Docker or t
   const tests = [...integration.matchAll(/^\s*(?:scenario|test)\(/gm)];
   assert.ok(tests.length >= 11);
   assert.match(integration, /const skip = probe\.ok \? false :/);
-  assert.match(integration, /test\(name, \{ skip, timeout \}/);
+  assert.match(integration, /test\(name, \{ skip, timeout \}, async \(t\) => \{ await guard\.run\(newHarness\(\), fn, t\); \}\)/);
   assert.match(integration, /test\('every container this file created is confirmed absent', \{ skip \}/);
-  assert.match(integration, /const leftovers = await h\.dispose\(\);/);
+  assert.match(integration, /createSuiteGuard\(\)/);
   assert.match(integration, /mode: 'real'/);
   assert.match(integration, /after\(async/);
   assert.ok(!/mode: 'dry'/.test(integration));
   // every real container the scenarios create is also removed by exact id in a finally block
-  assert.ok((scenarios.match(/forceRemove\(id\)/g) ?? []).length >= 5);
-  assert.ok((scenarios.match(/finally/g) ?? []).length >= 8);
+  assert.ok((scenarios.match(/closeOut\(h/g) ?? []).length >= 8, 'every scenario closes out through the exact-id sweep');
+  assert.match(scenarios, /cleanupAll\(\)/);
+  assert.match(scenarios, /pause\?\.release\(\);/, 'the paused inspect is released unconditionally');
+  assert.ok((scenarios.match(/bounded\(/g) ?? []).length >= 12, 'asynchronous waits are bounded');
 });
 
 test('inspection: the wrapper restricts the daemon surface to a small verb allow-list', () => {

@@ -6,7 +6,7 @@ import { DOCKER_BIN } from './helpers/dockerScratch.mjs';
 import { DockerClient } from '../server/sandbox/dockerClient.mjs';
 import { OwnedDocker } from './helpers/ownedDocker.mjs';
 import {
-  PINNED_REF, createHarness, adapterRealRun, endToEnd, fenceBeforeLaunch, issuedLaunchStop, unconfirmedStop, unconfirmedDestroy, rawReadbackReal, rawReadbackFaults,
+  PINNED_REF, createHarness, createSuiteGuard, adapterRealRun, endToEnd, fenceBeforeLaunch, issuedLaunchStop, unconfirmedStop, unconfirmedDestroy, rawReadbackReal, rawReadbackFaults,
 } from './helpers/realDockerScenarios.mjs';
 import { TEST_IMAGES } from '../server/sandbox/sandboxImages.mjs';
 
@@ -39,18 +39,16 @@ if (fs.existsSync(DOCKER_BIN)) {
 const skip = probe.ok ? false : `real Docker not usable (${probe.reason}); NOT RUN`;
 
 const harnesses = [];
+const guard = createSuiteGuard();
 const newHarness = () => { const h = createHarness({ inner: mkInner(), mode: 'real' }); harnesses.push(h); return h; };
 
-/** Runs one scenario with its own harness; always attempts exact-id cleanup and requires every owned container confirmed absent. */
+/**
+ * Runs one scenario with its own harness. Exact-id cleanup of every owned container is always attempted; local state is deleted only
+ * when absence is proven. After an UNKNOWN outcome, a timeout or an unconfirmed cleanup the suite HALTS: later scenarios are reported
+ * skipped and are never run against a daemon that may still hold an owned container.
+ */
 function scenario(name, fn, { timeout = 90_000 } = {}) {
-  test(name, { skip, timeout }, async () => {
-    const h = newHarness();
-    let failure = null;
-    try { await fn(h); } catch (error) { failure = error; }
-    const leftovers = await h.dispose();
-    if (failure) throw failure;
-    assert.deepEqual(leftovers, [], `owned containers that could not be confirmed absent: ${leftovers}`);
-  });
+  test(name, { skip, timeout }, async (t) => { await guard.run(newHarness(), fn, t); });
 }
 
 // ---- Gap 1: ContainerFakeAgentAdapter against the real daemon ---------------------------------------------------------------
