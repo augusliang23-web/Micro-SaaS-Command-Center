@@ -27,10 +27,11 @@ const BASELINE = !args.includes('--no-baseline');
 
 const T = {
   safety: 'test/agent-console-phase3b7b2-safety.test.mjs',
+  final: 'test/agent-console-phase3b7b2-final.test.mjs',
   dryrun: 'test/agent-console-phase3b7b2-dryrun.test.mjs',
 };
 const ALL = Object.values(T);
-const tiersFor = () => [[T.safety], [T.dryrun]];
+const tiersFor = () => [[T.final], [T.safety], [T.dryrun]];
 
 const mutations = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/phase3b7b2a-mutations.json'), 'utf8')).filter((m) => !ONLY || m.id.includes(ONLY));
 const count = (text, needle) => (needle === '' ? 0 : text.split(needle).length - 1);

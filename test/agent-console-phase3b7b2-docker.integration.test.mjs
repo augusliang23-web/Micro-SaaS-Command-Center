@@ -4,11 +4,10 @@ import fs from 'node:fs';
 
 import { DOCKER_BIN } from './helpers/dockerScratch.mjs';
 import { DockerClient } from '../server/sandbox/dockerClient.mjs';
-import { OwnedDocker } from './helpers/ownedDocker.mjs';
+import { preflight } from './helpers/dockerPreflight.mjs';
 import {
   PINNED_REF, createHarness, createSuiteGuard, adapterRealRun, endToEnd, fenceBeforeLaunch, issuedLaunchStop, unconfirmedStop, unconfirmedDestroy, rawReadbackReal, rawReadbackFaults,
 } from './helpers/realDockerScenarios.mjs';
-import { TEST_IMAGES } from '../server/sandbox/sandboxImages.mjs';
 
 // Phase 3B7B2A — REAL local Docker, FAKE agent only. Closes three gaps left by the Phase 3B2 integration suite:
 //   1. ContainerFakeAgentAdapter (role=agent, alias fake-agent-busybox) against the real daemon,
@@ -23,19 +22,8 @@ import { TEST_IMAGES } from '../server/sandbox/sandboxImages.mjs';
 // If Docker or the pinned image is absent, every test is reported SKIPPED (a skip is never a pass).
 
 const mkInner = () => new DockerClient({ dockerPath: DOCKER_BIN });
-let probe = { ok: false, reason: 'DOCKER_BINARY_MISSING' };
-if (fs.existsSync(DOCKER_BIN)) {
-  try {
-    const owned = new OwnedDocker({ inner: mkInner(), imageRef: PINNED_REF });
-    const v = await owned.run(['version', '--format={{json .Server}}']);
-    const server = v.exitCode === 0 ? JSON.parse(v.stdout) : null;
-    const img = server ? await owned.run(['image', 'inspect', '--format={{json .}}', PINNED_REF]) : null;
-    const info = img?.exitCode === 0 ? JSON.parse(img.stdout) : null;
-    const entry = TEST_IMAGES['busybox-test'];
-    probe = server?.Os === 'linux' && info && info.Os === entry.os && info.Architecture === entry.arch && (info.RepoDigests ?? []).includes(entry.reference)
-      ? { ok: true } : { ok: false, reason: server ? 'PINNED_IMAGE_MISSING_OR_MISMATCHED' : 'DOCKER_DAEMON_UNAVAILABLE' };
-  } catch { probe = { ok: false, reason: 'DOCKER_PROBE_FAILED' }; }
-}
+// Read-only preflight (version + image inspect only). Expected unavailability => skip with a visible reason; a programming error is NOT swallowed.
+const probe = fs.existsSync(DOCKER_BIN) ? await preflight({ inner: mkInner(), imageRef: PINNED_REF }) : { ok: false, reason: 'DOCKER_BINARY_MISSING' };
 const skip = probe.ok ? false : `real Docker not usable (${probe.reason}); NOT RUN`;
 
 const harnesses = [];

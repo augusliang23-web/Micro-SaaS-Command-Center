@@ -525,5 +525,113 @@
     "replace": "void state;"
    }
   ]
+ },
+ {
+  "id": "preflight: OwnedDocker built without a state root (the original bug)",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "stateRoot: stateRoot ?? temp }); // constructor/programming errors propagate",
+  "replace": "stateRoot: undefined }); // constructor/programming errors propagate"
+ },
+ {
+  "id": "preflight: programming errors swallowed",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "const owned = new OwnedDocker({ inner, imageRef, stateRoot: stateRoot ?? temp }); // constructor/programming errors propagate",
+  "replace": "let owned; try { owned = new OwnedDocker({ inner, imageRef, stateRoot: stateRoot ?? temp }); } catch { return { ok: false, reason: 'DOCKER_PROBE_FAILED' }; }"
+ },
+ {
+  "id": "preflight: non-zero daemon exit treated as available",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "if (v.spawnError || v.timedOut || v.exitCode !== 0) return",
+  "replace": "if (v.spawnError || v.timedOut) return"
+ },
+ {
+  "id": "preflight: non-Linux engine accepted",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "if (server?.Os !== 'linux') return",
+  "replace": "if (false) return"
+ },
+ {
+  "id": "preflight: missing image treated as available",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "if (img.spawnError || img.timedOut || img.exitCode !== 0) return",
+  "replace": "if (img.spawnError || img.timedOut) return"
+ },
+ {
+  "id": "preflight: platform not checked",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "info?.Architecture !== entry.arch || ",
+  "replace": ""
+ },
+ {
+  "id": "preflight: digest not checked",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "|| !(info?.RepoDigests ?? []).includes(entry.reference)",
+  "replace": ""
+ },
+ {
+  "id": "preflight: temp directory left behind",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "finally { if (temp) fs.rmSync(temp, { recursive: true, force: true }); }",
+  "replace": "finally { }"
+ },
+ {
+  "id": "preflight: a mutating call is issued",
+  "file": "test/helpers/dockerPreflight.mjs",
+  "find": "const v = await owned.run(['version', '--format={{json .Server}}']);",
+  "replace": "await owned.run(['rm', '--force', 'f'.repeat(64)]).catch(() => {}); const v = await owned.run(['version', '--format={{json .Server}}']);"
+ },
+ {
+  "id": "e2e: fixture never preserved",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "{ keepRoot: () => preserve }",
+  "replace": "{ keepRoot: () => false }"
+ },
+ {
+  "id": "e2e: fixture always preserved",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "{ keepRoot: () => preserve }",
+  "replace": "{ keepRoot: () => true }"
+ },
+ {
+  "id": "e2e: leftovers not reported",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length) throw new UnknownOutcomeError(`end-to-end:",
+  "replace": "if (false) throw new UnknownOutcomeError(`end-to-end:"
+ },
+ {
+  "id": "e2e: approvals removed despite leftovers",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length) { preserve = true; h.preserved.push(f.root); if (approvals) h.preserved.push(approvals.dir); } else { approvals?.done(); }",
+  "replace": "if (leftovers.length) { preserve = true; h.preserved.push(f.root); } approvals?.done();"
+ },
+ {
+  "id": "e2e: owned-container sweep skipped",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "leftovers = await h.owned.cleanupAll();\n    if (leftovers.length) { preserve",
+  "replace": "leftovers = [];\n    if (leftovers.length) { preserve"
+ },
+ {
+  "id": "e2e: setup failure preserved as unknown",
+  "file": "test/helpers/realDockerScenarios.mjs",
+  "find": "if (leftovers.length) { preserve = true;",
+  "replace": "if (true) { preserve = true;"
+ },
+ {
+  "id": "shared fixture: keepRoot ignored",
+  "file": "test/helpers/phase2Fixture.mjs",
+  "find": "if (!(typeof keepRoot === 'function' && keepRoot() === true))",
+  "replace": "if (true)"
+ },
+ {
+  "id": "shared fixture: nothing is ever removed",
+  "file": "test/helpers/phase2Fixture.mjs",
+  "find": "if (!(typeof keepRoot === 'function' && keepRoot() === true))",
+  "replace": "if (false)"
+ },
+ {
+  "id": "shared fixture: truthy keepRoot preserves",
+  "file": "test/helpers/phase2Fixture.mjs",
+  "find": "keepRoot() === true))",
+  "replace": "keepRoot()))"
  }
 ]

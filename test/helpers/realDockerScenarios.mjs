@@ -62,7 +62,7 @@ export function createHarness({ inner, mode }) {
   const runtimes = [];
   const newRuntime = (extra = {}) => { const r = new DockerSandboxRuntime({ docker: owned, images: FAKE_AGENT_IMAGES, stateRoot, commandCenterRoot: process.cwd(), ...extra }); runtimes.push(r); return r; };
   const h = {
-    mode, real: mode === 'real', inner, owned, stateRoot, preserved: [], stateRootPreserved: false, closeBoundMs: 30_000,
+    mode, real: mode === 'real', inner, owned, stateRoot, preserved: [], fixtureRoots: [], stateRootPreserved: false, closeBoundMs: 30_000,
     runtime: newRuntime(), newRuntime,
     newAdapter: (runtime = h.runtime) => new ContainerFakeAgentAdapter({ runtime, limits: LIMITS }),
     /** A synthetic scratch workspace, registered as the ONLY kind of workspace the wrapper will bind. */
@@ -186,12 +186,16 @@ export async function adapterRealRun(h) {
 
 /** Real container writes the fixture; the Orchestrator verifies the tree and commits to a TEMP local bare remote with fake PR. */
 export async function endToEnd(h, { fault = false } = {}) {
+  let preserve = false; // set only when exact owned-container absence could NOT be proven
+  let failure = null; let leftovers = [];
+  let approvals = null; let fixtureRoot = null;
   await withFixture(async (f) => {
-    h.setEffect((ws) => writeFixture(ws, TASK_A, FIXTURE_CONTENT(TASK_A)));
-    f.task(TASK_A);
-    h.owned.registerWorkspace(path.join(f.worktreeRoot, TASK_A)); // the one worktree the Orchestrator will create
-    const approvals = approvalSetup();
+    fixtureRoot = f.root; h.fixtureRoots.push(f.root);
     try {
+      h.setEffect((ws) => writeFixture(ws, TASK_A, FIXTURE_CONTENT(TASK_A)));
+      f.task(TASK_A);
+      h.owned.registerWorkspace(path.join(f.worktreeRoot, TASK_A)); // the one worktree the Orchestrator will create
+      approvals = approvalSetup();
       const inner = h.newAdapter();
       // The Orchestrator generates its own run ids: each exact name is reserved at the moment the run starts, before any Docker call.
       const adapter = { id: inner.id, probe: () => inner.probe(), cancel: (r) => inner.cancel(r), start: (spec, emit) => { h.reserveRun(spec.runId); return inner.start(spec, emit); } };
@@ -223,9 +227,15 @@ export async function endToEnd(h, { fault = false } = {}) {
         assert.equal(worktreeHead(f, TASK_A), f.baseSha);
         assert.deepEqual(remoteBranches(f), []);
       }
-      for (const id of h.owned.owned) await gone(h, id, 'after the end-to-end run');
-    } finally { h.owned.faults = null; approvals.done(); }
-  });
+    } catch (error) { failure = error; }
+    h.owned.faults = null;
+    // GUARANTEED, whatever happened: exact-id sweep of EVERY owned container; fixture and approvals are removed only on proven absence.
+    leftovers = await h.owned.cleanupAll();
+    if (leftovers.length) { preserve = true; h.preserved.push(f.root); if (approvals) h.preserved.push(approvals.dir); } else { approvals?.done(); }
+    if (leftovers.length) throw new UnknownOutcomeError(`end-to-end: owned container(s) not confirmed absent (${leftovers.join(',')}); the synthetic worktree, git repositories, evidence and approvals are preserved at ${f.root}`);
+    if (failure) throw failure;
+  }, {}, { keepRoot: () => preserve }); // opt-in: the shared Phase 2 behaviour (always remove) is unchanged for every other caller
+  void fixtureRoot;
 }
 
 // =====================================================================================================================
