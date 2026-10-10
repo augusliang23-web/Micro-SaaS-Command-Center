@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,8 @@ import path from 'node:path';
 import { TaskStore } from '../server/tasks/taskStore.mjs';
 import { TASK_TRANSITIONS, assertTaskTransition } from '../server/tasks/stateTransitions.mjs';
 import { ACTIVE_TASK_STATUSES, EVIDENCE_KINDS, TASK_STATUSES, validateDevelopmentTask } from '../server/tasks/types.mjs';
+import { guarded } from './helpers/pendingFixture.mjs';
+const test = guarded(nodeTest);
 
 // OFFLINE ONLY. The AWAITING_APPROVAL / PUBLISHING task states: the transition table, restart recovery, the completion guard,
 // and static proof that no resume, route, approval consumption or execution capability was added.

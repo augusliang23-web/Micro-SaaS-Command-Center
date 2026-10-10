@@ -242,8 +242,10 @@ export class PendingActionStore {
   }
 
   #readMarker(taskId) {
-    const marker = this.#readJson(this.#markerFile(taskId));
-    if (marker === null) return null;
+    const text = this.#readText(this.#markerFile(taskId));
+    if (text === null) return null; // absent. A file whose JSON is `null` is NOT absent: it is malformed and fails closed below.
+    let marker;
+    try { marker = JSON.parse(text); } catch { return fail('RECORD_CORRUPT', 'A task marker is not valid JSON'); }
     if (!marker || typeof marker !== 'object' || Object.keys(marker).sort().join() !== 'pendingId,schemaVersion,taskId' || marker.schemaVersion !== 1 || marker.taskId !== taskId || !PENDING_ID_PATTERN.test(marker.pendingId ?? '')) {
       fail('RECORD_CORRUPT', 'A task marker is malformed');
     }

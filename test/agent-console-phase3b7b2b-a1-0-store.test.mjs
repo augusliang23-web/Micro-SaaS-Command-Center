@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -7,6 +7,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { PendingActionStore, PendingStoreError } from '../server/execution/continuation/pendingActionStore.mjs';
 import { PendingActionError, applyStepAdvance, buildInitialRecord } from '../server/execution/continuation/pendingActionTypes.mjs';
 import { clock, counterHex, finishAll, freshStore, h, pendingInput, readRev, revisionFile, taskId, tempRoot } from './helpers/pendingFixture.mjs';
+import { guarded } from './helpers/pendingFixture.mjs';
+const test = guarded(nodeTest);
 
 // OFFLINE ONLY. Durable storage: atomic publication, compare-and-set, replay, concurrency, interrupted and failed writes, corruption,
 // filesystem attacks, restart, and the per-task / per-project invariants. No Docker, Git, approval or network.
@@ -216,16 +218,39 @@ test('a surviving marker for a REVOKED pending action is cleaned on the next cre
   } finally { gone.cleanup(); }
   const forged = freshStore();
   try {
-    idOf(forged.store);
+    const own = idOf(forged.store);
     const other = forged.store.create(pendingInput(2));
-    fs.writeFileSync(path.join(forged.root, 'tasks', `${taskId(1)}.open`), JSON.stringify({ schemaVersion: 1, taskId: taskId(1), pendingId: other.pendingId }), { mode: 0o600 });
+    const marker = path.join(forged.root, 'tasks', `${taskId(1)}.open`);
+    const put = (value) => fs.writeFileSync(marker, typeof value === 'string' ? value : JSON.stringify(value), { mode: 0o600 });
+    const good = { schemaVersion: 1, taskId: taskId(1), pendingId: own.pendingId };
+    put(good); assert.equal(forged.store.getByTask(taskId(1)).pendingId, own.pendingId);
+    put({ ...good, pendingId: other.pendingId });
     assert.throws(() => forged.store.getByTask(taskId(1)), code('RECORD_CORRUPT'), "a marker naming another task's record");
-    for (const bad of ['', '{', '[]', JSON.stringify({ schemaVersion: 1, taskId: taskId(1) }), JSON.stringify({ schemaVersion: 1, taskId: taskId(2), pendingId: other.pendingId }), JSON.stringify({ schemaVersion: 1, taskId: taskId(1), pendingId: 'x' }), JSON.stringify({ schemaVersion: 1, taskId: taskId(1), pendingId: other.pendingId, extra: 1 })]) {
-      fs.writeFileSync(path.join(forged.root, 'tasks', `${taskId(1)}.open`), bad, { mode: 0o600 });
-      assert.throws(() => forged.store.getByTask(taskId(1)), (e) => e.code === 'RECORD_CORRUPT', bad);
-      assert.throws(() => idOf(forged.store), (e) => e instanceof PendingActionError, bad);
+    for (const [label, bad] of Object.entries({
+      'extra key': { ...good, extra: 1 }, 'missing pendingId': { schemaVersion: 1, taskId: taskId(1) }, 'wrong schemaVersion': { ...good, schemaVersion: 2 },
+      'names another task': { ...good, taskId: taskId(2) }, 'bad pendingId': { ...good, pendingId: 'x' }, empty: '', 'not JSON': '{', array: '[]', null: 'null',
+    })) {
+      put(bad);
+      assert.throws(() => forged.store.getByTask(taskId(1)), code('RECORD_CORRUPT'), label);
+      assert.throws(() => idOf(forged.store), (e) => e instanceof PendingActionError, label);
     }
   } finally { forged.cleanup(); }
+});
+
+test('revoking or superseding releases the task marker immediately; other endings keep it', () => {
+  const fx = freshStore();
+  try {
+    const marker = path.join(fx.root, 'tasks', `${taskId(1)}.open`);
+    for (const to of ['REVOKED', 'SUPERSEDED']) {
+      const r = idOf(fx.store);
+      assert.equal(fs.existsSync(marker), true);
+      fx.store.setStatus(r.pendingId, 1, to);
+      assert.equal(fs.existsSync(marker), false, to);
+    }
+    const r = idOf(fx.store);
+    fx.store.setStatus(r.pendingId, 1, 'INTERRUPTED');
+    assert.equal(fs.existsSync(marker), true, 'INTERRUPTED keeps the task held');
+  } finally { fx.cleanup(); }
 });
 
 test('several pending actions in ONE project are allowed (parallel branches), independent and individually valid; no project-wide restriction exists', () => {
@@ -353,6 +378,44 @@ test('a failure to remove the temp name after publication is ambiguous and the e
   } finally { dir.cleanup(); }
 });
 
+test('a write that reports no progress or more than it wrote is an error, never a silently short record', () => {
+  for (const kind of ['zero', 'over']) {
+    const dir = tempRoot();
+    try {
+      let armed = false; let calls = 0;
+      const fsImpl = { ...fs, constants: fs.constants, writeSync: (fd, buf, off, len, pos) => {
+        if (!armed) return fs.writeSync(fd, buf, off, len, pos);
+        calls += 1;
+        if (kind === 'zero') return calls === 1 ? 0 : fs.writeSync(fd, buf, off, len, pos);
+        fs.writeSync(fd, buf, off, len, pos); return len + 5;
+      } };
+      const store = new PendingActionStore({ root: dir.root, now: clock(), fsImpl });
+      const r = store.create(pendingInput(1));
+      armed = true;
+      assert.throws(() => store.advanceStep(r.pendingId, 1, step('COMMIT', 'CLAIMED')), code('WRITE_FAILED'), kind);
+      armed = false;
+      assert.deepEqual(fs.readdirSync(path.join(dir.root, 'records', r.pendingId)), ['0000000001.json'], kind);
+    } finally { dir.cleanup(); }
+  }
+});
+
+test('a read-back that differs from what was published is ambiguous, never success', () => {
+  const dir = tempRoot();
+  try {
+    let armed = false; let flipped = false; let publishedFd = null;
+    const fsImpl = { ...fs, constants: fs.constants,
+      linkSync: (a, b) => { fs.linkSync(a, b); if (armed && String(b).endsWith('0000000002.json')) publishedFd = true; },
+      readSync: (fd, buf, off, len, pos) => { const n = fs.readSync(fd, buf, off, len, pos); if (armed && publishedFd && !flipped && n > 0) { const text = buf.toString('utf8', off, off + n); const swapped = text.replace('"revision": 2', '"revision": 3'); if (swapped !== text) { flipped = true; buf.write(swapped, off); } } return n; } };
+    const store = new PendingActionStore({ root: dir.root, now: clock(), fsImpl });
+    const r = store.create(pendingInput(1));
+    armed = true;
+    assert.throws(() => store.advanceStep(r.pendingId, 1, step('COMMIT', 'CLAIMED')), code('WRITE_AMBIGUOUS'));
+    assert.equal(flipped, true, 'the injected difference was actually applied');
+    armed = false;
+    assert.equal(store.get(r.pendingId).revision, 2, 'the real revision on disk is fine; only the confirmation failed');
+  } finally { dir.cleanup(); }
+});
+
 test('crash after the temp file was written but before publication: the leftover is reported, never read as a revision, never deleted', () => {
   const fx = freshStore();
   try {
@@ -413,6 +476,7 @@ const CORRUPTIONS = {
   'revision replayed (revision 2 copied over revision 3)': (fx) => fs.copyFileSync(revisionFile(fx.root, fx.id, 2), revisionFile(fx.root, fx.id, 3)),
   'revision number lies': (fx) => rewrite(fx, 3, (r) => { r.revision = 9; }),
   'pendingId of another record': (fx) => rewrite(fx, 3, (r) => { r.pendingId = `PND-${'9'.repeat(32)}`; }),
+  'file names lie about the order (revision 2 renamed to 3)': (fx) => fs.renameSync(revisionFile(fx.root, fx.id, 2), revisionFile(fx.root, fx.id, 3).replace('0000000003', '0000000004')),
   'gap in the history (revision 2 deleted)': (fx) => fs.rmSync(revisionFile(fx.root, fx.id, 2)),
   'oversized file (valid JSON padded past the limit)': (fx) => fs.writeFileSync(revisionFile(fx.root, fx.id, 3), `${fs.readFileSync(revisionFile(fx.root, fx.id, 3), 'utf8')}${' '.repeat(140_000)}`, { mode: 0o600 }),
   'group/world readable': (fx) => fs.chmodSync(revisionFile(fx.root, fx.id, 3), 0o644),
@@ -453,13 +517,30 @@ test('KNOWN LIMIT (documented, not claimed as protected): deleting the NEWEST re
   } finally { fx.cleanup(); }
 });
 
-test('a FIFO planted at a revision path is corruption and never blocks the process', () => {
+test('a FIFO planted at a revision path is corruption and never blocks the process (checked in a child with a hard timeout)', () => {
   const fx = seeded(3);
   try {
     fs.rmSync(revisionFile(fx.root, fx.id, 3));
     const made = spawnSync('/usr/bin/mkfifo', ['-m', '600', revisionFile(fx.root, fx.id, 3)]);
     assert.equal(made.status, 0);
-    assert.throws(() => fx.store.get(fx.id), code('RECORD_CORRUPT'));
+    const script = `import { PendingActionStore } from ${JSON.stringify(STORE_URL)};
+      const s = new PendingActionStore({ root: ${JSON.stringify(fx.root)} });
+      try { s.get(${JSON.stringify(fx.id)}); console.log('READ'); } catch (e) { console.log('REFUSED:' + e.code); }`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL' });
+    assert.equal(child.error, undefined, 'the child did not hang on the FIFO');
+    assert.equal(child.status, 0);
+    assert.match(child.stdout, /REFUSED:RECORD_CORRUPT/);
+  } finally { fx.cleanup(); }
+});
+
+test('a valid revision copied into another pending directory is refused (its pendingId does not match the directory)', () => {
+  const fx = seeded(2);
+  try {
+    const stranger = `PND-${'9'.repeat(32)}`;
+    fs.mkdirSync(path.join(fx.root, 'records', stranger), { mode: 0o700 });
+    fs.copyFileSync(revisionFile(fx.root, fx.sibling.pendingId, 1), revisionFile(fx.root, stranger, 1));
+    assert.throws(() => fx.store.get(stranger), code('RECORD_CORRUPT'));
+    assert.equal(fx.store.list().corrupt.map((c) => c.id).join(), stranger);
   } finally { fx.cleanup(); }
 });
 

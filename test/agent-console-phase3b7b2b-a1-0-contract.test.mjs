@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import fs from 'node:fs';
 
 import {
@@ -8,6 +8,8 @@ import {
 } from '../server/execution/continuation/pendingActionTypes.mjs';
 import { APPROVAL_AUTHENTICITY } from '../server/execution/approvalGate.mjs';
 import { NOT_JOURNALED, digest, evidenceId, h, manifestOf, pendingInput, runId, taskId } from './helpers/pendingFixture.mjs';
+import { guarded } from './helpers/pendingFixture.mjs';
+const test = guarded(nodeTest);
 
 // OFFLINE ONLY. The pending-action data contract: strict validation, pure transitions, history chains, identity assessment.
 
@@ -61,6 +63,13 @@ test('every scalar field is validated strictly', () => {
   bad(Object.assign(Object.create(null), base()), 'null prototype');
 });
 
+test('taskId is checked on its own: an id that merely PREFIXES a valid-looking branch is still not a task id', () => {
+  const longId = `${taskId(1)}-extra`;
+  const r = { ...base(), taskId: longId, branch: `agent/${longId}-fix` };
+  assert.match(r.branch, /^agent\/CC-\d{8}-[0-9a-f]{8}-[a-z0-9-]+$/, 'the branch pattern alone would accept it');
+  bad(r, 'taskId with a suffix');
+});
+
 test('timestamps: updatedAt may not precede createdAt; lifetime must be positive and at most 24 hours', () => {
   bad({ ...base(), updatedAt: '2025-12-31T23:59:59.999Z' }, 'updatedAt before createdAt');
   bad({ ...base(), expiresAt: NOW }, 'expires at creation');
@@ -72,7 +81,7 @@ test('timestamps: updatedAt may not precede createdAt; lifetime must be positive
 
 test('manifest: bounded, safe relative paths, exact entry shapes, and the digest must match', () => {
   const ok = pendingInput(1);
-  const withFiles = (files) => ({ manifest: { files }, diffDigest: ok.diffDigest });
+  const withFiles = (files) => { let diffDigest = ok.diffDigest; try { diffDigest = manifestDigest(files); } catch { /* the digest itself refuses it */ } return { manifest: { files }, diffDigest }; };
   const file = (over = {}) => ({ path: 'a.txt', sha256: digest('x'), size: 1, exec: false, ...over });
   for (const [label, files] of Object.entries({
     empty: [], 'too many': Array.from({ length: 201 }, (_, i) => file({ path: `f${i}.txt` })), 'duplicate path': [file(), file()],
@@ -83,8 +92,10 @@ test('manifest: bounded, safe relative paths, exact entry shapes, and the digest
   })) {
     bad({ ...base(), ...withFiles(files) }, label);
   }
-  bad({ ...base(), manifest: { files: [file()], extra: 1 } }, 'manifest extra key');
+  bad({ ...base(), manifest: { files: [file()], extra: 1 }, diffDigest: manifestDigest([file()]) }, 'manifest extra key');
   bad({ ...base(), manifest: { files: 'x' } }, 'files not array');
+  assert.deepEqual(validatePendingRecord({ ...base(), ...withFiles([file()]) }), [], 'the helper builds a VALID record, so every case above fails only for its own reason');
+  assert.deepEqual(validatePendingRecord({ ...base(), ...withFiles([file({ size: 1024 * 1024 })]) }), [], 'exactly the per-file limit is allowed');
   bad({ ...base(), manifest: [] }, 'manifest not object');
   // consistent digest of another manifest is still a valid, different record; a stale digest is not
   const other = manifestOf(2);
@@ -200,6 +211,13 @@ test('step advance: one state at a time, current action only, OPEN only, commit 
   assert.throws(() => adv(r, { action: 'COMMIT', to: 'CLAIMED' }), code('NOT_OPEN'));
 });
 
+test('a transition never launders an inconsistent input record', () => {
+  const sloppy = { ...base(), steps: { COMMIT: 'PENDING', PUSH_BRANCH: 'CLAIMED', CREATE_PR: 'PENDING' } };
+  assert.notDeepEqual(validatePendingRecord(sloppy), []);
+  assert.throws(() => applyStepAdvance(sloppy, { action: 'COMMIT', to: 'CLAIMED' }, NOW), code('INVALID_TRANSITION'));
+  assert.throws(() => applyStatusChange({ ...sloppy, status: 'OPEN' }, 'REVOKED', NOW), code('INVALID_TRANSITION'));
+});
+
 test('step advance: closed or expired records refuse; time never moves backwards', () => {
   const r = base();
   for (const to of ['REVOKED', 'SUPERSEDED', 'INTERRUPTED']) assert.throws(() => applyStepAdvance(applyStatusChange(r, to, NOW), { action: 'COMMIT', to: 'CLAIMED' }, NOW), code('NOT_OPEN'), to);
@@ -244,6 +262,14 @@ test('history chains: contiguous, immutable facts, single legal moves; any splic
   broken([r1, { ...r2, status: 'REVOKED' }], 'a step change disguised as a status change');
   broken([r1, { ...applyStatusChange(r1, 'REVOKED', NOW), steps: { COMMIT: 'CLAIMED', PUSH_BRANCH: 'PENDING', CREATE_PR: 'PENDING' } }], 'status and step changed together');
   broken([r1, { ...r1, revision: 2, updatedAt: NOW }], 'identical content under a new revision');
+  broken([{ ...r1, revision: 2 }], 'a history that starts at revision 2');
+  // after the commit, the expected head is part of the record's identity: it may not drift in a later revision
+  const c3 = r3; let c4 = applyStepAdvance(c3, { action: 'COMMIT', to: 'DONE', commitSha: h('d') }, '2026-01-01T00:00:03.000Z');
+  const c5 = applyStepAdvance(c4, { action: 'PUSH_BRANCH', to: 'CLAIMED' }, '2026-01-01T00:00:04.000Z');
+  assert.deepEqual(validatePendingChain([r1, r2, r3, c4, c5]), []);
+  broken([r1, r2, r3, c4, { ...c5, expectedHead: h('e') }], 'expectedHead drifts after the commit');
+  broken([r1, r2, r3, c4, { ...applyStatusChange(c4, 'REVOKED', '2026-01-01T00:00:04.000Z'), expectedHead: h('e') }], 'expectedHead drifts in a status change');
+  broken([r1, r2, r3, { ...c4, expectedHead: h('a') }], 'COMMIT DONE that keeps the base as head');
 });
 
 test('the contract has no authorization surface: no resume, approve, consume, grant, push or execute API', async () => {

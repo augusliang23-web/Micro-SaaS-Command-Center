@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import assert from 'node:assert/strict';
 
 import { PendingActionStore } from '../../server/execution/continuation/pendingActionStore.mjs';
 import { diffDigestOf } from '../../server/execution/approvalGate.mjs';
@@ -67,3 +68,18 @@ export function finishAll(store, record) {
   }
   return r;
 }
+
+/**
+ * Wraps node:test's `test` so that an UNEXPECTED exception escaping a test body is reported as an assertion failure
+ * ("the code under test threw where the test expected a result"). Import-time, syntax and timeout failures are NOT converted.
+ */
+export const guarded = (nodeTest) => (name, a, b) => {
+  const [opts, fn] = typeof a === 'function' ? [undefined, a] : [a, b];
+  const run = async (t) => {
+    try { return await fn(t); } catch (error) {
+      if (error instanceof assert.AssertionError) throw error;
+      throw new assert.AssertionError({ message: `Unexpected ${error?.name ?? 'error'}: ${String(error?.message ?? error).slice(0, 300)}`, actual: error?.code ?? error?.name, expected: 'no unexpected exception', operator: 'unexpected-exception' });
+    }
+  };
+  return opts ? nodeTest(name, opts, run) : nodeTest(name, run);
+};
