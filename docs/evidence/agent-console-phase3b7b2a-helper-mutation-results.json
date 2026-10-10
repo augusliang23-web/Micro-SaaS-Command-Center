@@ -1,18 +1,20 @@
 {
   "phase": "3B7B2A-pr26-helper-fixes",
-  "sourceHead": "86e121b07dc44ee6348027bf646a481ea85c4f84",
+  "sourceHead": "1b6044042946b86fba5a536f0ab10f80a6055994",
   "node": "v20.20.2",
   "baseline": {
     "code": 0,
-    "tests": 57,
-    "pass": 57,
+    "tests": 69,
+    "pass": 69,
     "fail": 0
   },
   "summary": {
-    "total": 54,
-    "caught": 46,
-    "survivedEquivalent": 8,
-    "survivedUnexplained": [],
+    "total": 72,
+    "caught": 65,
+    "survivedEquivalent": 6,
+    "survivedUnexplained": [
+      "preflight: a mutating call is issued"
+    ],
     "patternErrors": []
   },
   "results": [
@@ -28,17 +30,21 @@
     {
       "id": "create: image requirement dropped",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null,
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ],
       "equivalent": "without the image, the whole argv becomes the \"command\", which the approved-command check refuses"
     },
     {
       "id": "create: duplicate image allowed",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null,
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ],
       "equivalent": "a repeated image becomes part of the command, which the approved-command check refuses"
     },
     {
@@ -47,7 +53,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -56,7 +62,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -80,9 +86,9 @@
       "id": "create: read-only optional",
       "file": "test/helpers/ownedDocker.mjs",
       "status": "CAUGHT",
-      "failures": 2,
+      "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -91,7 +97,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -109,7 +115,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -297,7 +303,7 @@
       "status": "CAUGHT",
       "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -331,9 +337,9 @@
       "id": "cleanupAll: stops at the first leftover",
       "file": "test/helpers/ownedDocker.mjs",
       "status": "CAUGHT",
-      "failures": 2,
+      "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -445,9 +451,9 @@
       "id": "guard: never halts",
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "CAUGHT",
-      "failures": 2,
+      "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -463,9 +469,9 @@
       "id": "guard: halted suite still runs",
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "CAUGHT",
-      "failures": 2,
+      "failures": 1,
       "caughtBy": [
-        "test/agent-console-phase3b7b2-safety.test.mjs"
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     },
     {
@@ -492,6 +498,166 @@
       "failures": 1,
       "caughtBy": [
         "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: OwnedDocker built without a state root (the original bug)",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "CAUGHT",
+      "failures": 5,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: programming errors swallowed",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: non-zero daemon exit treated as available",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: non-Linux engine accepted",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: missing image treated as available",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: platform not checked",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: digest not checked",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: temp directory left behind",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "preflight: a mutating call is issued",
+      "file": "test/helpers/dockerPreflight.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null
+    },
+    {
+      "id": "e2e: fixture never preserved",
+      "file": "test/helpers/realDockerScenarios.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "e2e: fixture always preserved",
+      "file": "test/helpers/realDockerScenarios.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "e2e: leftovers not reported",
+      "file": "test/helpers/realDockerScenarios.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "e2e: approvals removed despite leftovers",
+      "file": "test/helpers/realDockerScenarios.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "e2e: owned-container sweep skipped",
+      "file": "test/helpers/realDockerScenarios.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "e2e: setup failure preserved as unknown",
+      "file": "test/helpers/realDockerScenarios.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "shared fixture: keepRoot ignored",
+      "file": "test/helpers/phase2Fixture.mjs",
+      "status": "CAUGHT",
+      "failures": 4,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "shared fixture: nothing is ever removed",
+      "file": "test/helpers/phase2Fixture.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
+      ]
+    },
+    {
+      "id": "shared fixture: truthy keepRoot preserves",
+      "file": "test/helpers/phase2Fixture.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-final.test.mjs"
       ]
     }
   ]

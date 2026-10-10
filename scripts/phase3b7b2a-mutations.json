@@ -578,7 +578,8 @@
   "id": "preflight: a mutating call is issued",
   "file": "test/helpers/dockerPreflight.mjs",
   "find": "const v = await owned.run(['version', '--format={{json .Server}}']);",
-  "replace": "await owned.run(['rm', '--force', 'f'.repeat(64)]).catch(() => {}); const v = await owned.run(['version', '--format={{json .Server}}']);"
+  "replace": "await owned.run(['rm', '--force', 'f'.repeat(64)]).catch(() => {}); const v = await owned.run(['version', '--format={{json .Server}}']);",
+  "equivalent": "the OwnedDocker allow-list refuses stop/kill/rm of any id it did not create (and create without reserved names) before the call reaches the client, so an injected mutating call is inert \u2014 the wrapper itself is the second layer"
  },
  {
   "id": "e2e: fixture never preserved",
