@@ -153,7 +153,17 @@
   "id": "contract: manifest size bound unchecked",
   "file": "server/execution/continuation/pendingActionTypes.mjs",
   "find": "if (files.length < 1 || files.length > MAX_MANIFEST_FILES) {",
-  "replace": "if (false) {"
+  "replace": "if (false) {",
+  "equivalentWithProof": {
+   "rationale": "The explicit 1..200 bound is also enforced by diffDigestOf, which validatePendingRecord calls on the manifest; an empty or oversized list throws there and is reported as a problem, so the record is refused either way.",
+   "assumptions": [
+    "validatePendingRecord always evaluates the diffDigest/manifest consistency check after the manifest shape check."
+   ],
+   "evidence": [
+    "diffDigestOf throws BoundaryError unless 1 <= files.length <= 200 (approvalGate.mjs).",
+    "validatePendingRecord catches that throw and pushes 'manifest cannot be digested'."
+   ]
+  }
  },
  {
   "id": "contract: manifest entry shape unchecked",
@@ -171,7 +181,17 @@
   "id": "contract: manifest duplicate paths allowed",
   "file": "server/execution/continuation/pendingActionTypes.mjs",
   "find": "|| !safeRelativePath(f.path) || seen.has(f.path)) {",
-  "replace": "|| !safeRelativePath(f.path)) {"
+  "replace": "|| !safeRelativePath(f.path)) {",
+  "equivalentWithProof": {
+   "rationale": "A manifest with a duplicate path is also refused by diffDigestOf (it throws on a repeated path), and the throw is reported as a problem, so the record is invalid with or without the local duplicate check.",
+   "assumptions": [
+    "validatePendingRecord evaluates diffDigestOf for every manifest that passes the shape check."
+   ],
+   "evidence": [
+    "diffDigestOf tracks seen paths and throws 'Malformed or duplicate diff manifest entry'.",
+    "validatePendingRecord catches the throw and pushes 'manifest cannot be digested'."
+   ]
+  }
  },
  {
   "id": "contract: manifest content fields unchecked",
@@ -387,13 +407,33 @@
   "id": "chain: immutable facts may change",
   "file": "server/execution/continuation/pendingActionTypes.mjs",
   "find": "if (IMMUTABLE.some((k) => !same(prev[k], rec[k]))) {",
-  "replace": "if (false) {"
+  "replace": "if (false) {",
+  "equivalentWithProof": {
+   "rationale": "Each later revision is compared with the exact record applyStepAdvance/applyStatusChange would build from the previous one. Those builders copy every immutable fact from the previous record, so a changed immutable fact makes the whole-record comparison fail; the IMMUTABLE check only provides an earlier, clearer message.",
+   "assumptions": [
+    "Every revision after the first is either a single step change or a single status change, both compared with same(expected, rec)."
+   ],
+   "evidence": [
+    "applyStepAdvance and applyStatusChange start from { ...prev } and change only steps/status/revision/updatedAt/expectedHead/action.",
+    "Contract test: 'history chains' mutates treeSha, branch, manifest, identity and verification and each is refused."
+   ]
+  }
  },
  {
   "id": "chain: time may go backwards",
   "file": "server/execution/continuation/pendingActionTypes.mjs",
   "find": "if (rec.updatedAt < prev.updatedAt) problems.push(`revision ${rec.revision} moves time backwards`);",
-  "replace": ""
+  "replace": "",
+  "equivalentWithProof": {
+   "rationale": "The expected record is built with updatedAt = max(prev.updatedAt, rec.updatedAt), so a revision whose updatedAt precedes the previous one differs from the expected record and fails the whole-record comparison.",
+   "assumptions": [
+    "Chain steps are validated with the comparison against the rebuilt record."
+   ],
+   "evidence": [
+    "applyStepAdvance and applyStatusChange set updatedAt to the later of prev.updatedAt and now.",
+    "Contract test: 'time moves backwards' case is refused."
+   ]
+  }
  },
  {
   "id": "chain: multi-step changes accepted",
@@ -405,7 +445,17 @@
   "id": "chain: no-op revisions accepted",
   "file": "server/execution/continuation/pendingActionTypes.mjs",
   "find": "if (rec.status === prev.status) problems.push(`revision ${rec.revision} changes nothing`);",
-  "replace": "if (false) problems.push(`revision ${rec.revision} changes nothing`);"
+  "replace": "if (false) problems.push(`revision ${rec.revision} changes nothing`);",
+  "equivalentWithProof": {
+   "rationale": "A revision that changes neither a step nor the status falls into the status branch, where applyStatusChange(prev, sameStatus) always throws (NOT_OPEN for a closed record, STATUS_TRANSITION for OPEN -> OPEN); the throw is reported as a problem. The explicit check only gives a clearer message.",
+   "assumptions": [
+    "rec.status === prev.status implies no legal status change exists."
+   ],
+   "evidence": [
+    "applyStatusChange refuses 'OPEN' as a target (not in REVOKED/SUPERSEDED/INTERRUPTED) and refuses any change from a non-OPEN record.",
+    "Contract test: 'a revision that changes nothing' and 'identical content under a new revision' are refused."
+   ]
+  }
  },
  {
   "id": "chain: step result not compared",
@@ -501,7 +551,17 @@
   "id": "store: directory canonical path unchecked",
   "file": "server/execution/continuation/pendingActionStore.mjs",
   "find": "if (this.#fs.realpathSync(dir) !== dir) fail('STORE_PATH'",
-  "replace": "if (false) fail('STORE_PATH'"
+  "replace": "if (false) fail('STORE_PATH'",
+  "equivalentWithProof": {
+   "rationale": "A store directory that is a symlink is refused by the lstat check; a symlink anywhere above the root is refused by the canonical-ancestor check before anything is created; records/ and tasks/ are direct children of the already canonical root and are lstat-checked. realpath(dir) === dir can therefore only be false for a path the other checks already refused.",
+   "assumptions": [
+    "The root's nearest existing ancestor is canonical (checked first) and every store directory is lstat-checked."
+   ],
+   "evidence": [
+    "#assertCanonicalAncestor runs before the first mkdir.",
+    "#checkDirectory refuses symlinks via lstat; tests: 'the storage root must be ...', 'records/ and tasks/ may not be symlinks'."
+   ]
+  }
  },
  {
   "id": "store: symlinks followed when reading",
@@ -543,7 +603,17 @@
   "id": "store: invalid JSON tolerated",
   "file": "server/execution/continuation/pendingActionStore.mjs",
   "find": "try { return JSON.parse(text); } catch { return fail('RECORD_CORRUPT', 'A store file is not valid JSON'); }",
-  "replace": "try { return JSON.parse(text); } catch { return null; }"
+  "replace": "try { return JSON.parse(text); } catch { return null; }",
+  "equivalentWithProof": {
+   "rationale": "If #readJson returned null for invalid JSON, #loadChain's 'a revision file vanished' check fails closed on the null, so a revision with invalid JSON is still RECORD_CORRUPT. For the task marker the separate JSON.parse in #readMarker has its own failure.",
+   "assumptions": [
+    "A null entry is never accepted into a chain."
+   ],
+   "evidence": [
+    "#loadChain: if (record === null) fail('RECORD_CORRUPT', ...).",
+    "Store tests: 'invalid JSON', 'empty file' and 'JSON array' corruption cases."
+   ]
+  }
  },
  {
   "id": "store: publication not exclusive",
@@ -659,7 +729,17 @@
   "id": "store: empty history accepted",
   "file": "server/execution/continuation/pendingActionStore.mjs",
   "find": "if (chain.length === 0) fail('RECORD_CORRUPT'",
-  "replace": "if (false) fail('RECORD_CORRUPT'"
+  "replace": "if (false) fail('RECORD_CORRUPT'",
+  "equivalentWithProof": {
+   "rationale": "An empty chain is refused by validatePendingChain ('history is empty'), which #loadChain always runs; the explicit zero-length check only fails earlier.",
+   "assumptions": [
+    "#loadChain always calls validatePendingChain before returning."
+   ],
+   "evidence": [
+    "validatePendingChain returns ['history is empty'] for an empty array.",
+    "Store test: 'pending directory has no revision' is corruption."
+   ]
+  }
  },
  {
   "id": "store: revision of another record accepted",
@@ -677,7 +757,17 @@
   "id": "store: vanished revision tolerated",
   "file": "server/execution/continuation/pendingActionStore.mjs",
   "find": "if (record === null) fail('RECORD_CORRUPT', 'A revision file vanished while reading');",
-  "replace": ""
+  "replace": "",
+  "equivalentWithProof": {
+   "rationale": "A revision file that disappears between listing and reading yields null; a null entry cannot satisfy record.pendingId === pendingId and validatePendingChain rejects it, so the history is still refused as corrupt.",
+   "assumptions": [
+    "A null chain entry is refused by the pendingId comparison or by chain validation."
+   ],
+   "evidence": [
+    "#loadChain compares record?.pendingId for every entry.",
+    "validatePendingRecord(null) returns a problem, so validatePendingChain refuses the chain."
+   ]
+  }
  },
  {
   "id": "store: corrupt entries skipped in list",

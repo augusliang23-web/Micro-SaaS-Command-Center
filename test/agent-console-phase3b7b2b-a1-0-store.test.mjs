@@ -533,6 +533,16 @@ test('a FIFO planted at a revision path is corruption and never blocks the proce
   } finally { fx.cleanup(); }
 });
 
+test('revision file NAMES must be contiguous even when the contents are (revision 2 renamed to 3)', () => {
+  const fx = seeded(2);
+  try {
+    assert.equal(fx.store.get(fx.id).revision, 2);
+    fs.renameSync(revisionFile(fx.root, fx.id, 2), revisionFile(fx.root, fx.id, 3));
+    assert.throws(() => fx.store.get(fx.id), code('RECORD_CORRUPT'));
+    assert.equal(fx.store.list().corrupt.length, 1);
+  } finally { fx.cleanup(); }
+});
+
 test('a valid revision copied into another pending directory is refused (its pendingId does not match the directory)', () => {
   const fx = seeded(2);
   try {
