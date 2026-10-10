@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { PrototypeShell } from './prototype/PrototypeShell';
 import {
   initialProjects,
   initialAttentionItems,
@@ -35,7 +36,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-export default function App() {
+function RegisteredOverview({ onProjectSelected }: { onProjectSelected: (project: MicroSaaSProject) => void }) {
   const [projects, setProjects] = useState<MicroSaaSProject[]>(initialProjects);
   // Kept only so /api/state's persisted shape stays backward-compatible; the
   // "待人決策" tab and Header pill counts now derive from real project
@@ -145,6 +146,7 @@ export default function App() {
   // Open detail drawer for a project
   const handleSelectProject = (project: MicroSaaSProject) => {
     setSelectedProject(project);
+    onProjectSelected(project);
   };
 
 
@@ -698,4 +700,9 @@ export default function App() {
     </div>
     </ProjectStatusesContext.Provider>
   );
+}
+
+// The local demo never mounts the API-backed portfolio or its persistence effects.
+export default function App() {
+  return <PrototypeShell registeredOverview={onProjectSelected => <RegisteredOverview onProjectSelected={onProjectSelected} />} />;
 }
