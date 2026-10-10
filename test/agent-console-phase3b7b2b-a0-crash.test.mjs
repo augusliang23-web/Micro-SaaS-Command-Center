@@ -267,6 +267,7 @@ for (const [name, mutate] of Object.entries(CORRUPTIONS)) {
       const scan = fx.journal.scan();
       assert.ok(scan.corrupt.length >= 1, 'reported');
       if (!name.startsWith('unexpected file')) assert.equal(scan.records.some((r) => r.runId === runId(1)), false, 'a corrupt record is never returned as valid');
+      if (!name.startsWith('unexpected file')) assert.throws(() => fx.journal.get(runId(1)), code('JOURNAL_CORRUPT'), 'direct reads must also bind the record to its filename');
       assert.equal(scan.records.some((r) => r.runId === runId(2)), true, 'unrelated valid records are still readable for classification');
       assert.throws(() => fx.journal.createPlanned(planned(3)), code('JOURNAL_CORRUPT'));
       assert.throws(() => fx.journal.authorizeStart(runId(2), 2), code('JOURNAL_CORRUPT'));
@@ -629,6 +630,7 @@ test('same-token replacement by a different writer is fenced and never released 
       fs.writeFileSync(file, replacement, { mode: 0o600 });
       assert.throws(() => fx.journal.scan(), code('JOURNAL_NOT_OWNER'));
       fx.journal.close();
+      assert.equal(fs.existsSync(file), true, 'the replacement lock must remain present');
       assert.equal(fs.readFileSync(file, 'utf8'), replacement);
     } finally { fx.cleanup(); }
   }

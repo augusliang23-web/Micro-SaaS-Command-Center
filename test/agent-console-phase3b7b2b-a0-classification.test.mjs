@@ -289,7 +289,7 @@ test('R1 exact recorded ID present with changed ownership is never OTHER plus SE
   const fx=freshJournal();
   try {
     let r=created(fx.journal,1,'c');r=fx.journal.transition(r.runId,r.revision,'DESTROYED');
-    for(const over of [{name:'foreign'},{labels:{}},{labels:{...r.labels,'cc.sandbox':'0'}},{labels:{...r.labels,'cc.sandbox.role':'verifier'}},{imageDigest:OTHER_DIGEST}]){
+    for(const over of [{name:'foreign'},{labels:{}},{name:'foreign',labels:{}},{name:'foreign',labels:{'foreign.owner':'other'}},{labels:{...r.labels,'cc.sandbox':'0'}},{labels:{...r.labels,'cc.sandbox.role':'verifier'}},{imageDigest:OTHER_DIGEST}]){
       const result=classifyExecutions(input(fx,[container(r,over)]));
       assert.equal(result.entries.some(e=>e.executionOutcome==='SETTLED'||e.classification==='OTHER'),false);
       const e=result.entries.find(e=>e.runId===r.runId);

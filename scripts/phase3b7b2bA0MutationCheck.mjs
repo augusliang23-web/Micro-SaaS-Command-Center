@@ -174,12 +174,14 @@ async function main() {
     console.log(JSON.stringify({ mode: 'PATTERN_CHECK_ONLY', mutations: selected.length, patternErrors: errors, verificationPerformed: false }));
     return errors.length ? 1 : 0;
   }
-  if (WORKERS === null) throw new Error('--workers must be an integer between 1 and 8');
-  if (args.includes('--no-baseline')) throw new Error('--no-baseline cannot produce valid mutation evidence; an unmutated green baseline is mandatory');
   if (OUT) {
     const relative = path.relative(ROOT, path.resolve(OUT));
     if (INPUTS.some((item) => relative === item || relative.startsWith(`${item}/`))) throw new Error('The report output may not overwrite participating verification inputs');
+    // Invalidate any older output before preflight. PASS is published only after successful temporary-copy cleanup.
+    fs.writeFileSync(path.resolve(OUT), `${JSON.stringify({ status: 'HOLD', reason: 'VERIFICATION_NOT_COMPLETED', sourceHead: git('rev-parse', 'HEAD') }, null, 2)}\n`);
   }
+  if (WORKERS === null) throw new Error('--workers must be an integer between 1 and 8');
+  if (args.includes('--no-baseline')) throw new Error('--no-baseline cannot produce valid mutation evidence; an unmutated green baseline is mandatory');
   const start = provenance();
   if (start.worktree !== start.gitTopLevel || start.participatingStatus || !matchesCommit(start)) throw new Error('Executable verification inputs must match a committed code HEAD; commit them before collecting evidence');
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-identity-mutations-'));
@@ -269,10 +271,10 @@ async function main() {
       evidenceScope: ONLY ? 'SELECTED_MUTATIONS_ONLY' : 'FULL_CATALOG', node: process.version,
       provenance: { start, end, snapshotFingerprint, sourceUnchanged }, baseline, summary, results,
     };
-    if (OUT) fs.writeFileSync(path.resolve(OUT), `${JSON.stringify(report, null, 2)}\n`);
-    console.log(JSON.stringify({ status: report.status, sourceUnchanged, ...summary }));
     exitCode = valid ? 0 : 1;
   } finally { fs.rmSync(temporaryRoot, { recursive: true, force: true }); }
+  if (OUT) fs.writeFileSync(path.resolve(OUT), `${JSON.stringify(report, null, 2)}\n`);
+  console.log(JSON.stringify({ status: report.status, sourceUnchanged: report.provenance.sourceUnchanged, ...report.summary }));
   return exitCode;
 }
 

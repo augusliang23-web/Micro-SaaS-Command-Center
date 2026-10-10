@@ -915,12 +915,33 @@
   "id": "journal: writer lock token trailing newline accepted",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "lock.token.length === 32 &&",
-  "replace": ""
+  "replace": "",
+  "equivalentWithProof": {
+   "rationale": "With the unchanged whole-token ASCII hex regex and string type check, every accepted token has exactly 32 characters. Removing only the explicit length check cannot change acceptance. JavaScript end anchoring without multiline does not admit a final LF.",
+   "assumptions": [
+    "The unchanged regex has no multiline flag and validates the whole stable string."
+   ],
+   "evidence": [
+    "validLock retains typeof token===string and /^[0-9a-f]{32}$/.test(token).",
+    "Native Node v20.20.2 evaluates /^[0-9a-f]{32}$/.test(\"a\".repeat(32)+\"\\n\") as false; all matching characters are ASCII and repetition count is exactly32."
+   ]
+  }
  },
  {
   "id": "journal: writer lock hostname trailing newline accepted",
   "file": "server/execution/identity/identityJournal.mjs",
   "find": "!/[^A-Za-z0-9_.-]/.test(lock.hostname) &&",
-  "replace": ""
+  "replace": "",
+  "equivalentWithProof": {
+   "rationale": "The unchanged per-label full-string ASCII pattern permits only letters, digits, underscore and hyphen; the only separator is a literal dot. Every hostname accepted by that condition satisfies the removed whole-string character exclusion.",
+   "assumptions": [
+    "String type, length bound, literal-dot split and per-label regex remain enabled.",
+    "Per-label regex has no multiline flag and input is a stable string."
+   ],
+   "evidence": [
+    "validLock retains hostname.split(\".\").every(label=>/^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9])?$/.test(label)).",
+    "Native Node v20.20.2 evaluates the unchanged per-label pattern against \"h\\n\" as false."
+   ]
+  }
  }
 ]

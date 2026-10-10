@@ -189,7 +189,8 @@ test('execution generations: a task gets generation 1, then 2 only after the fir
     const created = fx.journal.transition(runId(1), a.revision, 'CREATED', { containerId: cid('c') });
     const destroyed = fx.journal.transition(runId(1), created.revision, 'DESTROYED');
     assert.equal(destroyed.stage, 'DESTROYED');
-    const again = fx.journal.createPlanned({ ...planned(2), taskId: taskId(1) });
+    let again;
+    assert.doesNotThrow(() => { again = fx.journal.createPlanned({ ...planned(2), taskId: taskId(1) }); }, 'a lawful second generation must remain possible');
     assert.equal(again.executionGeneration, 2);
     fx.journal.transition(runId(2), again.revision, 'UNKNOWN');
     assert.throws(() => fx.journal.createPlanned({ ...planned(3), taskId: taskId(1) }), code('ACTIVE_EXECUTION_EXISTS'), 'an UNKNOWN execution blocks the task until an operator resolves it');
