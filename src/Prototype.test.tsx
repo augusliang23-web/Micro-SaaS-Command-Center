@@ -29,26 +29,26 @@ test('all five named project samples are available and selected context survives
 test('map exposes every task title and two example parallel branches', () => {
   render(<App />); open('Development Map');
   const map = screen.getByRole('region', { name: '開發分支圖' });
-  for (const title of ['Docker Offline Foundation', 'Real Docker Fake Agent Tests', 'Execution Identity Foundation', 'UI/UX Development', 'Cost Guard Integration']) expect(within(map).getByRole('button', { name: new RegExp(title) })).toBeVisible();
+  for (const title of ['Phase 3B7B1: Docker offline execution foundation (fake agent only, approval-gated Git actions)', 'Phase 3B7B2A: real-Docker fake-agent gap tests (test-only, not yet executed)', 'Phase 3B7B2B-A0: durable execution identity foundation (offline)', 'UI/UX Development', 'Cost Guard Integration']) expect(within(map).getByRole('button', { name: new RegExp(title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") })).toBeVisible();
   expect(within(map).getAllByText('DEMO-ONLY').length).toBeGreaterThanOrEqual(2);
-  expect(screen.getByText(/歷史參考，現況未查詢/)).toBeVisible();
+  expect(screen.getByText(/拓樸快照.*未即時查詢/)).toBeVisible();
 });
 
 test('historical stacked dependencies do not imply a live GitHub status or completed merges', () => {
   render(<App />); open('Development Map');
-  fireEvent.click(screen.getByRole('button', { name: /Execution Identity Foundation/ }));
+  fireEvent.click(screen.getByRole('button', { name: /durable execution identity foundation/i }));
   const detail = screen.getByRole('region', { name: '任務詳細' });
   expect(detail).toHaveTextContent('PR #26'); expect(detail).toHaveTextContent('歷史參考');
-  fireEvent.click(screen.getByRole('button', { name: /Real Docker Fake Agent Tests/ }));
+  fireEvent.click(screen.getByRole('button', { name: /real-Docker fake-agent gap tests/i }));
   expect(detail).toHaveTextContent('PR #25');
-  expect(screen.getByText(/假設合併，未發生/)).toBeVisible();
+  expect(screen.getByText(/沒有合併紀錄/)).toBeVisible();
 });
 
 test('workflow A hands PR27 and Chinese prompt into local planning without execution', () => {
   const network = vi.spyOn(globalThis, 'fetch'); render(<App />);
   const card = screen.getByRole('article', { name: 'Micro-SaaS Command Center 示範專案' });
   fireEvent.click(within(card).getByRole('button', { name: '開啟 Development Map' }));
-  fireEvent.click(screen.getByRole('button', { name: /Execution Identity Foundation/ }));
+  fireEvent.click(screen.getByRole('button', { name: /durable execution identity foundation/i }));
   fireEvent.click(screen.getByRole('button', { name: '交給 AI Command' }));
   expect(screen.getByLabelText('目前專案')).toHaveValue('Micro-SaaS Command Center');
   expect(screen.getByLabelText('分支 / 任務')).toHaveValue('pr27');
@@ -94,7 +94,7 @@ test('editing prompt invalidates the previous planning preview', () => {
 
 test('project switch invalidates task and plan context instead of carrying an unrelated PR', () => {
   render(<App />); open('Development Map');
-  fireEvent.click(screen.getByRole('button',{name:/Execution Identity Foundation/}));
+  fireEvent.click(screen.getByRole('button',{name:/durable execution identity foundation/i}));
   fireEvent.click(screen.getByRole('button',{name:'交給 AI Command'}));
   project('PM Dashboard');
   expect(within(screen.getByLabelText('分支 / 任務')).queryByRole('option',{name:/PR #27/})).not.toBeInTheDocument();
@@ -141,7 +141,7 @@ test('demo never mounts backend-backed registered overview, even on failed API a
 
 test('selected map node exposes its selected state to assistive technology', () => {
   render(<App/>);open('Development Map');
-  const node=screen.getByRole('button',{name:/Execution Identity Foundation · PR #27/});
+  const node=screen.getByRole('button',{name:/durable execution identity foundation.*PR #27/i});
   fireEvent.click(node);expect(node).toHaveAttribute('aria-pressed','true');
 });
 
@@ -170,4 +170,75 @@ test('selected registered project transfers into demo pages without treating its
 test('switching primary pages restores the top of the page instead of inheriting a scrolled card position', () => {
   render(<App/>);document.documentElement.scrollTop=350;
   open('Cost Guard');expect(document.documentElement.scrollTop).toBe(0);
+});
+
+test('B0.1 snapshot contains PR28 stacked on PR27 and independent PR30 based on main', () => {
+  render(<App/>);open('Development Map');
+  fireEvent.click(screen.getByRole('button',{name:/pending action foundation/i}));
+  expect(screen.getByRole('region',{name:'任務詳細'})).toHaveTextContent('PR #27');
+  expect(screen.getByLabelText('PR #27 → PR #28（歷史依賴）')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:/Track B B0: Interactive Command Center UI/}));
+  expect(screen.getByRole('region',{name:'任務詳細'})).toHaveTextContent('main');
+  expect(screen.getByLabelText('main → PR #30（歷史依賴）')).toBeInTheDocument();
+  expect(screen.queryByLabelText('PR #28 → PR #30（歷史依賴）')).not.toBeInTheDocument();
+});
+
+test('B0.1 selecting a task highlights only its dependency path', () => {
+  render(<App/>);open('Development Map');
+  fireEvent.click(screen.getByRole('button',{name:/pending action foundation/i}));
+  expect(screen.getByLabelText('PR #27 → PR #28（歷史依賴）')).toHaveAttribute('data-highlighted','true');
+  expect(screen.getByLabelText('main → PR #30（歷史依賴）')).toHaveAttribute('data-highlighted','false');
+});
+
+test('B0.1 obvious AI entry works from every page and keeps the project', () => {
+  render(<App/>);project('PM Dashboard');
+  for(const page of ['專案總覽','Development Map','AI Command','Cost Guard']){
+    open(page);fireEvent.click(screen.getByRole('button',{name:'向 AI 提需求'}));
+    expect(screen.getByRole('heading',{name:'把想法整理成下一步。'})).toBeVisible();
+    expect(screen.getByLabelText('目前專案')).toHaveValue('PM Dashboard');
+  }
+});
+
+test('B0.1 prompt context is adjacent to the editor and missing branch is explained', () => {
+  render(<App/>);open('AI Command');
+  expect(screen.getByRole('region',{name:'指令 context'})).toHaveTextContent('Micro-SaaS Command Center');
+  expect(screen.getByRole('region',{name:'指令 context'})).toHaveTextContent('尚未選擇分支 / 任務');
+  expect(screen.getByText(/仍可輸入需求/)).toBeVisible();
+});
+
+test('B0.1 switching project after generating a plan removes the stale preview', () => {
+  render(<App/>);open('AI Command');fireEvent.change(screen.getByLabelText('你的指令'),{target:{value:'整理任務'}});
+  fireEvent.click(screen.getByRole('button',{name:'產生示範規劃'}));project('PM Dashboard');
+  expect(screen.queryByText('DEMO PLANNING PREVIEW')).not.toBeInTheDocument();
+});
+
+test('B0.1 keyboard Tab and Enter select PR30 and its task context transfers through the shared AI entry', async () => {
+  const user=(await import('@testing-library/user-event')).default.setup();
+  render(<App/>);open('Development Map');
+  const node=screen.getByRole('button',{name:/Track B B0: Interactive Command Center UI/});
+  for(let i=0;i<30&&document.activeElement!==node;i++)await user.tab();
+  expect(node).toHaveFocus();await user.keyboard('{Enter}');expect(node).toHaveAttribute('aria-pressed','true');
+  expect(screen.getByRole('region',{name:'可捲動開發圖'})).toHaveAttribute('tabindex','0');
+  fireEvent.click(screen.getByRole('button',{name:'向 AI 提需求'}));
+  expect(screen.getByLabelText('分支 / 任務')).toHaveValue('pr30');
+  expect(screen.getByRole('region',{name:'指令 context'})).toHaveTextContent('PR #30');
+});
+
+test('B0.1 snapshot provenance preserves source URL and exact observed head/base identities', () => {
+  render(<App/>);open('Development Map');fireEvent.click(screen.getByRole('button',{name:/pending action foundation/i}));
+  const detail=screen.getByRole('region',{name:'任務詳細'});
+  fireEvent.click(within(detail).getByText('快照來源與精確版本'));
+  expect(within(detail).getByRole('link')).toHaveAttribute('href','https://github.com/augusliang23-web/Micro-SaaS-Command-Center/pull/28');
+  expect(detail).toHaveTextContent('cf7fc7db9ebdef236a0d2f72a2399fca644ad755');
+  expect(detail).toHaveTextContent('c7c751df3acd5e3be22cc5c2ac7d3001278ab453');
+  expect(detail).toHaveTextContent('2026-10-10T23:43:21Z');
+});
+
+test('B0.1 a Chinese request without a branch can produce only an unapproved local demo preview', () => {
+  const network=vi.spyOn(globalThis,'fetch');render(<App/>);open('AI Command');
+  fireEvent.change(screen.getByLabelText('你的指令'),{target:{value:'幫我整理專案下一步'}});
+  fireEvent.click(screen.getByRole('button',{name:'產生示範規劃'}));
+  expect(screen.getByRole('region',{name:'規劃預覽'})).toHaveTextContent('分支');
+  expect(screen.getByRole('region',{name:'規劃預覽'})).toHaveTextContent('DEMO PLANNING PREVIEW');
+  expect(screen.getByRole('button',{name:'Execute with Agent'})).toBeDisabled();expect(network).not.toHaveBeenCalled();
 });

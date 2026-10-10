@@ -36,3 +36,17 @@
 /* Keep the existing portfolio filters below the new persistent primary navigation. */
 .p-registered-overview header.sticky { top:76px; }
 @media(max-width:760px) { .prototype-shell .p-header { min-height:116px; } .p-registered-overview header.sticky { top:116px; } }
+/* B0.1: contain all canvas overflow and keep primary actions/context readable. */
+.p-header nav,.p-main,.p-map-layout,.p-command-layout,.p-editor,.p-detail,.p-demo-bar>span { min-width:0; }
+.p-context-actions { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:18px; font-size:12px; color:#627568; }
+.p-context-actions>span { overflow-wrap:anywhere; min-width:0; }.p-context-actions .p-primary { flex-shrink:0; padding:9px 12px; }
+.p-prompt-context { padding:12px; border:1px solid #dbe5da; border-radius:7px; background:#f3f7ef; font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+.p-prompt-context strong,.p-prompt-context span { display:block; }.p-prompt-context p { color:#6b7e65; margin-top:5px; }
+.p-graph-scroll { max-height:620px; overflow:auto; overscroll-behavior:contain; }
+.p-task-node { width:310px; min-height:172px; }.p-task-node strong { font-size:14px; line-height:1.5; }
+.p-task-node.is-dependency { box-shadow:0 0 0 2px #6ca898; background:#f4faf4; }
+.p-graph-scroll:focus-visible { outline:3px solid #6c9b82; outline-offset:-3px; }
+.p-provenance { font-size:10px; overflow-wrap:anywhere; color:#708270; margin:14px 0; }.p-provenance summary { cursor:pointer; }.p-provenance p { margin-top:8px; }.p-provenance a { text-decoration:underline; }
+.p-real-bar { flex-wrap:wrap; }
+@media(max-width:900px) { .p-map-layout.has-detail,.p-command-layout { grid-template-columns:minmax(0,1fr); }.p-distribution { grid-template-columns:minmax(0,1fr) 180px; }.p-cost-legend { grid-column:1/-1; }.p-page-heading>div { min-width:0; } }
+@media(max-width:760px) { .p-demo-bar>span { flex-wrap:wrap; }.p-demo-bar label { width:100%; min-width:0; }.p-demo-bar select { min-width:0; width:100%; max-width:100%; }.p-context-actions { flex-wrap:wrap; }.p-context-actions .p-primary { margin-left:auto; }.p-graph-scroll { max-height:460px; }.p-distribution { grid-template-columns:minmax(0,1fr); }.p-header nav { min-width:0; }.p-page-heading p { overflow-wrap:anywhere; }.p-main { padding-top:20px; }.p-real-bar { padding:12px 18px; } }
