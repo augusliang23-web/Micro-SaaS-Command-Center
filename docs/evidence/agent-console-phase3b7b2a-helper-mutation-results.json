@@ -1,49 +1,45 @@
 {
   "phase": "3B7B2A-pr26-helper-fixes",
-  "sourceHead": "9aa778c03f67a757915dccf26d9952ea831c8e33",
+  "sourceHead": "86e121b07dc44ee6348027bf646a481ea85c4f84",
   "node": "v20.20.2",
   "baseline": {
     "code": 0,
-    "tests": 55,
-    "pass": 55,
+    "tests": 57,
+    "pass": 57,
     "fail": 0
   },
   "summary": {
-    "total": 53,
-    "caught": 42,
-    "survivedEquivalent": 4,
-    "survivedUnexplained": [
-      "create: name reservation unchecked",
-      "create: image requirement dropped",
-      "create: duplicate image allowed",
-      "create: missing flag allowed",
-      "create: memory upper bound dropped",
-      "create: root user allowed",
-      "assertClosed: ignores leftovers"
-    ],
+    "total": 54,
+    "caught": 46,
+    "survivedEquivalent": 8,
+    "survivedUnexplained": [],
     "patternErrors": []
   },
   "results": [
     {
       "id": "create: name reservation unchecked",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: image requirement dropped",
       "file": "test/helpers/ownedDocker.mjs",
       "status": "SURVIVED",
       "failures": 0,
-      "caughtBy": null
+      "caughtBy": null,
+      "equivalent": "without the image, the whole argv becomes the \"command\", which the approved-command check refuses"
     },
     {
       "id": "create: duplicate image allowed",
       "file": "test/helpers/ownedDocker.mjs",
       "status": "SURVIVED",
       "failures": 0,
-      "caughtBy": null
+      "caughtBy": null,
+      "equivalent": "a repeated image becomes part of the command, which the approved-command check refuses"
     },
     {
       "id": "create: duplicate single flag allowed",
@@ -68,7 +64,8 @@
       "file": "test/helpers/ownedDocker.mjs",
       "status": "SURVIVED",
       "failures": 0,
-      "caughtBy": null
+      "caughtBy": null,
+      "equivalent": "every single-value flag is also compared with its required value, so an absent flag fails that comparison"
     },
     {
       "id": "create: multi-flag counts unchecked",
@@ -163,9 +160,11 @@
     {
       "id": "create: memory upper bound dropped",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: swap equality dropped",
@@ -197,9 +196,11 @@
     {
       "id": "create: root user allowed",
       "file": "test/helpers/ownedDocker.mjs",
-      "status": "SURVIVED",
-      "failures": 0,
-      "caughtBy": null
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
     },
     {
       "id": "create: user not tied to this process",
@@ -429,7 +430,8 @@
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "SURVIVED",
       "failures": 0,
-      "caughtBy": null
+      "caughtBy": null,
+      "equivalent": "gone() throws the same UnknownOutcomeError for the exact id right afterwards (see the combined mutation below, which IS caught)"
     },
     {
       "id": "gone: absence assumed",
@@ -476,6 +478,15 @@
     },
     {
       "id": "fault matrix: continues after a failure",
+      "file": "test/helpers/realDockerScenarios.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b2-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "assertClosed and gone both ignore leftovers",
       "file": "test/helpers/realDockerScenarios.mjs",
       "status": "CAUGHT",
       "failures": 1,
