@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import os from 'node:os';
+import { createHash, randomBytes } from 'node:crypto';
 import { runProcess } from './processRunner.mjs';
 import { BoundaryError, requireAction, assertPushBranch } from './executionPolicy.mjs';
 import { TASK_ID_PATTERN } from '../tasks/types.mjs';
@@ -127,6 +128,71 @@ export class WorktreeManager {
     if ((await this.#git(context.worktreePath,['rev-parse','HEAD^'])).trim() !== context.baseSha) throw new BoundaryError('Unexpected commit parent');
     context.expectedHead = sha; await this.guard(context,project);
     return sha;
+  }
+  // ---- Phase 3B7B1: Git-object binding for the Docker path ---------------------------------------------------------
+  // An approval over worktree BYTES is not enough: `git add` can run clean filters or EOL conversion and the index can hold
+  // different blobs than the worktree. So the Docker path binds approvals to a GIT TREE ID that is computed independently
+  // (from the approved bytes and the base tree, in a scratch index) and then requires that the staged tree and the committed
+  // tree are exactly that tree.
+
+  async #gitIndex(cwd, args, indexFile) {
+    const result = await this.#runner({ command: '/usr/bin/git', args: ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','commit.gpgSign=false','-c','protocol.ext.allow=never', ...args], cwd, indexFile });
+    if (result.exitCode !== 0) throw new Error(`Git ${args[0]} failed (${result.exitCode ?? result.signal}): ${result.stderr.trim()}`);
+    return result.stdout;
+  }
+  /** The tree a commit must have if (and only if) exactly the approved manifest is applied to the base tree. */
+  async expectedTree(context, manifest) {
+    if (!this.#contexts.has(context)) throw new BoundaryError('Unrecognized worktree context');
+    if (!manifest || !Array.isArray(manifest.files) || manifest.files.length === 0) throw new BoundaryError('No approved manifest');
+    const indexFile = path.join(os.tmpdir(), `cc-expected-index-${randomBytes(8).toString('hex')}`);
+    try {
+      await this.#gitIndex(context.worktreePath, ['read-tree', context.baseSha], indexFile);
+      for (const f of manifest.files) {
+        if (f.deleted === true) { await this.#gitIndex(context.worktreePath, ['update-index', '--force-remove', '--', f.path], indexFile); continue; }
+        if (!/^100(644|755)$/.test(f.mode ?? '') || !/^[0-9a-f]{40}$/.test(f.blob ?? '')) throw new BoundaryError('Manifest entry has no Git mode or blob id');
+        await this.#gitIndex(context.worktreePath, ['update-index', '--add', '--cacheinfo', `${f.mode},${f.blob},${f.path}`], indexFile);
+      }
+      const tree = (await this.#gitIndex(context.worktreePath, ['write-tree', '--missing-ok'], indexFile)).trim();
+      if (!/^[0-9a-f]{40}$/.test(tree)) throw new BoundaryError('Could not compute the expected tree');
+      return tree;
+    } finally { fs.rmSync(indexFile, { force: true }); }
+  }
+  async #indexTree(context) { return (await this.#git(context.worktreePath, ['write-tree'])).trim(); }
+  async #resetIndex(context) { try { await this.#git(context.worktreePath, ['read-tree', context.baseSha]); } catch { /* best effort; the task is already being refused */ } }
+  /** Stage exactly the approved paths, prove the staged tree is the approved tree, commit, and prove the commit is the approved tree. */
+  async commitApproved(context, task, project, { manifest, treeSha }) {
+    requireAction(task,project,'COMMIT'); await this.guard(context,project);
+    if (!/^[0-9a-f]{40}$/.test(treeSha ?? '') || !manifest?.files?.length) throw new BoundaryError('A commit needs an approved tree and manifest');
+    const paths = manifest.files.map(f => f.path);
+    // 1. Nothing may change published bytes between the worktree and Git: no filters, EOL rules, ident or encoding attributes…
+    const attrs = split(await this.#git(context.worktreePath, ['check-attr','-z','filter','text','eol','ident','working-tree-encoding','--',...paths]));
+    if (attrs.length % 3 !== 0) throw new BoundaryError('Unreadable Git attribute output');
+    for (let i = 0; i < attrs.length; i += 3) if (attrs[i + 2] !== 'unspecified') throw new BoundaryError(`Git attribute ${attrs[i + 1]} is set for ${attrs[i]}; it could change the published bytes`);
+    // …and no index flags (assume-unchanged, skip-worktree, unmerged) on the approved paths.
+    for (const entry of split(await this.#git(context.worktreePath, ['ls-files','-v','-z','--',...paths]))) if (!entry.startsWith('H ')) throw new BoundaryError(`Index flag on approved path: ${entry.slice(0, 80)}`);
+    // 2. The index must be exactly the base tree before anything is staged (no pre-staged content).
+    const baseTree = (await this.#git(context.worktreePath, ['rev-parse',`${context.baseSha}^{tree}`])).trim();
+    if (await this.#indexTree(context) !== baseTree) { await this.#resetIndex(context); throw new BoundaryError('Index drift: content was staged before the approved commit'); }
+    // 3. Stage only the approved paths and compare the staged TREE with the approved tree.
+    await this.#git(context.worktreePath, ['add','-A','--',...paths]);
+    const staged = await this.#indexTree(context);
+    if (staged !== treeSha) { await this.#resetIndex(context); throw new BoundaryError('Staged tree does not match the approved tree'); }
+    await this.#git(context.worktreePath, ['commit','-m',`Agent Console ${task.taskId}: approved change`]);
+    const sha = (await this.#git(context.worktreePath, ['rev-parse','HEAD'])).trim();
+    context.expectedHead = sha;
+    await this.verifyPublished(context, { treeSha });
+    await this.guard(context,project);
+    return sha;
+  }
+  /** The commit that would be (or was) published is exactly one commit on the base whose tree is the approved tree. */
+  async verifyPublished(context, { treeSha }) {
+    if (!this.#contexts.has(context)) throw new BoundaryError('Unrecognized worktree context');
+    const head = (await this.#git(context.worktreePath, ['rev-parse','HEAD'])).trim();
+    if (head !== context.expectedHead) throw new BoundaryError('HEAD is not the commit that was verified');
+    if ((await this.#git(context.worktreePath, ['rev-parse','HEAD^{tree}'])).trim() !== treeSha) throw new BoundaryError('Committed tree does not match the approved tree');
+    if ((await this.#git(context.worktreePath, ['rev-list','--parents','-n','1','HEAD'])).trim() !== `${head} ${context.baseSha}`) throw new BoundaryError('Published commit is not a single commit on the base');
+    if ((await this.#git(context.worktreePath, ['rev-list','--count',`${context.baseSha}..HEAD`])).trim() !== '1') throw new BoundaryError('More than one commit would be published');
+    return head;
   }
   async push(context, task, project) {
     requireAction(task,project,'PUSH_BRANCH'); assertPushBranch(context.branch,task.taskId); await this.guard(context,project);

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 import { FakeDocker } from './fakeDocker.mjs';
 import { makeScratch, realTmp } from './dockerScratch.mjs';
@@ -20,12 +21,19 @@ export class EffectDocker extends FakeDocker {
   holdCreate = null; // Promise gating `docker create`
   ignoreRm = false; // rm silently does nothing (destroy cannot be confirmed)
   onStop = null;
+  inspectGate = null; // { nth, promise, onReached }: pause the nth inspect-by-container-id AFTER its answer was computed
+  lateStart = null; // Promise: `docker start` was issued but the container only becomes Running once this resolves
+  idInspects = 0;
 
   async run(args, ...rest) {
     if (args[0] === 'create' && this.holdCreate) await this.holdCreate;
     if (args[0] === 'rm' && this.ignoreRm) { this.calls.push([...args]); return { exitCode: 0, stdout: '', stderr: '', spawnError: null, timedOut: false }; }
     const result = await super.run(args, ...rest);
     if (args[0] === 'stop' || args[0] === 'kill') this.onStop?.();
+    if (args[0] === 'inspect' && this.inspectGate && /^[0-9a-f]{64}$/.test(args.at(-1))) {
+      this.idInspects += 1;
+      if (this.idInspects === this.inspectGate.nth) { this.inspectGate.onReached?.(); await this.inspectGate.promise; }
+    }
     return result;
   }
 
@@ -38,7 +46,8 @@ export class EffectDocker extends FakeDocker {
     if (!this.hold) return super.stream(args, opts);
     this.calls.push([...args]);
     this.streams.push({ args: [...args], timeoutMs: opts.timeoutMs, limits: opts.limits });
-    if (container) container.running = true;
+    if (container) container.running = !this.lateStart;
+    if (container && this.lateStart) this.lateStart.then(() => { container.running = true; });
     const done = this.hold.then(() => {
       if (container) { container.running = false; container.exitCode = 137; }
       return { spawnError: null, exitCode: 137, signal: null, exitObserved: true, stderr: '', limit: null, terminateReason: null };
@@ -47,9 +56,9 @@ export class EffectDocker extends FakeDocker {
   }
 }
 
-export function makeRuntime({ fake = new EffectDocker(), images = FAKE_AGENT_IMAGES, homeDir, commandCenterRoot = process.cwd() } = {}) {
+export function makeRuntime({ fake = new EffectDocker(), images = FAKE_AGENT_IMAGES, homeDir, commandCenterRoot = process.cwd(), launchSettleMs } = {}) {
   const stateRoot = realTmp('cc-p3b7b1-state-');
-  const runtime = new DockerSandboxRuntime({ docker: fake, images, stateRoot, commandCenterRoot, ...(homeDir ? { homeDir } : {}), user: { uid: 501, gid: 20 } });
+  const runtime = new DockerSandboxRuntime({ docker: fake, images, stateRoot, commandCenterRoot, ...(homeDir ? { homeDir } : {}), ...(launchSettleMs ? { launchSettleMs } : {}), user: { uid: 501, gid: 20 } });
   return { fake, runtime, stateRoot, dispose: () => { runtime.dispose(); } };
 }
 
@@ -61,9 +70,9 @@ let counter = 0;
 export const nextRun = () => `RUN-20261003-${(0xabc000 + counter++).toString(16).padStart(8, '0')}`;
 
 /** Adapter + runtime + a real scratch git worktree (the existing makeScratch helper). */
-export function adapterSetup({ scenario = 'edit-fixture', fake = new EffectDocker(), limits, images } = {}) {
+export function adapterSetup({ scenario = 'edit-fixture', fake = new EffectDocker(), limits, images, launchSettleMs } = {}) {
   const scratch = makeScratch();
-  const rt = makeRuntime({ fake, ...(images ? { images } : {}) });
+  const rt = makeRuntime({ fake, ...(images ? { images } : {}), ...(launchSettleMs ? { launchSettleMs } : {}) });
   const adapter = new ContainerFakeAgentAdapter({ runtime: rt.runtime, scenario, ...(limits ? { limits } : {}) });
   return { fake, scratch, rt, adapter, done: () => { rt.dispose(); scratch.cleanup(); } };
 }
@@ -99,3 +108,22 @@ export function approvalSetup({ clock = makeClock() } = {}) {
 
 export const tmpHome = () => { const home = realTmp('cc-p3b7b1-home-'); return { home, done: () => fs.rmSync(home, { recursive: true, force: true }) }; };
 export { os, path, fs };
+
+/**
+ * Independent oracle for the Git tree an approved change must produce: real `git` in a scratch index (GIT_INDEX_FILE), the blob id
+ * from `git hash-object` (not the production code's own SHA-1). Used to pre-grant approvals the way a reviewer would.
+ */
+export function expectedTreeFor({ repo, baseSha, entries }) {
+  const indexFile = path.join(realTmp('cc-p3b7b1-oracle-'), 'index');
+  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_INDEX_FILE: indexFile };
+  const git = (args, input) => execFileSync('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd: repo, env, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  try {
+    git(['read-tree', baseSha]);
+    for (const e of entries) {
+      if (e.deleted) { git(['update-index', '--force-remove', '--', e.path]); continue; }
+      const blob = git(['hash-object', '--stdin'], e.content);
+      git(['update-index', '--add', '--cacheinfo', `${e.mode ?? '100644'},${blob},${e.path}`]);
+    }
+    return git(['write-tree', '--missing-ok']);
+  } finally { fs.rmSync(path.dirname(indexFile), { recursive: true, force: true }); }
+}

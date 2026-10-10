@@ -1,6 +1,6 @@
 # Agent Console Phase 3B7B1 — Docker offline execution foundation (fake agent only)
 
-**Status:** built and tested offline. **No real Docker, no Claude Code or Codex, no provider call, no credential.**
+**Status:** built and tested offline; security review fixes applied (see below). **No real Docker, no Claude Code or Codex, no provider call, no credential.**
 `REAL_AGENT_EXECUTION = NOT_AUTHORIZED`. Nothing is wired to a route, the UI, `server.ts` or any deployment.
 **Baseline:** `origin/main` = `25692a9a1fdedaf82910630fb767589aa5dccddf`. Direction: Control Plane's Phase 3B7A architecture (Docker execution; the macOS track in PR #24 is suspended and untouched).
 
@@ -42,6 +42,16 @@ Task (DRAFT) → Orchestrator[publishGate] → worktree → ContainerFakeAgentAd
 - Container output is data: control characters, secret-like text (tokens, keys, bearer headers, private-key markers) and host paths are redacted, line length and event count are bounded, and no agent line can set a grade, kind, approval or file list.
 - The Orchestrator admits only the five sandbox evidence kinds at grade `LOCALLY_VERIFIED` (what the runtime's own readback produces); anything else is an unearned claim and BLOCKS the run.
 
+## Security review fixes (Control Plane review 5476501744)
+
+**1. Approvals bind the Git objects that are published (P1).** A worktree-bytes digest was not enough: `git add` can apply clean filters or EOL conversion, and the index can hold other blobs than the worktree. The Docker path now binds every approval to a **Git tree id** (`treeSha`) as well as the diff digest. The reviewer-visible `approval_required` evidence states that tree. The tree is computed independently of the real index, from the approved bytes (Git blob ids, no filters) applied to the base tree in a scratch index (`GIT_INDEX_FILE`, `write-tree --missing-ok`). `WorktreeManager.commitApproved` then: (a) refuses any `filter`, `text`, `eol`, `ident` or `working-tree-encoding` attribute on the approved paths; (b) refuses assume-unchanged, skip-worktree or unmerged index flags on them; (c) requires the index to equal the base tree before staging (no pre-staged content, flagged or not; the index is reset on refusal); (d) stages only the approved paths and requires the **staged tree** to equal the approved tree; (e) commits and requires the **committed tree** to equal it with exactly one commit whose only parent is the base. Before the push and the PR approvals `verifyPublished` re-proves that `HEAD` is that verified commit. The Phase 2 fake path keeps `commit()` unchanged.
+
+**2. Cancellation cannot be overtaken by a launch (P1).** `DockerSandboxRuntime.stop()` and `destroy()` now set a *launch fence* synchronously; `start()` re-checks the fence after its last asynchronous read and before the `docker start` call with nothing asynchronous in between, so a confirmed stop can never be followed by a launch (`CANCELLED_BEFORE_LAUNCH`). If a `docker start` was already issued, `stop()` does not accept "not running" as proof: it polls the exact container (stopping a late-started one) until the launch process has finished, bounded; if it never settles the stop is `UNKNOWN`, not `STOPPED`.
+
+**3. Complete raw execution evidence for the agent role (P2).** The runtime's strict execution readback (identity, integer `ExitCode`, boolean `OOMKilled`, `Running:false`, `Status:exited`, valid ordered `StartedAt`/`FinishedAt`) now applies to the `agent` role as well as `verifier`, in `start()` and `inspect()`. A missing, mistyped or inconsistent fact is `UNKNOWN` (`EXECUTION_READBACK_INCOMPLETE`): no `sandbox_started` evidence is produced, an unknown OOM flag is never written as `false`, and no approval is spent. The adapter also refuses a runtime result that lacks a passing execution check or typed facts.
+
+**Reproducible mutation check.** `node scripts/phase3b7b1MutationCheck.mjs --workers 5 --out docs/evidence/agent-console-phase3b7b1-mutation-results.json` (list: `scripts/phase3b7b1-mutations.json`) applies each exact-text mutation to a private copy, runs the new test files in tiers, and writes the per-mutation raw results (`docs/evidence/agent-console-phase3b7b1-mutation-results.json`). It never touches the working tree, uses only the fake Docker, and exits non-zero on an unexplained survivor. Mutations that survive are listed with the reason they are equivalent.
+
 ## Validation (local offline; not CI — this repository has no GitHub CI)
 
 | Suite | Tests | Passed | Failed |
@@ -49,12 +59,13 @@ Task (DRAFT) → Orchestrator[publishGate] → worktree → ContainerFakeAgentAd
 | `…3b7b1-approval` (policy, digest, manifest, store, gate) | 19 | 19 | 0 |
 | `…3b7b1-container-adapter` (negative security, limits, cancel, cleanup) | 30 | 30 | 0 |
 | `…3b7b1-docker-path` (Orchestrator integration, local git, in-memory fake Docker) | 23 | 23 | 0 |
+| `…3b7b1-security-fixes` (Git-object binding, cancellation race, raw execution readback) | 21 | 21 | 0 |
 | Existing Agent Console suites re-run (phase 2, 3A, 3B2, 3B2.1, 3B3, 3B4; 17 files) | 261 | 261 | 0 |
 | `agent-console-phase1.test.mjs` | 1 | 0 | 1 (see below) |
 
 `agent-console-phase1.test.mjs` fails to import `express` because this fresh worktree has no `node_modules` (dependencies were not installed, by instruction). It does not touch any file changed here. The two real-Docker `*.docker.integration.test.mjs` files were **not run**.
 
-**Mutation checks:** 52 deliberate breakages of the new code (expiry, replay marker, each binding, ambiguity, approver identity, lifetime, authenticity label, unknown fields, gate checks, symlink/`.git`/content handling, each approval call in the Orchestrator, evidence grade/kind admission, cleanup/unknown handling, adapter spec/option/image/network/destroy/cancel/redaction/limits). First pass caught 46; the six survivors were analyzed: four were real test gaps and now have tests (consumed-approval pre-filter, same-size content change, outcome/exit-code inconsistency, missing policy evidence) and are caught. Two are **equivalent mutants** that remain: removing the action-category check (the `GATED_ACTIONS` check right beside it enforces the same set) and removing the manifest's first hard-link check (the post-open `fstat` link-count check enforces it). Both are deliberate redundant layers. Final: 50 caught, 2 equivalent.
+**Mutation checks (reproducible):** `scripts/phase3b7b1MutationCheck.mjs` with `scripts/phase3b7b1-mutations.json` (78 exact-text mutations of the approval gate, manifest, container adapter, worktree manager, Orchestrator and sandbox runtime, including counterexamples for the three review findings). Raw per-mutation results from the final run on the committed sources: `docs/evidence/agent-console-phase3b7b1-mutation-results.json`. Result: **74 caught, 4 equivalent, 0 unexplained** (baseline 93/93 green). The four equivalent survivors are redundant layers, each with its reason recorded in the results file: the action-category check beside `GATED_ACTIONS`, the first manifest hard-link check beside the post-open `fstat` check, the one-commit count beside the parents check, and the tree re-check beside the digest re-check (the tree is a pure function of the manifest and base). Earlier runs also exposed real gaps that now have tests (consumed-approval pre-filter, same-size content change, outcome/exit-code inconsistency, missing policy evidence, assume-unchanged versus drift messages).
 
 ## Remaining blockers and limits
 

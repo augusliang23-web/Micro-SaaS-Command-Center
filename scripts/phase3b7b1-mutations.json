@@ -1,0 +1,474 @@
+[
+ {
+  "id": "approval: ignore expiry",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "if (parseIso(c.expiresAt) <= now) why.push('APPROVAL_EXPIRED');",
+  "replace": ""
+ },
+ {
+  "id": "approval: ignore not-yet-valid",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "if (parseIso(c.issuedAt) > now + CLOCK_SKEW_MS) why.push('APPROVAL_NOT_YET_VALID');",
+  "replace": ""
+ },
+ {
+  "id": "approval: never write consumed marker",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "this.#write(path.join(this.#dir, `${approval.approvalId}.consumed`),",
+  "replace": "void (("
+ },
+ {
+  "id": "approval: ignore consumed marker",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "if (this.#consumed(c.approvalId)) why.push('APPROVAL_CONSUMED');",
+  "replace": ""
+ },
+ {
+  "id": "approval: ignore diff digest",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "c.diffDigest !== expect.diffDigest || ",
+  "replace": ""
+ },
+ {
+  "id": "approval: ignore base commit",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "|| c.baseSha !== expect.baseSha",
+  "replace": ""
+ },
+ {
+  "id": "approval: ignore branch",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "|| c.branch !== expect.branch",
+  "replace": ""
+ },
+ {
+  "id": "approval: ignore task binding",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "r.taskId === taskId && r.action === action",
+  "replace": "r.action === action"
+ },
+ {
+  "id": "approval: ignore action binding",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "r.taskId === taskId && r.action === action",
+  "replace": "r.taskId === taskId"
+ },
+ {
+  "id": "approval: accept ambiguous",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "if (valid.length > 1) return { ok: false, code: 'APPROVAL_AMBIGUOUS', reasons: ['APPROVAL_AMBIGUOUS'] };",
+  "replace": ""
+ },
+ {
+  "id": "approval: agent-like approver allowed",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "|| AGENT_LIKE.test(a.approvedBy.id)",
+  "replace": ""
+ },
+ {
+  "id": "approval: unlimited ttl",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "expires - issued > MAX_APPROVAL_TTL_MS",
+  "replace": "false"
+ },
+ {
+  "id": "approval: authenticity label unchecked",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "if (a.authenticity !== APPROVAL_AUTHENTICITY) problems.push('authenticity label is wrong');",
+  "replace": ""
+ },
+ {
+  "id": "approval: unknown fields allowed",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "for (const k of Object.keys(a)) if (!RECORD_KEYS.includes(k)) problems.push(`unknown field ${k.slice(0, 30)}`);",
+  "replace": ""
+ },
+ {
+  "id": "approval: gate skips action category check",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "classifyAction(action, DOCKER_PATH_ACTION_POLICY) !== 'CONTROL_PLANE_APPROVAL' || ",
+  "replace": "",
+  "equivalent": "GATED_ACTIONS.includes(action) is checked next to it and enforces the same three actions"
+ },
+ {
+  "id": "approval: gate skips task allowed actions",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "!task?.allowedActions?.includes(action) || ",
+  "replace": ""
+ },
+ {
+  "id": "approval: docker policy commit auto",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "COMMIT: 'CONTROL_PLANE_APPROVAL',",
+  "replace": "COMMIT: 'AUTO_ALLOWED',"
+ },
+ {
+  "id": "manifest: follow symlinks",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "if (stat.isSymbolicLink() || !stat.isFile()) throw new BoundaryError(`Changed path is not a regular file: ${rel}`);",
+  "replace": ""
+ },
+ {
+  "id": "manifest: allow hard links",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "if (stat.nlink !== 1) throw new BoundaryError(`Changed file has multiple hard links: ${rel}`);",
+  "replace": "",
+  "equivalent": "the post-open fstat nlink check right below enforces the same rule"
+ },
+ {
+  "id": "manifest: allow .git paths",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "&& !/^\\.git(\\/|$)/i.test(p) && !p.split('/').some((s) => s.toLowerCase() === '.git')",
+  "replace": ""
+ },
+ {
+  "id": "manifest: ignore content in digest",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "return { path: f.path, sha256: f.sha256, size: f.size, exec: f.exec };",
+  "replace": "return { path: f.path, size: f.size, exec: f.exec };"
+ },
+ {
+  "id": "orchestrator: skip COMMIT approval",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "await approve('COMMIT');",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: skip PUSH approval",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "await approve('PUSH_BRANCH');",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: skip PR approval",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "await approve('CREATE_PR');",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: no diff re-check",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "if (again.diffDigest !== expect.diffDigest) throw new BoundaryError('Diff changed after it was reviewed');",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: evidence grade unchecked",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "|| e.grade !== 'LOCALLY_VERIFIED'",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: evidence kind unchecked",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "!CONTAINER_EVIDENCE_KINDS.includes(e.kind) || ",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: unconfirmed cleanup tolerated",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "result?.cleanup !== 'CONFIRMED' || ",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: unknown outcome tolerated",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "|| result?.outcome === 'unknown'",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: cancelled treated as failure only",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "if (result.outcome === 'cancelled') {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "orchestrator: non-completed outcome keeps exit code",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "if (result.outcome !== 'completed') result.exitCode = null;",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: docker path accepts any adapter id",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "docker ? (this.#adapter.id !== 'docker-fake' || this.#prs.id !== 'fake-github')",
+  "replace": "docker ? (this.#prs.id !== 'fake-github')"
+ },
+ {
+  "id": "orchestrator: gate not required to be ApprovalGate",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "if (publishGate !== null && !(publishGate instanceof ApprovalGate)) throw new Error('publishGate must be an ApprovalGate');",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: adapter evidence recorded without grade cap",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "record('agent_report',gradeForEvent(event?.type),",
+  "replace": "record('agent_report','LOCALLY_VERIFIED',"
+ },
+ {
+  "id": "adapter: spec extra keys allowed",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "Object.keys(spec).some((k) => !SPEC_KEYS.includes(k)) || ",
+  "replace": ""
+ },
+ {
+  "id": "adapter: constructor unknown options allowed",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "if (unknown.length > 0) throw new Error(`Unknown adapter option(s): ${unknown.join(', ')}`);",
+  "replace": ""
+ },
+ {
+  "id": "adapter: fixture path unchecked",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "if (spec.fixturePath !== `agent-console-fixture/${spec.taskId}.txt`) throw new BoundaryError('Fixture path does not match the task');",
+  "replace": ""
+ },
+ {
+  "id": "adapter: run replay allowed",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "if (this.#runs.has(spec.runId)) throw new BoundaryError('This run is already tracked');",
+  "replace": ""
+ },
+ {
+  "id": "adapter: skip destroy",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "destroyed = keep(await this.#runtime.destroy(run.sandboxId));",
+  "replace": "destroyed = { state: 'DESTROYED' };"
+ },
+ {
+  "id": "adapter: unconfirmed cleanup still success",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "if (outcome === 'completed') outcome = 'unknown';",
+  "replace": ""
+ },
+ {
+  "id": "adapter: network profile widened",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "network: 'NO_NETWORK'",
+  "replace": "network: 'PROVIDER_NETWORK'"
+ },
+ {
+  "id": "adapter: cancel claims terminated without stop",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "return stopped?.state === 'STOPPED' ? { terminated: true } :",
+  "replace": "return true ? { terminated: true } :"
+ },
+ {
+  "id": "adapter: cancelled without a cancel request",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "else if (run.cancelRequested && started.state === 'EXITED' && started.executionReadbackCheck?.ok === true)",
+  "replace": "else if (started.state === 'EXITED' && started.executionReadbackCheck?.ok === true)"
+ },
+ {
+  "id": "adapter: cancel of unknown run",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "if (!run) return { terminated: false, state: 'UNKNOWN', reason: 'NOT_TRACKED' };",
+  "replace": "if (!run) return { terminated: true };"
+ },
+ {
+  "id": "adapter: policy evidence not required",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "else if (!prepared.evidence?.some((e) => e.kind === 'sandbox_policy' && e.grade === 'LOCALLY_VERIFIED')) { reason = 'POLICY_EVIDENCE_MISSING'; }",
+  "replace": ""
+ },
+ {
+  "id": "adapter: no secret redaction",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "text = text.replace(SECRET_LIKE, '[REDACTED]');",
+  "replace": ""
+ },
+ {
+  "id": "adapter: no host path redaction",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "for (const p of hostPaths) if (typeof p === 'string' && p.length > 3) text = text.split(p).join('<host-path>');",
+  "replace": ""
+ },
+ {
+  "id": "adapter: unbounded output events",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "if (lines++ < MAX_EVENT_LINES) emit(",
+  "replace": "if (true) emit("
+ },
+ {
+  "id": "adapter: timeout treated as success",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "else if (started.outcome === 'TIMED_OUT') { outcome = 'failed'; reason = 'TIMEOUT'; }",
+  "replace": ""
+ },
+ {
+  "id": "adapter: oom treated as success",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "else if (started.oomKilled === true) { outcome = 'failed'; reason = 'OOM_KILLED'; exitCode = started.exitCode; }",
+  "replace": ""
+ },
+ {
+  "id": "adapter: blocked prepare ignored",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "if (prepared.state === 'BLOCKED') { blocked = `${prepared.code}: ${prepared.reason}`; reason = prepared.code; }",
+  "replace": "if (false) {}"
+ },
+ {
+  "id": "adapter: unknown image alias accepted",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "if (image !== FAKE_AGENT_IMAGE_ALIAS) throw new Error('Only the fake-agent image alias is allowed');",
+  "replace": ""
+ },
+ {
+  "id": "approval: ignore tree binding",
+  "file": "server/execution/approvalGate.mjs",
+  "find": "c.treeSha !== expect.treeSha || ",
+  "replace": ""
+ },
+ {
+  "id": "git: skip attribute check",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "attrs[i + 2] !== 'unspecified'",
+  "replace": "false"
+ },
+ {
+  "id": "git: skip index flag check",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if (!entry.startsWith('H '))",
+  "replace": "if (false)"
+ },
+ {
+  "id": "git: skip pre-staged index check",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if (await this.#indexTree(context) !== baseTree) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "git: skip staged tree comparison",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if (staged !== treeSha) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "git: skip committed tree check",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if ((await this.#git(context.worktreePath, ['rev-parse','HEAD^{tree}'])).trim() !== treeSha) throw",
+  "replace": "if (false) throw"
+ },
+ {
+  "id": "git: skip published parent check",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if ((await this.#git(context.worktreePath, ['rev-list','--parents','-n','1','HEAD'])).trim() !== `${head} ${context.baseSha}`) throw",
+  "replace": "if (false) throw"
+ },
+ {
+  "id": "git: skip published head check",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if (head !== context.expectedHead) throw",
+  "replace": "if (false) throw"
+ },
+ {
+  "id": "git: skip one-commit count",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if ((await this.#git(context.worktreePath, ['rev-list','--count',`${context.baseSha}..HEAD`])).trim() !== '1') throw",
+  "replace": "if (false) throw",
+  "equivalent": "the parents check right above already requires HEAD to have exactly the base as its only parent, which makes the count 1"
+ },
+ {
+  "id": "git: expected tree ignores deletions",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if (f.deleted === true) { await this.#gitIndex(context.worktreePath, ['update-index', '--force-remove', '--', f.path], indexFile); continue; }",
+  "replace": ""
+ },
+ {
+  "id": "git: index not reset after drift",
+  "file": "server/execution/worktreeManager.mjs",
+  "find": "if (await this.#indexTree(context) !== baseTree) { await this.#resetIndex(context);",
+  "replace": "if (await this.#indexTree(context) !== baseTree) {"
+ },
+ {
+  "id": "orchestrator: legacy commit on the docker path",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "docker ? await this.#worktrees.commitApproved(context,task,project,approved) : await this.#worktrees.commit(context,task,project)",
+  "replace": "await this.#worktrees.commit(context,task,project)"
+ },
+ {
+  "id": "orchestrator: skip published-commit verification",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "if (action !== 'COMMIT') await this.#worktrees.verifyPublished(context,{treeSha:expect.treeSha});",
+  "replace": ""
+ },
+ {
+  "id": "orchestrator: skip tree re-check",
+  "file": "server/execution/orchestrator.mjs",
+  "find": "if (await this.#worktrees.expectedTree(context,again) !== expect.treeSha) throw new BoundaryError('Git tree changed after it was reviewed');",
+  "replace": "",
+  "equivalent": "the tree is a pure function of the manifest and base commit, and the manifest digest is re-checked on the line above"
+ },
+ {
+  "id": "runtime: no launch fence",
+  "file": "server/sandbox/dockerSandboxRuntime.mjs",
+  "find": "    if (record.fenced) return { state: 'BLOCKED', code: 'CANCELLED_BEFORE_LAUNCH', reason: 'The sandbox was stopped before it was launched', evidence: [] };\n",
+  "replace": ""
+ },
+ {
+  "id": "runtime: stop does not fence",
+  "file": "server/sandbox/dockerSandboxRuntime.mjs",
+  "find": "    record.fenced = true; // synchronous: from this point this sandbox can never be launched by a start() that is still reading\n",
+  "replace": ""
+ },
+ {
+  "id": "runtime: destroy does not fence",
+  "file": "server/sandbox/dockerSandboxRuntime.mjs",
+  "find": "    record.fenced = true;\n    if (!record.containerId) return { state: 'UNKNOWN', code: 'CREATE_AMBIGUOUS'",
+  "replace": "    if (!record.containerId) return { state: 'UNKNOWN', code: 'CREATE_AMBIGUOUS'"
+ },
+ {
+  "id": "runtime: stop ignores an unsettled launch",
+  "file": "server/sandbox/dockerSandboxRuntime.mjs",
+  "find": "if (r.state === 'PRESENT' && this.#owns(r.info, record) && record.launch && !record.launch.settled) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "runtime: unsettled launch counts as stopped",
+  "file": "server/sandbox/dockerSandboxRuntime.mjs",
+  "find": "if (!record.launch.settled) { record.state = 'UNKNOWN'; return {",
+  "replace": "if (false) { record.state = 'UNKNOWN'; return {"
+ },
+ {
+  "id": "runtime: late-started container is not stopped",
+  "file": "server/sandbox/dockerSandboxRuntime.mjs",
+  "find": "if (cur.state === 'PRESENT' && this.#owns(cur.info, record) && cur.info.State?.Running) {",
+  "replace": "if (false) {"
+ },
+ {
+  "id": "adapter: pre-launch cancellation not recognized",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "started.code === 'CANCELLED_BEFORE_LAUNCH'",
+  "replace": "false"
+ },
+ {
+  "id": "runtime: agent role not strict",
+  "file": "server/sandbox/dockerSandboxRuntime.mjs",
+  "find": "Object.freeze(['verifier', 'agent']);",
+  "replace": "Object.freeze(['verifier']);"
+ },
+ {
+  "id": "runtime: execution check skipped for strict roles",
+  "file": "server/sandbox/dockerSandboxRuntime.mjs",
+  "find": "if(STRICT_EXECUTION_ROLES.includes(plan.role) && (!policyReadback.ok || !executionReadbackCheck.ok)) {",
+  "replace": "if(false) {"
+ },
+ {
+  "id": "adapter: execution check not required",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "started.executionReadbackCheck?.ok !== true || ",
+  "replace": ""
+ },
+ {
+  "id": "adapter: oom type not required",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "|| typeof started.oomKilled !== 'boolean'",
+  "replace": ""
+ },
+ {
+  "id": "adapter: exit code type not required",
+  "file": "server/execution/containerAgentAdapter.mjs",
+  "find": "|| !Number.isInteger(started.exitCode)",
+  "replace": ""
+ }
+]

@@ -48,7 +48,7 @@ const APPROVER_ID = /^[A-Za-z0-9][A-Za-z0-9 ._@-]{0,63}$/;
 // An approver identity can never be (or look like) the execution agent.
 const AGENT_LIKE = /(agent|claude|codex|fake|bot|assistant|\bai\b|sandbox|container)/i;
 const BRANCH = /^agent\/CC-\d{8}-[0-9a-f]{8}-[a-z0-9-]+$/;
-const RECORD_KEYS = ['approvalId', 'taskId', 'action', 'diffDigest', 'baseSha', 'branch', 'issuedAt', 'expiresAt', 'approvedBy', 'authenticity'];
+const RECORD_KEYS = ['approvalId', 'taskId', 'action', 'diffDigest', 'treeSha', 'baseSha', 'branch', 'issuedAt', 'expiresAt', 'approvedBy', 'authenticity'];
 const isRecord = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 const parseIso = (value) => (typeof value === 'string' && ISO.test(value) ? Date.parse(value) : NaN);
@@ -110,7 +110,9 @@ export function computeDiffManifest({ worktreePath, paths, baseSha, fsImpl = fs 
         if (!Number.isInteger(n) || n <= 0) throw new BoundaryError(`Short read of changed file: ${rel}`);
         off += n;
       }
-      files.push({ path: rel, sha256: sha256(bytes), size: bytes.length, exec: (opened.mode & 0o111) !== 0 });
+      const exec = (opened.mode & 0o111) !== 0;
+      // `blob` is the Git blob id of exactly these bytes (no filters): it lets the expected Git tree be computed independently of the index.
+      files.push({ path: rel, sha256: sha256(bytes), size: bytes.length, exec, mode: exec ? '100755' : '100644', blob: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex') });
     } finally { fsImpl.closeSync(fd); }
   }
   return { baseSha, files, fileCount: files.length, diffDigest: diffDigestOf(files) };
@@ -129,6 +131,7 @@ export function validateApprovalRecord(a) {
   if (!TASK_ID_PATTERN.test(a.taskId)) problems.push('taskId is malformed');
   if (!GATED_ACTIONS.includes(a.action)) problems.push('action is not an approvable action');
   if (!SHA256.test(a.diffDigest)) problems.push('diffDigest is malformed');
+  if (!SHA1.test(a.treeSha)) problems.push('treeSha is malformed');
   if (!SHA1.test(a.baseSha)) problems.push('baseSha is malformed');
   if (!BRANCH.test(a.branch) || !a.branch.startsWith(`agent/${a.taskId}-`)) problems.push('branch must be the generated task branch');
   const issued = parseIso(a.issuedAt); const expires = parseIso(a.expiresAt);
@@ -167,11 +170,11 @@ export class ApprovalStore {
    * TRUSTED-CALLER ONLY (future Control Plane / operator surface). Never reachable from an adapter, an agent event, a task field
    * or a browser request. The store, not the caller, chooses the approval id.
    */
-  grant({ taskId, action, diffDigest, baseSha, branch, approvedBy, ttlMs = DEFAULT_APPROVAL_TTL_MS }) {
+  grant({ taskId, action, diffDigest, treeSha, baseSha, branch, approvedBy, ttlMs = DEFAULT_APPROVAL_TTL_MS }) {
     if (!Number.isInteger(ttlMs) || ttlMs < 1000 || ttlMs > MAX_APPROVAL_TTL_MS) throw new ApprovalError('TTL_INVALID', 'Approval lifetime must be between 1 second and 15 minutes');
     const now = this.#nowMs();
     const record = {
-      approvalId: `APR-${randomBytes(8).toString('hex')}`, taskId, action, diffDigest, baseSha, branch,
+      approvalId: `APR-${randomBytes(8).toString('hex')}`, taskId, action, diffDigest, treeSha, baseSha, branch,
       issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + ttlMs).toISOString(), approvedBy, authenticity: APPROVAL_AUTHENTICITY,
     };
     const problems = validateApprovalRecord(record);
@@ -195,7 +198,7 @@ export class ApprovalStore {
    */
   authorize({ taskId, action, expect }) {
     if (!TASK_ID_PATTERN.test(taskId ?? '') || !GATED_ACTIONS.includes(action) || !isRecord(expect)) return { ok: false, code: 'REQUEST_INVALID', reasons: ['REQUEST_INVALID'] };
-    if (!SHA256.test(expect.diffDigest ?? '') || !SHA1.test(expect.baseSha ?? '') || typeof expect.branch !== 'string') return { ok: false, code: 'REQUEST_INVALID', reasons: ['REQUEST_INVALID'] };
+    if (!SHA256.test(expect.diffDigest ?? '') || !SHA1.test(expect.treeSha ?? '') || !SHA1.test(expect.baseSha ?? '') || typeof expect.branch !== 'string') return { ok: false, code: 'REQUEST_INVALID', reasons: ['REQUEST_INVALID'] };
     let now;
     try { now = this.#nowMs(); } catch { return { ok: false, code: 'CLOCK_INVALID', reasons: ['CLOCK_INVALID'] }; }
     let names;
@@ -205,7 +208,7 @@ export class ApprovalStore {
     const valid = []; const reasons = new Set();
     for (const c of candidates) {
       const why = [];
-      if (c.diffDigest !== expect.diffDigest || c.baseSha !== expect.baseSha || c.branch !== expect.branch) why.push('APPROVAL_MISMATCH');
+      if (c.diffDigest !== expect.diffDigest || c.treeSha !== expect.treeSha || c.baseSha !== expect.baseSha || c.branch !== expect.branch) why.push('APPROVAL_MISMATCH');
       if (parseIso(c.expiresAt) <= now) why.push('APPROVAL_EXPIRED');
       if (parseIso(c.issuedAt) > now + CLOCK_SKEW_MS) why.push('APPROVAL_NOT_YET_VALID');
       if (this.#consumed(c.approvalId)) why.push('APPROVAL_CONSUMED');

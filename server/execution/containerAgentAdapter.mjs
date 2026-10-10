@@ -112,9 +112,11 @@ export class ContainerFakeAgentAdapter {
         emit({ type: 'started' });
         const started = keep(await this.#runtime.start(run.sandboxId, { onLine: out }));
         // Cancelled only when the stop of the exact container was confirmed (or it demonstrably exited); an unconfirmed stop is UNKNOWN.
-        if (run.cancelRequested && (run.stopConfirmed || started.state === 'EXITED')) { outcome = 'cancelled'; reason = 'CANCELLED'; }
+        if (run.cancelRequested && started.code === 'CANCELLED_BEFORE_LAUNCH') { outcome = 'cancelled'; reason = 'CANCELLED_BEFORE_LAUNCH'; } // the runtime proves nothing was launched
+        else if (run.cancelRequested && started.state === 'EXITED' && started.executionReadbackCheck?.ok === true) { outcome = 'cancelled'; reason = 'CANCELLED'; } // exited, with complete raw facts, after a cancel request
         else if (started.state === 'BLOCKED') { blocked = `${started.code}: ${started.reason ?? 'blocked'}`; reason = started.code; }
         else if (started.state !== 'EXITED') { reason = started.code ?? 'EXECUTION_UNCONFIRMED'; }
+        else if (started.executionReadbackCheck?.ok !== true || !Number.isInteger(started.exitCode) || typeof started.oomKilled !== 'boolean') { reason = 'EXECUTION_READBACK_INCOMPLETE'; } // missing raw facts are UNKNOWN, never success
         else if (started.outcome === 'TIMED_OUT') { outcome = 'failed'; reason = 'TIMEOUT'; }
         else if (started.outcome === 'OUTPUT_LIMIT') { outcome = 'failed'; reason = 'OUTPUT_LIMIT'; }
         else if (started.oomKilled === true) { outcome = 'failed'; reason = 'OOM_KILLED'; exitCode = started.exitCode; }

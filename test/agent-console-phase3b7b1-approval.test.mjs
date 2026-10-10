@@ -15,10 +15,11 @@ import { realTmp } from './helpers/dockerScratch.mjs';
 
 const BASE = 'a'.repeat(40);
 const DIGEST = 'b'.repeat(64);
+const TREE = 'd'.repeat(40);
 const BRANCH = branchOf(TASK);
 const approver = { source: 'CONTROL_PLANE', id: 'control-plane-reviewer' };
-const grantArgs = (extra = {}) => ({ taskId: TASK, action: 'COMMIT', diffDigest: DIGEST, baseSha: BASE, branch: BRANCH, approvedBy: approver, ...extra });
-const expectArgs = (extra = {}) => ({ diffDigest: DIGEST, baseSha: BASE, branch: BRANCH, ...extra });
+const grantArgs = (extra = {}) => ({ taskId: TASK, action: 'COMMIT', diffDigest: DIGEST, treeSha: TREE, baseSha: BASE, branch: BRANCH, approvedBy: approver, ...extra });
+const expectArgs = (extra = {}) => ({ diffDigest: DIGEST, treeSha: TREE, baseSha: BASE, branch: BRANCH, ...extra });
 const task = (extra = {}) => ({ taskId: TASK, allowedActions: ['READ_REPO', 'CREATE_WORKTREE', 'EDIT_WORKTREE', 'COMMIT', 'PUSH_BRANCH', 'CREATE_PR'], ...extra });
 const project = (extra = {}) => ({ allowedActions: ['READ_REPO', 'CREATE_WORKTREE', 'EDIT_WORKTREE', 'COMMIT', 'PUSH_BRANCH', 'CREATE_PR'], ...extra });
 async function withApprovals(fn, options) { const s = approvalSetup(options); try { return await fn(s); } finally { s.done(); } }
@@ -129,7 +130,7 @@ test('grant: the store chooses the id, labels the record unauthenticated and val
   assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
   const badInputs = [
     { action: 'MERGE' }, { action: 'DEPLOY' }, { action: 'READ_REPO' }, { action: 'EDIT_WORKTREE' }, { action: 'commit' }, { action: undefined },
-    { diffDigest: 'xyz' }, { diffDigest: undefined }, { baseSha: 'abc' }, { taskId: 'CC-1' }, { branch: 'main' }, { branch: 'agent/CC-20261003-87654321-other' },
+    { diffDigest: 'xyz' }, { diffDigest: undefined }, { treeSha: 'xyz' }, { treeSha: undefined }, { treeSha: 'D'.repeat(40) }, { baseSha: 'abc' }, { taskId: 'CC-1' }, { branch: 'main' }, { branch: 'agent/CC-20261003-87654321-other' },
     { approvedBy: undefined }, { approvedBy: { source: 'AGENT', id: 'human' } }, { approvedBy: { source: 'HUMAN_OPERATOR', id: 'claude-code' } }, { approvedBy: { source: 'CONTROL_PLANE', id: 'fake-agent' } },
     { approvedBy: { source: 'HUMAN_OPERATOR', id: 'codex' } }, { approvedBy: { source: 'HUMAN_OPERATOR', id: '../x' } }, { approvedBy: { source: 'HUMAN_OPERATOR', id: 'ok', extra: 1 } },
     { ttlMs: 0 }, { ttlMs: MAX_APPROVAL_TTL_MS + 1 }, { ttlMs: -5 }, { ttlMs: 1.5 }, { ttlMs: '600000' }, { ttlMs: Infinity },
@@ -177,7 +178,7 @@ test('authorize: missing approval, wrong action and a different task are refused
   store.grant(grantArgs({ action: 'PUSH_BRANCH' }));
   assert.equal(store.authorize({ taskId: TASK, action: 'COMMIT', expect: expectArgs() }).code, 'APPROVAL_MISSING', 'a push approval cannot authorize a commit');
   assert.equal(store.authorize({ taskId: 'CC-20261003-87654321', action: 'PUSH_BRANCH', expect: expectArgs() }).code, 'APPROVAL_MISSING', 'approval is bound to the task');
-  for (const bad of [{ taskId: 'x' }, { action: 'MERGE' }, { action: 'READ_REPO' }, { expect: null }, { expect: {} }, { expect: expectArgs({ diffDigest: 'x' }) }, { expect: expectArgs({ baseSha: 'x' }) }, { expect: expectArgs({ branch: 5 }) }]) {
+  for (const bad of [{ taskId: 'x' }, { action: 'MERGE' }, { action: 'READ_REPO' }, { expect: null }, { expect: {} }, { expect: expectArgs({ diffDigest: 'x' }) }, { expect: expectArgs({ treeSha: 'x' }) }, { expect: expectArgs({ treeSha: undefined }) }, { expect: expectArgs({ baseSha: 'x' }) }, { expect: expectArgs({ branch: 5 }) }]) {
     const r = store.authorize({ taskId: TASK, action: 'PUSH_BRANCH', expect: expectArgs(), ...bad });
     assert.equal(r.ok, false); assert.equal(r.code, 'REQUEST_INVALID', JSON.stringify(bad));
   }
@@ -185,7 +186,7 @@ test('authorize: missing approval, wrong action and a different task are refused
 
 test('authorize: a mismatched diff, base commit or branch is refused and the approval stays unconsumed', async () => withApprovals(({ store, dir }) => {
   const a = store.grant(grantArgs());
-  for (const wrong of [{ diffDigest: 'c'.repeat(64) }, { baseSha: 'd'.repeat(40) }, { branch: branchOf(TASK, 'other-slug') }]) {
+  for (const wrong of [{ diffDigest: 'c'.repeat(64) }, { treeSha: 'e'.repeat(40) }, { baseSha: 'd'.repeat(40) }, { branch: branchOf(TASK, 'other-slug') }]) {
     const r = store.authorize({ taskId: TASK, action: 'COMMIT', expect: expectArgs(wrong) });
     assert.equal(r.ok, false); assert.equal(r.code, 'APPROVAL_MISMATCH', JSON.stringify(wrong));
   }
@@ -220,7 +221,7 @@ test('authorize: tampered, malformed or mislabeled records are ignored, never tr
   const original = fs.readFileSync(file, 'utf8');
   const variants = [
     { ...good, authenticity: 'SIGNED_BY_CONTROL_PLANE' }, { ...good, extra: true }, { ...good, expiresAt: '2099-01-01T00:00:00.000Z' }, { ...good, action: 'MERGE' },
-    { ...good, approvedBy: { source: 'HUMAN_OPERATOR', id: 'claude' } }, { ...good, approvalId: 'APR-ffffffffffffffff' }, { ...good, diffDigest: 5 }, null, [],
+    { ...good, approvedBy: { source: 'HUMAN_OPERATOR', id: 'claude' } }, { ...good, approvalId: 'APR-ffffffffffffffff' }, { ...good, diffDigest: 5 }, { ...good, treeSha: 'nope' }, (({ treeSha, ...rest }) => rest)(good), null, [],
   ];
   for (const v of variants) {
     fs.writeFileSync(file, JSON.stringify(v));

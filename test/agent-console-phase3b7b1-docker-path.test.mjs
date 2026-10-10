@@ -11,37 +11,7 @@ import { FakePrProvider } from '../server/execution/fakePrProvider.mjs';
 import { ContainerFakeAgentAdapter, REAL_AGENT_EXECUTION } from '../server/execution/containerAgentAdapter.mjs';
 import { ApprovalGate, ApprovalStore, GATED_ACTIONS, diffDigestOf } from '../server/execution/approvalGate.mjs';
 import { EffectDocker, FIXTURE_CONTENT, approvalSetup, branchOf, expectedFixtureDigest, makeRuntime, sha256 } from './helpers/dockerPathFixture.mjs';
-
-const TASK_A = 'CC-20261003-12345678';
-const TASK_B = 'CC-20261003-87654321';
-const approver = { source: 'CONTROL_PLANE', id: 'control-plane-reviewer' };
-const fixtureOf = (taskId) => `agent-console-fixture/${taskId}.txt`;
-const writeFixture = (ws, taskId, content) => { fs.mkdirSync(path.join(ws, 'agent-console-fixture'), { recursive: true }); fs.writeFileSync(path.join(ws, fixtureOf(taskId)), content, { mode: 0o600 }); };
-
-/** Builds the Docker-path engine over an in-memory fake Docker. No daemon, no network, no real agent. */
-function dockerEngine(f, opts = {}) {
-  const taskId = opts.taskId ?? TASK_A;
-  const fake = opts.fake ?? new EffectDocker();
-  if (!('effect' in opts) || opts.effect !== null) fake.effect = opts.effect ?? ((ws) => writeFixture(ws, taskId, opts.content ?? FIXTURE_CONTENT(taskId)));
-  const rt = makeRuntime({ fake, ...(opts.homeDir ? { homeDir: opts.homeDir } : {}) });
-  const approvals = approvalSetup();
-  const base = new ContainerFakeAgentAdapter({ runtime: rt.runtime, ...(opts.adapterOptions ?? {}) });
-  const adapter = opts.wrapAdapter ? opts.wrapAdapter(base) : base;
-  const orchestrator = new Orchestrator({
-    registry: f.registry, taskStore: f.store, executionStore: f.records, worktreeManager: opts.worktreeManager ?? new WorktreeManager({ allowLocalRemotes: true }),
-    adapter, prProvider: new FakePrProvider(), publishGate: opts.noGate ? null : approvals.gate,
-  });
-  return { fake, rt, approvals, adapter: base, orchestrator, done: () => { rt.dispose(); approvals.done(); } };
-}
-async function withEngine(f, opts, fn) { const e = dockerEngine(f, opts); try { return await fn(e); } finally { e.done(); } }
-
-const grant = (e, taskId, actions, extra = {}) => actions.map((action) => e.approvals.store.grant({
-  taskId, action, diffDigest: extra.diffDigest ?? expectedFixtureDigest(taskId), baseSha: extra.baseSha, branch: extra.branch ?? branchOf(taskId), approvedBy: approver, ...(extra.ttlMs ? { ttlMs: extra.ttlMs } : {}),
-}));
-const remoteBranches = (f) => git(f.source, 'ls-remote', '--heads', 'origin').split('\n').filter((l) => l.includes('/agent/'));
-const kinds = (f, id) => f.records.listEvidence(id).map((e) => e.kind);
-const worktreeHead = (f, id) => git(path.join(f.worktreeRoot, id), 'rev-parse', 'HEAD');
-const reasons = (f, id) => f.records.listEvidence(id).filter((e) => ['guard_violation', 'error', 'approval_required'].includes(e.kind)).map((e) => `${e.kind}:${e.data.reason ?? e.data.code ?? ''}`);
+import { TASK_A, TASK_B, approver, dockerEngine, fixtureOf, grant, kinds, reasons, remoteBranches, treeFor, withEngine, worktreeHead, writeFixture } from './helpers/dockerPathEngine.mjs';
 
 // ---------- Path separation: the Docker path is opt-in and fake-only ----------
 
@@ -99,7 +69,7 @@ test('no approval: the run executes in the container, then BLOCKS before any Git
     assert.ok(need);
     assert.equal(need.grade, 'RUNTIME_OBSERVED');
     assert.equal(need.data.action, 'COMMIT'); assert.equal(need.data.code, 'APPROVAL_MISSING');
-    assert.equal(need.data.diffDigest, expectedFixtureDigest(TASK_A)); assert.equal(need.data.baseSha, f.baseSha); assert.equal(need.data.branch, branchOf(TASK_A));
+    assert.equal(need.data.diffDigest, expectedFixtureDigest(TASK_A)); assert.equal(need.data.treeSha, treeFor(e, TASK_A, f.baseSha), 'the reviewer is told the exact Git tree to approve'); assert.equal(need.data.baseSha, f.baseSha); assert.equal(need.data.branch, branchOf(TASK_A));
     assert.deepEqual(need.data.files, [fixtureOf(TASK_A)]);
     assert.equal(worktreeHead(f, TASK_A), f.baseSha, 'no commit was made');
     assert.deepEqual(remoteBranches(f), [], 'nothing was pushed');
@@ -133,7 +103,7 @@ test('fully approved: three single-use approvals bound to this diff carry the ta
     assert.ok(order.indexOf('sandbox_destroyed') < order.indexOf('approval_consumed'), 'the container is gone before any Git write');
     for (const a of approvals) assert.ok(fs.existsSync(path.join(e.approvals.dir, `${a.approvalId}.consumed`)));
     // Replay: the same approvals can never authorize anything again.
-    const again = e.approvals.store.authorize({ taskId: TASK_A, action: 'COMMIT', expect: { diffDigest: expectedFixtureDigest(TASK_A), baseSha: f.baseSha, branch: branchOf(TASK_A) } });
+    const again = e.approvals.store.authorize({ taskId: TASK_A, action: 'COMMIT', expect: { diffDigest: expectedFixtureDigest(TASK_A), treeSha: treeFor(e, TASK_A, f.baseSha), baseSha: f.baseSha, branch: branchOf(TASK_A) } });
     assert.equal(again.code, 'APPROVAL_CONSUMED');
     await assert.rejects(e.orchestrator.execute(t.taskId), /Only DRAFT tasks can start/);
   });
@@ -151,11 +121,11 @@ test('approvals are bound to the task: approvals for another task, and replay on
 }));
 
 test('mismatched approvals (diff, base commit, branch) are refused and nothing is committed', async () => {
-  for (const [label, extra] of [['diff', { diffDigest: diffDigestOf([{ path: fixtureOf(TASK_A), sha256: sha256('other'), size: 5, exec: false }]) }], ['base', { baseSha: 'f'.repeat(40) }], ['branch', { branch: branchOf(TASK_A, 'different-name') }]]) {
+  for (const [label, extra] of [['tree', { treeSha: 'a'.repeat(40) }], ['diff', { diffDigest: diffDigestOf([{ path: fixtureOf(TASK_A), sha256: sha256('other'), size: 5, exec: false }]) }], ['base', { baseSha: 'f'.repeat(40) }], ['branch', { branch: branchOf(TASK_A, 'different-name') }]]) {
     await withFixture(async (f) => {
       f.task(TASK_A);
       await withEngine(f, {}, async (e) => {
-        grant(e, TASK_A, ['COMMIT'], { baseSha: f.baseSha, ...extra });
+        grant(e, TASK_A, ['COMMIT'], { baseSha: f.baseSha, treeSha: treeFor(e, TASK_A, f.baseSha), ...extra });
         const r = await e.orchestrator.execute(TASK_A);
         assert.equal(r.task.status, 'BLOCKED', label);
         assert.equal(f.records.listEvidence(TASK_A).find((x) => x.kind === 'approval_required').data.code, 'APPROVAL_MISMATCH', label);
@@ -218,7 +188,7 @@ test('the diff is re-bound at every step: content that differs from what was rev
   await withFixture(async (f) => {
     f.task(TASK_A);
     class Drifting extends WorktreeManager {
-      async commit(context, task, project) { const sha = await super.commit(context, task, project); fs.appendFileSync(path.join(context.worktreePath, fixtureOf(TASK_A)), 'tampered after commit\n'); return sha; }
+      async commitApproved(context, task, project, approved) { const sha = await super.commitApproved(context, task, project, approved); fs.appendFileSync(path.join(context.worktreePath, fixtureOf(TASK_A)), 'tampered after commit\n'); return sha; }
     }
     await withEngine(f, { worktreeManager: new Drifting({ allowLocalRemotes: true }) }, async (e) => {
       const made = grant(e, TASK_A, GATED_ACTIONS, { baseSha: f.baseSha });

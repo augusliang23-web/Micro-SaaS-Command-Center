@@ -105,17 +105,22 @@ export class Orchestrator {
         return {task,verificationPassed:false};
       }
       let approve = async () => {};
+      let approved = null;
       if (docker) {
         stage = 'approval';
         const manifest = computeDiffManifest({worktreePath:context.worktreePath,paths:await this.#worktrees.changedPaths(context),baseSha:context.baseSha});
-        const expect = {diffDigest:manifest.diffDigest,baseSha:context.baseSha,branch:context.branch};
+        const treeSha = await this.#worktrees.expectedTree(context,manifest);
+        const expect = {diffDigest:manifest.diffDigest,treeSha,baseSha:context.baseSha,branch:context.branch};
+        approved = {manifest,treeSha};
         approve = async action => {
-          // The bytes that leave the worktree must still be the bytes a person approved.
+          // The bytes AND the Git tree that leave the worktree must still be exactly what a person approved.
           const again = computeDiffManifest({worktreePath:context.worktreePath,paths:await this.#worktrees.changedPaths(context),baseSha:context.baseSha});
           if (again.diffDigest !== expect.diffDigest) throw new BoundaryError('Diff changed after it was reviewed');
+          if (await this.#worktrees.expectedTree(context,again) !== expect.treeSha) throw new BoundaryError('Git tree changed after it was reviewed');
+          if (action !== 'COMMIT') await this.#worktrees.verifyPublished(context,{treeSha:expect.treeSha});
           try {
             const approval = this.#gate.require({task,project,action,expect});
-            record('approval_consumed','RUNTIME_OBSERVED',{action,approvalId:approval.approvalId,diffDigest:expect.diffDigest,authenticity:approval.authenticity,approvedBy:approval.approvedBy});
+            record('approval_consumed','RUNTIME_OBSERVED',{action,approvalId:approval.approvalId,diffDigest:expect.diffDigest,treeSha:expect.treeSha,authenticity:approval.authenticity,approvedBy:approval.approvedBy});
           } catch (error) {
             if (error instanceof ApprovalError) record('approval_required','RUNTIME_OBSERVED',{action,code:error.approvalCode,...expect,files:manifest.files.map(f=>f.path)});
             throw error;
@@ -123,7 +128,7 @@ export class Orchestrator {
         };
       }
       stage = 'commit'; requireAction(task,project,'COMMIT'); await approve('COMMIT');
-      const commitSha = await this.#worktrees.commit(context,task,project);
+      const commitSha = docker ? await this.#worktrees.commitApproved(context,task,project,approved) : await this.#worktrees.commit(context,task,project);
       record('commit','LOCALLY_VERIFIED',{commitSha,branch:context.branch}); update({commitSha});
       stage = 'push'; requireAction(task,project,'PUSH_BRANCH'); await approve('PUSH_BRANCH');
       const remoteSha = await this.#worktrees.push(context,task,project);
