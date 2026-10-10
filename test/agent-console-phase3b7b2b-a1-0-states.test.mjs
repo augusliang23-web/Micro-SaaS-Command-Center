@@ -16,7 +16,16 @@ const test = guarded(nodeTest);
 const taskId = 'CC-20261003-12345678';
 const draft = (id = taskId) => ({ taskId: id, projectId: 'demo', workstream: 'general', title: 'Fix', goal: 'Fixture', agent: 'codex', executionProfile: 'STANDARD', risk: 'LOW', allowedActions: ['READ_REPO'], baseBranch: 'main', baseSha: null, status: 'DRAFT', createdAt: '2026-10-03T00:00:00.000Z', updatedAt: '2026-10-03T00:00:00.000Z', runIds: [], review: { decision: 'PENDING', decidedAt: null, note: null } });
 const scratch = (fn) => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-a10-states-')); try { return fn(dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); } };
-const drive = (store, id, to) => { for (const status of to) store.update(id, { status, ...(status === 'RUNNING' ? { baseSha: 'a'.repeat(40) } : {}) }); };
+// Only known task-domain refusals are assertion failures; OS/load/timeout failures retain their original classification.
+const expectedUpdate = (store, id, patch) => {
+  try { return store.update(id, patch); } catch (error) {
+    if (error?.code === undefined && /^(Illegal task transition:|Refusing to persist an invalid task:)/.test(error?.message ?? '')) {
+      assert.fail(`A valid task update was refused: ${error.message}`);
+    }
+    throw error;
+  }
+};
+const drive = (store, id, to) => { for (const status of to) expectedUpdate(store, id, { status, ...(status === 'RUNNING' ? { baseSha: 'a'.repeat(40) } : {}) }); };
 const file = (dir, id = taskId) => path.join(dir, `${id}.json`);
 
 // ------------------------------------------------------------ the canonical table
@@ -132,11 +141,11 @@ test('PUBLISHING cannot be COMPLETED on a bare status change; it needs a commit 
     assert.throws(() => store.update(taskId, patch), (e) => e instanceof Error, JSON.stringify(Object.keys(patch)));
     assert.deepEqual(fs.readFileSync(file(dir)), before, 'a refused completion leaves the task bytes unchanged');
   }
-  assert.equal(store.update(taskId, { status: 'COMPLETED', commitSha: 'b'.repeat(40), pr }).status, 'COMPLETED');
+  assert.equal(expectedUpdate(store, taskId, { status: 'COMPLETED', commitSha: 'b'.repeat(40), pr }).status, 'COMPLETED');
   // default V1 path, unchanged
   const other = 'CC-20261003-00000009';
   store.create(draft(other)); drive(store, other, ['QUEUED', 'STARTING', 'RUNNING', 'VERIFYING']);
-  assert.equal(store.update(other, { status: 'COMPLETED', completedAt: '2026-10-03T00:00:02.000Z' }).status, 'COMPLETED');
+  assert.equal(expectedUpdate(store, other, { status: 'COMPLETED', completedAt: '2026-10-03T00:00:02.000Z' }).status, 'COMPLETED');
 }));
 
 test('a refused or illegal update preserves the persisted bytes (new transitions included)', () => scratch((dir) => {

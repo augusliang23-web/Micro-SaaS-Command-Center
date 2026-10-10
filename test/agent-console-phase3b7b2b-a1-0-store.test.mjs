@@ -324,7 +324,7 @@ test('failed write before publication (file fsync fails): WRITE_FAILED and nothi
   } finally { dir.cleanup(); }
 });
 
-test('failed publication (link fails for a reason other than EEXIST): WRITE_FAILED; a failed CREATE releases its claim so the task is not blocked by a record that never existed', () => {
+test('failed publication (link fails for a reason other than EEXIST): WRITE_FAILED; a failed CREATE retains its immutable claim and blocks retries', () => {
   const dir = tempRoot();
   try {
     let armed = true;
@@ -717,16 +717,17 @@ function processClaim(root, n = 1, mode = 'barrier', revokeId = null) {
     import { pendingInput } from ${JSON.stringify(fixtureUrl)};
     const mode = ${JSON.stringify(mode)};
     const gate = (label = 'READY') => { process.stdout.write(label + '\\n'); const byte = Buffer.alloc(1); if (fs.readSync(0, byte, 0, 1, null) !== 1) process.exit(78); };
+    const beforePublish = (b) => {
+      if (String(b).endsWith('.open') || (mode === 'revoke' && String(b).endsWith('0000000002.json'))) {
+        if (mode === 'crash-before') process.exit(77);
+        if (mode === 'barrier' || mode === 'revoke') gate();
+      }
+    };
     const io = { ...fs, constants: fs.constants,
       readdirSync: (p) => { const names = fs.readdirSync(p); if (mode === 'barrier' && String(p).endsWith('/tasks')) gate('SNAPSHOT'); return names; },
       mkdirSync: (p, o) => { if (mode === 'crash-after' && String(p).includes('/records/PND-')) process.exit(77); return fs.mkdirSync(p, o); },
-      linkSync: (a, b) => {
-        if (String(b).endsWith('.open') || (mode === 'revoke' && String(b).endsWith('0000000002.json'))) {
-          if (mode === 'crash-before') process.exit(77);
-          if (mode === 'barrier' || mode === 'revoke') gate();
-        }
-        return fs.linkSync(a, b);
-      }
+      linkSync: (a, b) => { beforePublish(b); return fs.linkSync(a, b); },
+      renameSync: (a, b) => { beforePublish(b); return fs.renameSync(a, b); }
     };
     const s = new PendingActionStore({ root: ${JSON.stringify(root)}, fsImpl: io, now: () => '2026-01-01T00:00:30.000Z' });
     try {
