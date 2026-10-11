@@ -118,6 +118,11 @@ export class TaskStore {
     if (!current) throw new Error('Task not found');
     const next = { ...current, ...patch, updatedAt: patch.updatedAt ?? this.#now() };
     assertTaskTransition(current.status, next.status);
+    // A1-0: a publishing task is never COMPLETED on a status change alone; it must carry the commit and a verified PR record.
+    // (The authoritative evidence check belongs to the later continuation phase; this only refuses the bare transition.)
+    if (current.status === 'PUBLISHING' && next.status === 'COMPLETED' && !(typeof next.commitSha === 'string' && next.pr && typeof next.pr.verifiedAt === 'string')) {
+      throw new Error('A PUBLISHING task cannot complete without a commit and a verified PR record');
+    }
     this.#write(next);
     return this.#read(taskId);
   }

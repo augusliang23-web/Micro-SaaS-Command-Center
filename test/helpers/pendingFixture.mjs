@@ -1,0 +1,99 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import assert from 'node:assert/strict';
+
+import { PendingActionError } from '../../server/execution/continuation/pendingActionTypes.mjs';
+import { PendingActionStore } from '../../server/execution/continuation/pendingActionStore.mjs';
+import { diffDigestOf } from '../../server/execution/approvalGate.mjs';
+
+// Offline fixtures for the Phase 3B7B2B-A1-0 pending-action foundation. Nothing here touches Docker, Git remotes or an approval.
+
+export const h = (ch, n = 40) => ch.repeat(n);
+export const taskId = (n = 1) => `CC-20260101-${n.toString(16).padStart(8, '0')}`;
+export const runId = (n = 1) => `RUN-20260101-${n.toString(16).padStart(8, '0')}`;
+export const branchOf = (n = 1, slug = 'fix') => `agent/${taskId(n)}-${slug}`;
+export const digest = (s) => createHash('sha256').update(s).digest('hex');
+export const evidenceId = (ch = 'e') => `EV-${ch.repeat(32)}`;
+
+export function manifestOf(n = 1) {
+  const files = [{ path: `agent-console-fixture/${taskId(n)}.txt`, sha256: digest(`content-${n}`), size: 12, exec: false }];
+  return { manifest: { files }, diffDigest: diffDigestOf(files) };
+}
+
+export const NOT_JOURNALED = Object.freeze({ state: 'NOT_JOURNALED', stateRootId: null, executionGeneration: null, runId: null });
+
+/** A valid server-computed create input. `over` replaces whole fields. */
+export function pendingInput(n = 1, over = {}) {
+  const { manifest, diffDigest } = manifestOf(n);
+  return {
+    taskId: taskId(n), projectId: 'demo', runId: runId(n), executionIdentity: { ...NOT_JOURNALED }, branch: branchOf(n),
+    baseSha: h('a'), treeSha: h('b'), diffDigest, manifest,
+    verification: { evidenceId: evidenceId(), kind: 'command_result', grade: 'LOCALLY_VERIFIED', passed: true },
+    guardSnapshot: { sourceHead: h('c'), sourceStatusDigest: digest('s'), sourceFingerprint: digest('f'), remoteDigest: digest('r'), remoteBeforeDigest: digest('rb'), branchesBeforeDigest: digest('b') },
+    ...over,
+  };
+}
+
+export function clock(start = Date.UTC(2026, 0, 1, 0, 0, 0, 0)) {
+  let n = 0;
+  return () => new Date(start + n++ * 10).toISOString();
+}
+
+export function tempRoot() {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cc-pending-')));
+  return { base, root: path.join(base, 'pending'), cleanup: () => fs.rmSync(base, { recursive: true, force: true }) };
+}
+
+/** Deterministic ids: PND-<counter hex padded>; still validated by the store. */
+export function counterHex() {
+  let n = 0;
+  return (bytes) => { n += 1; return n.toString(16).padStart(bytes * 2, '0'); };
+}
+
+export function freshStore(overrides = {}) {
+  const dir = tempRoot();
+  const store = new PendingActionStore({ root: dir.root, now: clock(), ...overrides });
+  return { ...dir, store };
+}
+
+export const revisionFile = (root, id, rev) => path.join(root, 'records', id, `${String(rev).padStart(10, '0')}.json`);
+export const readRev = (root, id, rev) => JSON.parse(fs.readFileSync(revisionFile(root, id, rev), 'utf8'));
+
+/** Walk COMMIT -> PUSH_BRANCH -> CREATE_PR step by step. Returns the final record. */
+export function finishAll(store, record) {
+  let r = record;
+  for (const action of ['COMMIT', 'PUSH_BRANCH', 'CREATE_PR']) {
+    for (const to of ['CLAIMED', 'CONSUMED', 'DONE']) r = store.advanceStep(r.pendingId, r.revision, { action, to, ...(action === 'COMMIT' && to === 'DONE' ? { commitSha: h('d') } : {}) });
+  }
+  return r;
+}
+
+/**
+ * Wraps node:test's `test` so that an UNEXPECTED domain exception escaping a test body is reported as an assertion failure
+ * ("the code under test threw where the test expected a result"). Import-time, syntax, OS/infrastructure and timeout failures are NOT converted.
+ */
+export const guarded = (nodeTest) => (name, a, b) => {
+  const [opts, fn] = typeof a === 'function' ? [undefined, a] : [a, b];
+  const run = async (t) => {
+    try { return await fn(t); } catch (error) {
+      if (!(error instanceof PendingActionError || error instanceof TypeError || error instanceof RangeError)) throw error;
+      throw new assert.AssertionError({ message: `Unexpected ${error?.name ?? 'error'}: ${String(error?.message ?? error).slice(0, 300)}`, actual: error?.code ?? error?.name, expected: 'no unexpected exception', operator: 'unexpected-exception' });
+    }
+  };
+  return opts ? nodeTest(name, opts, run) : nodeTest(name, run);
+};
+
+/** Exact serialized size using valid 512-character paths, replacing ASCII with two-byte UTF-8 characters. */
+export function sizedInput(bytes = 138114) {
+  let extra = bytes - 138114;
+  assert.ok(extra >= 0 && extra <= 200 * 509 * 2);
+  const files = Array.from({ length: 200 }, (_, i) => {
+    const three = Math.min(Math.floor(extra / 2), 509); extra -= three * 2;
+    const two = three < 509 && extra > 0 ? 1 : 0; extra -= two;
+    return { path: String(i).padStart(3, '0') + '界'.repeat(three) + 'é'.repeat(two) + 'x'.repeat(509 - three - two), sha256: h('a', 64), size: 1048576, exec: false };
+  });
+  // For larger sizes use three-byte characters instead (keeps path character limits intact).
+  return pendingInput(1, { manifest: { files }, diffDigest: diffDigestOf(files) });
+}

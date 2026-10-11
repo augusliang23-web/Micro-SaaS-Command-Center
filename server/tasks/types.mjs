@@ -19,6 +19,9 @@ export const TASK_STATUSES = Object.freeze([
   'STARTING',
   'RUNNING',
   'VERIFYING',
+  // Phase 3B7B2B-A1-0: continuation states. AWAITING_APPROVAL implies no live execution and survives a restart; PUBLISHING is active.
+  'AWAITING_APPROVAL',
+  'PUBLISHING',
   'COMPLETED',
   'FAILED',
   'CANCELLED',
@@ -27,7 +30,7 @@ export const TASK_STATUSES = Object.freeze([
 ]);
 // States that claim an execution is live. Nothing persisted on disk can prove
 // that after a restart, so these load as UNKNOWN.
-export const ACTIVE_TASK_STATUSES = Object.freeze(['QUEUED', 'STARTING', 'RUNNING', 'VERIFYING']);
+export const ACTIVE_TASK_STATUSES = Object.freeze(['QUEUED', 'STARTING', 'RUNNING', 'VERIFYING', 'PUBLISHING']);
 export const REVIEW_DECISIONS = Object.freeze(['PENDING', 'APPROVED', 'CHANGES_REQUIRED', 'HOLD']);
 
 export const RUN_STATUSES = Object.freeze(['STARTING', 'RUNNING', 'FINISHED', 'FAILED', 'CANCELLED', 'UNKNOWN']);
