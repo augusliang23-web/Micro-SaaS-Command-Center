@@ -1,5 +1,5 @@
 // Local presentation fixtures only. No API, persisted approval or live telemetry authority.
-export type Page = 'overview' | 'map' | 'command' | 'cost';
+export type Page = 'overview' | 'workspace' | 'cost';
 export type DemoProject = { name: string; description: string; milestone: string; blocker: string; next: string };
 export type DemoTask = {
   id: string; title: string; reference: string; branch: string; description: string;
@@ -130,8 +130,8 @@ export const KNOWN_TASKS: DemoTask[] = [
     }
   }
 ];
-export function tasksFor(project: string): DemoTask[] {
-  if (project === 'Micro-SaaS Command Center') return [...KNOWN_TASKS, ...parallel];
+export function tasksFor(project: string, allowKnownTopology = true): DemoTask[] {
+  if (allowKnownTopology && project === 'Micro-SaaS Command Center') return [...KNOWN_TASKS, ...parallel];
   return [
     { id: 'scope', title: `${project} · 需求確認`, reference: 'DEMO-SCOPE-01', branch: 'demo/discovery', description: '本地需求探索範例；尚未查詢真實任務或分支。', dependencies: ['main'], lane: 'foundation', x: 220, source: 'demo', status: '待確認（示範）' },
     ...parallel,

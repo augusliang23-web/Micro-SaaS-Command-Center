@@ -1,8 +1,8 @@
-# Track B B0 / B0.1 — Interactive Command Center UI
+# Track B B0 / B0.1 / B0.2 — Interactive Command Center UI
 
 Frontend prototype only. `REAL_AGENT_EXECUTION = NOT_AUTHORIZED`.
 
-**Current evidence: B0.1, authorized by [Issue #31](https://github.com/augusliang23-web/Micro-SaaS-Command-Center/issues/31).** B0 sections below are historical records; the four images are updated B0.1 captures. Issue #31 does not retroactively approve the original B0 process. Human UX acceptance and merge remain pending.
+**Current evidence: B0.2, authorized by [Issue #32](https://github.com/augusliang23-web/Micro-SaaS-Command-Center/issues/32).** B0 and B0.1 sections below preserve historical behavior/results; they are superseded by the B0.2 section at the end. The five images now show B0.2. B0.1 technical review passed but human UX required revision. Issue #32 does not retroactively approve the original B0 process. Human UX acceptance and merge remain pending.
 
 Base: `25692a9a1fdedaf82910630fb767589aa5dccddf`.
 Branch: `feat/track-b-uiux-prototype`.
@@ -126,3 +126,83 @@ E: Changing project after a plan removes the old preview; editing the prompt als
 - [ ] Confirm the layout, typography and keyboard focus feel appropriate before accepting B0.1.
 
 Remaining limitations: exact long PR titles may require graph panning; mobile details are inline below the graph. No formal assistive-technology/WCAG audit or human UX acceptance is claimed. Source/status snapshots and costs are not live; local plans are not AI inference; backend/agent/billing integration remains unauthorized. This refinement does not resolve or retroactively validate the original B0 governance gap.
+
+
+## B0.2 — Project workspaces and inline node commands (2026-10-11)
+
+Starting HEAD: `0e7c4820a191aeebe7ae08d6bde9b8c12c65787b`. Worktree: `/Users/augusliang/Developer/worktrees/command-center-track-b-uiux`, branch `feat/track-b-uiux-prototype`. Before edits, local/remote HEAD matched and the worktree was clean. Issue #32 was read in full and verified OPEN with `model:sol`, Medium effort, `risk:medium`, `bridge:ready` and its exact file allowlist. PR #30 was OPEN / Draft against main. No `bridge:approved` was added. This is B0.2 implementation authorization, not human UX acceptance, merge authorization or original B0 retroapproval.
+
+### Current experience and trust boundaries
+
+- Global navigation is now only **專案總覽 | Cost Guard**. Each project card has **進入工作區**; its map, task details, AI instructions and Prompt history stay within that project workspace. **返回專案總覽** is explicit. Existing registered portfolio querying/provenance/UNKNOWN behavior remains in the original view.
+- The dated Command Center topology from B0.1 remains main → #25 → #26 → #27 → #28 and independently main → #30. Other projects show their own DEMO-ONLY examples and unverified-topology wording, never this PR chain. No live status or agent activity is fabricated.
+- Selecting a node opens adjacent **任務資訊 / AI 指令 / Prompt 紀錄** tabs. On narrower screens the panel stacks below the internally scrolling graph. Context includes project, repository if known, task/ref, branch, dependencies, source, snapshot time and missing information. Copying context is a manual Control Plane handoff only.
+- **輸入新需求** and **貼入 Control Plane Prompt** retain independent drafts. Full imported text is `USER_PASTED_UNVERIFIED`, with supplied Agent/Model marked unverified. It grants no execution or approval authority. The local planning preview exists only for the plain request mode and is fixed-rule DEMO output; changing content/mode invalidates it.
+- Maximum size per input is **64 KiB UTF-8 (65,536 bytes)**. Oversized text remains visible and intact with an explicit error; save/copy/planning actions are disabled until the user reduces it. There is no silent truncation. Paste stores raw clipboard text, including CRLF; subsequent edits splice only the changed display range into the raw draft, preserving untouched original line endings. Save/history copy use that raw draft.
+- Clipboard writes occur only from explicit copy clicks. No automatic clipboard read or provider handoff exists. Failures are visible and leave manual selection available. The browser's own permission/availability still applies.
+- Multiple immutable Prompt entries are isolated by registered project identity/repository (or demo project identity) plus node ID. Each shows sequence, source, supplied Agent/Model, created-in-session time, Draft/Imported state, content and copy. Drafts/history/candidates use React memory only: **本次工作階段暫存，重新整理後清除。** They are not a durable audit trail and are never written to browser storage, backend, GitHub or external services.
+- **+ 新增開發任務** works without selecting a PR. It creates only a LOCAL DEMO candidate with uncreated branch/unknown external identity and opens its prefilled inline editor. No issue, branch, PR, approval or agent run is created.
+- Cost Guard code and risk semantics are unchanged. USD samples, separate reads/time units, DEMO source dates, missing != zero and budget alert != spending hard cap remain. No billing integration or standalone Cost Guard engine was added.
+
+### Newly executed local validation — not CI
+
+| Gate | B0.2 result |
+| --- | --- |
+| `npm run lint` | PASS |
+| `npm run test:ui` | **54/54 PASS**, 7 files, 0 failed |
+| `npm run build` | PASS; existing server.ts:24 CJS/import.meta warning remains |
+| `git diff --check` | PASS |
+| Independent read-only frontend review | CRLF-edit fidelity issue found, reproduced by a failing test, corrected, then rechecked with no remaining concrete blocker |
+| Actual workflows A–F | Observed PASS; not human acceptance |
+| Responsive matrix | 1366×768 / 768×1024 / 390×844 × overview / workspace / inline AI / history / cost = **15/15**, document scroll width equals viewport |
+| Actual clipboard | Prompt copied byte-for-byte against known synthetic payload; context copy includes PR30; failures separately covered by UI tests |
+| Actual keyboard | ArrowRight moves tab focus/selection from task information to AI instructions; graph remains internally keyboard-focusable |
+| Actual full reload | Previously saved PR30 Prompt entries cleared |
+
+The B0.1 baseline was 52/52. All 25 tests outside Prototype.test.tsx remain unchanged. Obsolete four-global-page navigation expectations were replaced by the approved workspace flows; relevant topology, provenance, unavailable cost, non-execution, draft and registered-view regressions remain covered. Prototype.test.tsx now has 29 focused tests, including independent modes, two histories/node-project isolation, empty/oversized input, explicit copy/failure, CRLF paste/edit/save/copy, local candidates and no network/storage execution. Do not describe this as 52 unchanged tests plus additions.
+
+Build and legacy test diagnostics are the same limitations recorded above. Backend production behavior was not executed or changed. No unrelated baseline fixes or dependency installation occurred.
+
+### Actual browser workflows and captures
+
+The existing Vite listener on port 5173 was independently confirmed to run from this worktree. Browser verification used `http://127.0.0.1:5173/?mode=demo` on macOS; no unrelated process was stopped. Temporary viewport overrides were reset afterwards.
+
+A. Overview → Command Center workspace → PR28 → AI instructions → Chinese requirement → inline DEMO planning preview. Execute remained disabled.
+
+B. PR30 → pasted mode → complete synthetic Control Plane prompt → unverified source → explicit copy. UI success and exact known clipboard payload were observed; no execution.
+
+C. Two different imported versions saved to PR30 → both entries visible. PR28 history empty; returning to PR30 retained exactly two entries.
+
+D. SwipeRight workspace contained only its own DEMO nodes and no Command Center PR25–30.
+
+E. Without an existing selected PR, a Chinese requirement created a SwipeRight LOCAL DEMO candidate and opened its prefilled inline editor.
+
+F. Global Cost Guard → PM Dashboard detail → Overview retained PM Dashboard context. Missing SwipeRight amounts remained unavailable and hard cap remained unconfigured.
+
+All five states were measured at all three requested sizes. Actual desktop, tablet-history and mobile-editor screenshots were visually inspected. The graph deliberately scrolls internally; no page-wide clipping rule hides overflow. Exact long task titles wrap or require graph panning. This is not a formal WCAG/assistive-technology audit.
+
+Current captures (some intentionally scrolled to expose controls):
+
+- [overview.jpg](overview.jpg): desktop cards with workspace actions and two-item navigation.
+- [development-map.jpg](development-map.jpg): desktop workspace, bounded topology notice and adjacent selected PR28 details.
+- [ai-command.jpg](ai-command.jpg): desktop PR28 graph and inline Chinese instruction editor.
+- [node-command.jpg](node-command.jpg): actual 390×844 mobile PR30 pasted-prompt panel.
+- [cost-guard.jpg](cost-guard.jpg): PM Dashboard detail, separate limits and explicit unconfigured hard cap.
+
+![Mobile node command](node-command.jpg)
+
+### Review boundary and remaining limitations
+
+Only Issue32-allowlisted frontend/test/evidence files changed. App.tsx, CostGuard.tsx, dependency manifests, AGENTS.md, backend, Orchestrator, Run API, auth/provider, billing configuration and Track A implementation remain unchanged. Original main's HEAD/status and eight dirty-file hashes remain equal to the preflight snapshot. Track A PR25–28 heads are unchanged. Only the existing PR30 branch is the delivery target; Draft and Issue32 bridge:ready remain.
+
+Human UX acceptance is still pending. Prompts/candidates vanish on refresh, preview plans are deterministic examples, supplied Agent/Model are not verified, topology is dated/non-live, and costs are fictional samples. There is no automatic ChatGPT sync, durable prompt audit, task execution, provider integration, backend/billing integration, merge or deployment. B1/B2 has not started.
+
+Pending human checks:
+
+- [ ] Find project workspace and inline node instructions without guidance.
+- [ ] Paste your complete Control Plane prompt and confirm the handoff is comfortable.
+- [ ] Switch nodes/projects and confirm the history/context separation is clear.
+- [ ] Review the tablet/mobile stacked panel and internally scrolling map.
+- [ ] Confirm session-only retention and unverified-import wording are understood.
+
+**READY_FOR_REVIEW. REAL_AGENT_EXECUTION = NOT_AUTHORIZED.**

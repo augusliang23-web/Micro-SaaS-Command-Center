@@ -1,6 +1,6 @@
-import { GitBranch, ArrowRight, Info, X } from 'lucide-react';
-import { useLayoutEffect, useRef } from 'react';
-import { DemoTask, SNAPSHOT, TOPOLOGY_DATE } from './data';
+import { GitBranch, Info } from 'lucide-react';
+import { useLayoutEffect, useRef, ReactNode } from 'react';
+import { DemoTask, TOPOLOGY_DATE } from './data';
 const laneConfig = {
   foundation: { title: 'Track A · stacked PRs', color: '#0f766e' },
   'track-b': { title: 'Track B · 基於 main 的獨立分支', color: '#2563eb' },
@@ -8,7 +8,7 @@ const laneConfig = {
   cost: { title: 'DEMO-ONLY · 成本探索', color: '#d97706' },
 };
 const curve = (x1:number,y1:number,x2:number,y2:number) => `M ${x1} ${y1} C ${x1+(x2-x1)/2} ${y1}, ${x1+(x2-x1)/2} ${y2}, ${x2} ${y2}`;
-export function DevelopmentMap({ tasks, selected, select, handoff }: { tasks: DemoTask[]; selected: string; select:(id:string)=>void; handoff:()=>void }) {
+export function DevelopmentMap({ tasks, selected, select, panel }: { tasks: DemoTask[]; selected: string; select:(id:string)=>void; panel?:ReactNode }) {
   const task=tasks.find(t=>t.id===selected); const viewport=useRef<HTMLDivElement>(null);
   const lanes=(Object.keys(laneConfig) as Array<keyof typeof laneConfig>).filter(id=>tasks.some(t=>t.lane===id));
   const y=(lane:DemoTask['lane'])=>110+lanes.indexOf(lane)*220;
@@ -40,12 +40,8 @@ export function DevelopmentMap({ tasks, selected, select, handoff }: { tasks: De
           </button>)}
         </div></div><div className="p-graph-footer"><span>實線：base/head 依賴 · 沒有合併紀錄</span><span>GitHub 快照 ≠ 即時狀態 · DEMO-ONLY ≠ 既有 PR</span></div>
       </section>
-      {task&&<aside className="p-detail" role="region" aria-label="任務詳細"><div className="p-section-heading"><span className="p-eyebrow">TASK CONTEXT</span><button className="p-icon-button" aria-label="關閉任務詳細" onClick={()=>select('')}><X size={18}/></button></div>
-        <h2>{task.title}</h2><span className="p-pill">{task.reference} · {task.source==='demo'?'DEMO-ONLY':'歷史參考 · 未即時查詢'}</span><p>{task.description}</p>
-        <dl className="p-info-list"><div><dt>狀態</dt><dd>{task.status}</dd></div><div><dt>分支</dt><dd className="p-code">{task.branch}</dd></div><div><dt>Agent / Model</dt><dd>Not available</dd></div><div><dt>依賴</dt><dd>{task.dependencies.map(id=>tasks.find(t=>t.id===id)?.reference??id).join('、')}</dd></div><div><dt>阻塞</dt><dd>人工 UX 驗收仍待完成；未授權執行</dd></div><div><dt>最後更新</dt><dd>{task.provenance?`讀回 ${TOPOLOGY_DATE}；不是 PR 的即時更新時間`:SNAPSHOT}</dd></div><div><dt>下一步</dt><dd>整理需求與驗收條件，提交規劃預覽</dd></div></dl>
-        {task.provenance&&<details className="p-provenance"><summary>快照來源與精確版本</summary><p><a href={task.provenance.url} target="_blank" rel="noreferrer">{task.provenance.url}</a></p><p>讀回：{task.provenance.observedAt}</p><p>當時狀態：{task.provenance.observedState} · 未即時查詢</p><p>Base：{task.provenance.baseBranch}<br/>{task.provenance.baseSha}</p><p>Head：{task.provenance.headSha}</p></details>}
-        <button className="p-primary" onClick={handoff}>交給 AI Command <ArrowRight size={16}/></button><small className="p-source">只傳遞本地 context，不建立執行。</small>
-      </aside>}
+      {task && panel}
+
     </div>
   </>;
 }

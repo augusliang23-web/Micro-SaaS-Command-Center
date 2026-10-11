@@ -1,4 +1,4 @@
-import { ArrowUpRight, GitBranch, MessageSquare, Wallet, Clock3 } from 'lucide-react';
+import { ArrowUpRight, GitBranch, Wallet, Clock3 } from 'lucide-react';
 import { PROJECTS, SNAPSHOT, Page, costFor, headroom, money, tasksFor } from './data';
 export function Overview({ selected, navigate }: { selected: string; navigate: (page: Page, project: string) => void }) {
   return <>
@@ -18,7 +18,7 @@ export function Overview({ selected, navigate }: { selected: string; navigate: (
           <dl className="p-info-list"><div><dt>開發狀態</dt><dd>等待確認（示範）</dd></div><div><dt>里程碑</dt><dd>{p.milestone}</dd></div><div><dt>任務</dt><dd>{tasksFor(p.name).length} 個任務範例</dd></div><div><dt>阻塞</dt><dd>{p.blocker}</dd></div></dl>
           <div className="p-next"><ArrowUpRight size={15} /><div><span>下一步</span><p>{p.next}</p></div></div>
           <button className="p-cost-link" onClick={() => navigate('cost', p.name)} aria-label="查看 Cost Guard"><Wallet size={15} /><span>成本樣本 · {money(cost.usd)} USD</span><span>{remaining === null ? 'Not enough data' : `預算餘裕 ${remaining.toFixed(0)}%`}</span></button>
-          <div className="p-card-actions"><button onClick={() => navigate('map', p.name)} aria-label="開啟 Development Map"><GitBranch size={15} /> 開發圖</button><button onClick={() => navigate('command', p.name)} aria-label="開啟 AI Command"><MessageSquare size={15} /> 整理指令</button></div>
+          <div className="p-card-actions"><button onClick={() => navigate('workspace', p.name)}><GitBranch size={15} /> 進入工作區</button></div>
           <small className="p-source">來源：本地 DEMO fixture · 非即時狀態<br />最後檢視：{SNAPSHOT}</small>
         </article>;
       })}
