@@ -31,8 +31,8 @@ async function copyText(text:string) {
   if(!navigator.clipboard?.writeText)throw Error('Clipboard unavailable');
   await navigator.clipboard.writeText(text);
 }
-export function NodeCommandPanel({project,repository,task,tasks,draft,change,entries,save,initialTab='任務資訊'}:{
-  project:string;repository?:string;task:DemoTask;tasks:DemoTask[];draft:PromptDraft;
+export function NodeCommandPanel({workspaceSource,workspaceId,project,repository,task,tasks,draft,change,entries,save,initialTab='任務資訊'}:{
+  workspaceSource:'REGISTERED'|'DEMO';workspaceId:string;project:string;repository?:string;task:DemoTask;tasks:DemoTask[];draft:PromptDraft;
   change:(draft:PromptDraft)=>void;entries:PromptEntry[];save:(entry:Omit<PromptEntry,'id'>)=>void;
   initialTab?:'任務資訊'|'AI 指令';
 }) {
@@ -45,7 +45,7 @@ export function NodeCommandPanel({project,repository,task,tasks,draft,change,ent
   useEffect(()=>{setPlan(null);setFeedback(null);},[draft.request,draft.pasted,draft.mode]);
   const copy=async(text:string)=>{try{await copyText(text);setFeedback({error:false,text:'已複製 Prompt'});}catch{setFeedback({error:true,text:'複製失敗，請手動選取原文複製。'});}};
   const context=()=>[
-    `Project: ${project}`,`Repository: ${repository ?? 'Not available'}`,`Task: ${task.title}`,`PR/Task: ${task.reference}`,`Branch: ${task.branch}`,
+    `Workspace source: ${workspaceSource}`,`Project ID: ${workspaceId}`,`Project: ${project}`,`Repository: ${repository ?? 'Not available'}`,`Task: ${task.title}`,`PR/Task: ${task.reference}`,`Branch: ${task.branch}`,
     `Dependencies: ${task.dependencies.map(id=>tasks.find(t=>t.id===id)?.reference??id).join(', ')}`,
     `Source: ${task.source==='historical'?'GitHub bounded snapshot':'LOCAL DEMO'}`,`Status: ${task.status}`,
     `Last checked: ${task.provenance?.observedAt ?? '本次工作階段 / DEMO'}`,

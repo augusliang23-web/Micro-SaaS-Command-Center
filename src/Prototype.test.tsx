@@ -2,6 +2,7 @@ import {cleanup,fireEvent,render,screen,within,waitFor} from '@testing-library/r
 import userEvent from '@testing-library/user-event';
 import {afterEach,beforeEach,expect,test,vi} from 'vitest';
 import App from './App';
+import {PrototypeShell} from './prototype/PrototypeShell';
 import {initialProjects,initialAttentionItems,initialNextBestAction,initialExecutionSnapshot} from './mockData';
 import {githubSnapshot} from './test/githubSnapshots.mjs';
 
@@ -154,4 +155,49 @@ test('local candidates remain private to their project and survive in-session na
 test('editing after CRLF paste preserves every untouched original line ending',async()=>{
  const write=clipboard();render(<App/>);workspace();node();tab();fireEvent.click(screen.getByRole('button',{name:'貼入 Control Plane Prompt'}));const raw='Agent: Codex\r\nModel: GPT-6 Sol\r\n\r\n需求 A  \r\n';
  fireEvent.paste(screen.getByLabelText('你的指令'),{clipboardData:{getData:()=>raw}});fireEvent.change(screen.getByLabelText('你的指令'),{target:{value:raw.replace(/\r\n/g,'\n')+'追加說明'}});save();tab('Prompt 紀錄');fireEvent.click(screen.getByRole('button',{name:'複製 Prompt'}));await waitFor(()=>expect(write).toHaveBeenCalledWith(raw+'追加說明'));
+});
+
+
+const enterRegistered=()=>fireEvent.click(screen.getByRole('button',{name:'進入專案工作區'}));
+const candidate=(title:string)=>{fireEvent.click(screen.getByRole('button',{name:'+ 新增開發任務'}));fireEvent.change(screen.getByLabelText('任務名稱'),{target:{value:title}});fireEvent.change(screen.getByLabelText('新任務需求'),{target:{value:'候選私有需求'}});fireEvent.click(screen.getByRole('button',{name:'建立本地 DEMO 候選'}));};
+
+test('P2 regression: same-name demo cannot inherit registered repository, drafts, history or candidates',async()=>{
+ window.history.replaceState(null,'','/');const real={...initialProjects[0],id:'registered-pm',name:'PM Dashboard',repository:'owner/private-pm'};
+ vi.spyOn(globalThis,'fetch').mockImplementation(async input=>({ok:true,json:async()=>String(input)==='/api/state'?{projects:[real],attentionItems:initialAttentionItems,nba:initialNextBestAction,snapshot:initialExecutionSnapshot}:githubSnapshot({state:'none'})}) as Response);
+ const write=clipboard();render(<App/>);await screen.findByRole('article',{name:'PM Dashboard'});fireEvent.click(within(screen.getByRole('article',{name:'PM Dashboard'})).getByRole('button',{name:'查看專案'}));fireEvent.click(screen.getByRole('button',{name:'關閉專案詳情'}));enterRegistered();node(/UI\/UX Development/);tab();input('REGISTERED UNIQUE HISTORY');save();input('REGISTERED UNSAVED DRAFT');candidate('REGISTERED CANDIDATE');
+ fireEvent.click(screen.getByRole('button',{name:'返回已登記專案'}));fireEvent.click(screen.getByRole('button',{name:'體驗 DEMO 專案'}));workspace('PM Dashboard');
+ expect(screen.queryByText(/owner\/private-pm/)).not.toBeInTheDocument();expect(screen.getByText('DEMO PROJECT')).toBeVisible();expect(screen.queryByRole('region',{name:'節點指令面板'})).not.toBeInTheDocument();expect(screen.queryByRole('button',{name:/REGISTERED CANDIDATE/})).not.toBeInTheDocument();
+ node(/UI\/UX Development/);tab();expect(screen.getByLabelText('你的指令')).toHaveValue('');tab('Prompt 紀錄');expect(screen.queryByRole('article',{name:'Prompt 1'})).not.toBeInTheDocument();tab('任務資訊');fireEvent.click(screen.getByRole('button',{name:'複製專案／節點上下文'}));await waitFor(()=>expect(write).toHaveBeenCalled());expect(write.mock.calls.at(-1)?.[0]).not.toContain('owner/private-pm');expect(write.mock.calls.at(-1)?.[0]).toContain('Workspace source: DEMO');
+ tab();input('DEMO UNIQUE HISTORY');save();fireEvent.click(screen.getByRole('button',{name:'返回已登記專案'}));enterRegistered();expect(screen.getByText('REGISTERED PROJECT')).toBeVisible();node(/UI\/UX Development/);tab('Prompt 紀錄');expect(screen.getByLabelText('Prompt 1 原文')).toHaveValue('REGISTERED UNIQUE HISTORY');expect(screen.queryByText('DEMO UNIQUE HISTORY')).not.toBeInTheDocument();tab();expect(screen.getByLabelText('你的指令')).toHaveValue('REGISTERED UNSAVED DRAFT');expect(screen.getByRole('button',{name:/REGISTERED CANDIDATE/})).toBeVisible();tab('任務資訊');fireEvent.click(screen.getByRole('button',{name:'複製專案／節點上下文'}));await waitFor(()=>expect(write.mock.calls.at(-1)?.[0]).toContain('owner/private-pm'));expect(write.mock.calls.at(-1)?.[0]).toContain('registered-pm');
+});
+
+function identityFixture(projects:Array<{id?:string;name:string;repository:string}>) {
+ window.history.replaceState(null,'','/');
+ render(<PrototypeShell registeredOverview={remember=><>{projects.map((p,i)=><button key={i} onClick={()=>remember(p)}>選取登記專案 {i+1}</button>)}</>}/>);
+}
+const registered=(index:number)=>{if(screen.queryByRole('button',{name:'返回已登記專案'}))fireEvent.click(screen.getByRole('button',{name:'返回已登記專案'}));fireEvent.click(screen.getByRole('button',{name:`選取登記專案 ${index}`}));enterRegistered();};
+
+test.each([
+ ['different IDs, same repository','registered-pm-2','owner/private-pm'],
+ ['same name, different repositories','registered-pm-2','owner/other-pm'],
+ ['same ID, changed repository','registered-pm','owner/other-pm'],
+])('registered identities separate same node IDs and restore histories: %s',(_label,id,repository)=>{
+ identityFixture([{id:'registered-pm',name:'PM Dashboard',repository:'owner/private-pm'},{id,name:'PM Dashboard',repository}]);registered(1);node(/UI\/UX Development/);tab();input('FIRST PRIVATE');save();fireEvent.click(screen.getByRole('button',{name:'產生示範規劃'}));registered(2);expect(screen.queryByRole('region',{name:'節點指令面板'})).not.toBeInTheDocument();node(/UI\/UX Development/);tab();expect(screen.getByLabelText('你的指令')).toHaveValue('');expect(screen.queryByText('DEMO PLANNING PREVIEW')).not.toBeInTheDocument();input('SECOND PRIVATE');save();registered(1);node(/UI\/UX Development/);tab('Prompt 紀錄');expect(screen.getByLabelText('Prompt 1 原文')).toHaveValue('FIRST PRIVATE');registered(2);node(/UI\/UX Development/);tab('Prompt 紀錄');expect(screen.getByLabelText('Prompt 1 原文')).toHaveValue('SECOND PRIVATE');expect(screen.getByRole('button',{name:'Execute with Agent'})).toBeDisabled();
+});
+
+test('same-name DEMO dropdown switches identity and invalidates selection and plan',()=>{
+ identityFixture([{id:'registered-pm',name:'PM Dashboard',repository:'owner/private-pm'}]);registered(1);node(/UI\/UX Development/);tab();input('REGISTERED');save();fireEvent.click(screen.getByRole('button',{name:'產生示範規劃'}));fireEvent.change(screen.getByLabelText('目前專案'),{target:{value:'PM Dashboard'}});expect(screen.queryByRole('region',{name:'節點指令面板'})).not.toBeInTheDocument();expect(screen.queryByText(/owner\/private-pm/)).not.toBeInTheDocument();expect(screen.getByText('DEMO PROJECT')).toBeVisible();node(/UI\/UX Development/);tab();expect(screen.getByLabelText('你的指令')).toHaveValue('');expect(screen.queryByText('DEMO PLANNING PREVIEW')).not.toBeInTheDocument();
+});
+
+test('missing registered repository is unavailable, never inferred from Command Center name',async()=>{
+ const write=clipboard();identityFixture([{id:'known-id',name:'Micro-SaaS Command Center',repository:''}]);registered(1);expect(screen.queryByRole('button',{name:/PR #28/})).not.toBeInTheDocument();node(/UI\/UX Development/);fireEvent.click(screen.getByRole('button',{name:'複製專案／節點上下文'}));await waitFor(()=>expect(write).toHaveBeenCalled());expect(write.mock.calls[0][0]).toContain('Repository: Not available');expect(write.mock.calls[0][0]).not.toContain('augusliang23-web/Micro-SaaS-Command-Center');
+});
+
+test('missing registered project ID blocks prompt state instead of using name or repository as identity',()=>{
+ identityFixture([{name:'PM Dashboard',repository:'owner/private-pm'}]);registered(1);expect(screen.getByRole('alert')).toHaveTextContent('缺少穩定專案 ID');expect(screen.queryByRole('region',{name:'開發分支圖'})).not.toBeInTheDocument();expect(screen.getByRole('button',{name:'+ 新增開發任務'})).toBeDisabled();
+});
+
+
+test('mode toggle explicitly selects DEMO even when the display name is unchanged',()=>{
+ identityFixture([{id:'registered-pm',name:'PM Dashboard',repository:'owner/private-pm'}]);registered(1);node(/UI\/UX Development/);tab();input('PRIVATE');save();fireEvent.click(screen.getByRole('button',{name:'返回已登記專案'}));fireEvent.click(screen.getByRole('button',{name:'進入 DEMO'}));expect(screen.getByLabelText('目前專案')).toHaveValue('PM Dashboard');workspace('PM Dashboard');expect(screen.getByText('DEMO PROJECT')).toBeVisible();node(/UI\/UX Development/);tab();expect(screen.getByLabelText('你的指令')).toHaveValue('');tab('Prompt 紀錄');expect(screen.queryByRole('article',{name:'Prompt 1'})).not.toBeInTheDocument();registered(1);node(/UI\/UX Development/);tab('Prompt 紀錄');expect(screen.getByLabelText('Prompt 1 原文')).toHaveValue('PRIVATE');
 });

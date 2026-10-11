@@ -2,7 +2,7 @@
 
 Frontend prototype only. `REAL_AGENT_EXECUTION = NOT_AUTHORIZED`.
 
-**Current evidence: B0.2, authorized by [Issue #32](https://github.com/augusliang23-web/Micro-SaaS-Command-Center/issues/32).** B0 and B0.1 sections below preserve historical behavior/results; they are superseded by the B0.2 section at the end. The five images now show B0.2. B0.1 technical review passed but human UX required revision. Issue #32 does not retroactively approve the original B0 process. Human UX acceptance and merge remain pending.
+**Current evidence: B0.2 P2 remediation, authorized by [Issue #32](https://github.com/augusliang23-web/Micro-SaaS-Command-Center/issues/32).** B0 and B0.1 sections below preserve historical behavior/results; they are superseded by the B0.2 section at the end. Overview/Cost Guard images retain B0.2 captures. Development Map/node command/AI command images now show the P2 local-mock isolation verification, as described in the final section. B0.1 technical review passed but human UX required revision. Issue #32 does not retroactively approve the original B0 process. Human UX acceptance and merge remain pending.
 
 Base: `25692a9a1fdedaf82910630fb767589aa5dccddf`.
 Branch: `feat/track-b-uiux-prototype`.
@@ -206,3 +206,70 @@ Pending human checks:
 - [ ] Confirm session-only retention and unverified-import wording are understood.
 
 **READY_FOR_REVIEW. REAL_AGENT_EXECUTION = NOT_AUTHORIZED.**
+
+
+## B0.2 P2 — Workspace identity isolation remediation (2026-10-11)
+
+Starting/negative-control HEAD: `fdf82cfe12e4412474faac7731c93ad850897996`. Issue #32's P2 addendum was read in full and verified OPEN with model:sol, risk:medium, bridge:ready and Medium effort. Local/remote HEAD, branch, origin, clean worktree and existing OPEN/Draft PR30 matched before edits. Authorization covers only the confirmed same-name REGISTERED/DEMO isolation defect; original B0 governance and pending human acceptance remain unchanged.
+
+### Correction
+
+Workspace selection now carries an explicit identity: source REGISTERED or DEMO, stable project ID, repository if known and display name. State keys are the exact source + project ID + repository, followed by node ID. Display name is presentation, never registered identity; repository alone cannot join distinct registered IDs. The fixed demo catalog has independent IDs such as demo-pm. Registered identity preserves the actual nonblank project ID. Missing ID closes node/prompt/candidate operations with an explicit alert; missing repository is Not available and never inferred from the display name. Unrelated registered Command Center names do not obtain the historical PR inventory.
+
+Registered portfolio selection and its workspace entry select REGISTERED identity. Demo cards, the demo selector and entry into DEMO select DEMO explicitly. The selector displays a separate disabled current REGISTERED option, so choosing the same-name DEMO option produces a real identity-change event. Mode/identity changes reset selected task, command panel, candidate form and stale previews; separately keyed drafts, immutable history and local candidates remain intact for later return to their exact workspace.
+
+Workspace UI states REGISTERED PROJECT or DEMO PROJECT with Project ID. Context copy now includes Workspace source and Project ID along with the current repository/task/provenance. A registered repository is never substituted into a same-name demo. Task source (DEMO-only example or dated historical GitHub snapshot) remains separate from workspace source; a REGISTERED context does not make its example map authoritative.
+
+Only PrototypeShell.tsx, NodeCommandPanel.tsx, Prototype.test.tsx and this existing evidence directory changed. App.tsx and registered portfolio integration are unchanged. Cost Guard, raw imported text/CRLF preservation, 64 KiB limit, two input modes, two-item global navigation, memory-only storage and disabled execution retain their previous behavior.
+
+### Negative control and tests
+
+Before implementation, six new focused cases were run against the exact original fdf82cf source: Prototype.test.tsx had 35 tests, **31 passed / 4 failed**. The end-to-end App regression failed because owner/private-pm remained visible in the same-name DEMO workspace. Additional failures detected unchanged-source dropdown selection, inferred missing repository and unclosed missing-ID operations. The existing 29 prototype cases passed. This is an executed negative control, not an assumed reproduction.
+
+The App regression loads synthetic registered-pm / PM Dashboard / owner/private-pm through a mocked read, saves a unique history entry and unsaved draft, creates a candidate, returns to registered overview, opens the separate demo card, and checks no repository/draft/history/candidate/context leak. It then saves a DEMO entry and returns to the exact registered identity: its original history, draft, candidate and copied repository are intact and DEMO history is absent.
+
+Eight new cases cover the regression, distinct IDs sharing a repository, distinct IDs/repositories with the same name, a repository change under the same ID, same-name dropdown identity change, missing repository, missing project ID and the explicit mode toggle. They also exercise identical node IDs, history restoration, cleared stale plan/selection, copied identity and disabled execution. All prior 54 tests remain and pass.
+
+| Local check | Final result |
+| --- | --- |
+| npm run test:ui | **62/62 PASS**, 7 files, 0 failures; 54 baseline + 8 new cases |
+| npm run lint | PASS; an intermediate test-only invalid option was corrected before the final run |
+| npm run build | PASS; existing server.ts:24 CommonJS/import.meta warning retained |
+| git diff --check | PASS |
+| CI / human acceptance | Not claimed; independent Control Plane re-review pending |
+
+No package install or registry access. Project .npmrc filename and forbidden npm environment names were checked without reading values; commands used two separate empty temporary config files. An initial attempt to reuse /dev/null for both config paths was rejected by npm before tests started and corrected. No real provider/backend/agent execution was used.
+
+### Actual browser evidence — synthetic data only
+
+A temporary localhost static test page bundled the real modified PrototypeShell/NodeCommandPanel and their existing dependencies with a small clearly labeled LOCAL MOCK PORTFOLIO. Its callback supplies registered-pm / owner/private-pm and registered-pm-2 / owner/other-pm. It has no backend/API/persistence and invokes no service. This verifies the real workspace component using mock selection; full App registered-portfolio handoff is covered by the deterministic App regression above, not claimed as a live backend browser verification.
+
+Actual browser workflows at **1366×768, 768×1024 and 390×844**:
+
+- Registered A → node draft/history/candidate → registered overview → separate same-name DEMO card: no registered repository, draft, history or candidate; copied context says DEMO / demo-pm and excludes owner/private-pm.
+- DEMO saved prompt → exact registered A: only registered history restored; copied context restores REGISTERED / registered-pm / owner/private-pm.
+- Registered same-name dropdown → DEMO: selection clears and only DEMO history reappears.
+- Registered B (desktop check): separate owner/other-pm repository and empty history.
+
+The first matrix checked three relevant states at all three sizes (9/9 widths matched). After final identity validation cleanup, the bundle was rebuilt and clean DEMO / restored REGISTERED were rechecked at all three sizes (6/6 widths matched). No page-wide overflow was observed. Temporary viewport overrides were reset; test tabs closed and the temporary static listener stopped. Existing preview/backend processes were not altered.
+
+Updated actual captures:
+
+- development-map.jpg: REGISTERED PROJECT / registered-pm / owner/private-pm, explicitly local-mock portfolio.
+- node-command.jpg: same-name DEMO PROJECT / demo-pm / Repository Not available, explicitly local-mock portfolio.
+- ai-command.jpg: 390×844 mobile history containing DEMO ONLY, separate from registered history.
+
+![Registered identity](development-map.jpg)
+![Separate demo identity](node-command.jpg)
+
+### Safety and remaining gate
+
+Original main HEAD/status and all eight dirty-file hashes remain equal to the preserved baseline. This task performs no Track A write. Current readback: PR25 f5addc4, PR26 ae3f1e5, PR27 c7c751d, PR28 b4dfa5fb7d29e4bd120d4a3e3fd32f5990dc4434. PR28 has independently advanced beyond the dated B0.1 cf7fc7d snapshot; its latest commit is dated 2026-10-10T23:58:00Z. The historical map is deliberately not refreshed in this isolation-only task. Do not describe all remote Track A heads as unchanged against the older snapshot. All seven changed files are Issue32-allowlisted. No backend/auth/provider/billing/AGENTS/manifests/deployment changes, no added dependency, no bridge:approved, no merge/deploy and no B1. Delivery stays on existing Draft PR30 only.
+
+Session memory still clears on reload. Unknown project ID intentionally prevents workspace editing; a repository-less known ID can use only clearly labeled local examples and copies Not available. Static/mock browser proof does not establish live source authority. Human UX acceptance and independent Control Plane re-review are pending. Prior B0.2 no-blocker self/review statements are historical and do not supersede the later confirmed P2 finding.
+
+**READY_FOR_REVIEW. REAL_AGENT_EXECUTION = NOT_AUTHORIZED.**
+
+Final verified source SHA256 (binds tests/browser implementation; commit is reported in PR30):
+- `src/prototype/PrototypeShell.tsx`: `2386b3aac1740fe3b81e6fba8d4beea800a0e76a65eab3b84308d2fd2b9eb1f5`
+- `src/prototype/NodeCommandPanel.tsx`: `3a9daccbe2edeb4364032a6772893c2ac34c5dbc2910acad6bd7d68b6ca8fca2`
