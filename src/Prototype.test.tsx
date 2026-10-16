@@ -1177,3 +1177,99 @@ test('Commit ≠ PR: the legend names months without any PR as source facts and 
  expect(note).not.toHaveTextContent('2026-04');expect(note).not.toHaveTextContent('2026-10');
  expect(note).toHaveTextContent('不是 PR');expect(note).toHaveTextContent('非資料缺漏');
 });
+
+// ---------------- B1.3 · data-trust correction (D1 partial PR coverage, D2 All History boundary) ----------------
+const withCoverage=(h:DevelopmentHistory,pulls:Partial<DevelopmentHistory['coverage']['pulls']>,over:Partial<DevelopmentHistory>={}):DevelopmentHistory=>({...h,...over,coverage:{...h.coverage,pulls:{...h.coverage.pulls,...pulls}}});
+const lateOnly=(createdAt='2026-04-27T01:00:00Z')=>makeHistory({pulls:makeHistory().pulls.map(p=>p.number===13?{...p,createdAt,mergedAt:'2026-04-27T02:00:00Z',closedAt:'2026-04-27T02:00:00Z'}:p)});
+const noPrNote=()=>screen.getByTestId('no-pr-months');
+const MONTHS=['2026-05','2026-06','2026-07','2026-08','2026-09'];
+
+test('B1.3 D1-A complete PR coverage and a Complete snapshot still list the verified empty months',async()=>{
+ mockGeometry();await loadLive(lateOnly());setRange('全部歷史');await fireResize();
+ for(const m of MONTHS)expect(noPrNote()).toHaveTextContent(m);
+ expect(noPrNote()).toHaveTextContent('非資料缺漏');expect(noPrNote()).not.toHaveTextContent('無法確認');
+});
+test('B1.3 D1-B incomplete PR coverage (older PR page missing) never declares a month empty',async()=>{
+ mockGeometry();
+ const h=withCoverage(lateOnly(),{complete:false},{status:'partial',warnings:['Pull request list truncated after 5 pages.']});
+ await loadLive(h);setRange('全部歷史');await fireResize();
+ for(const m of MONTHS)expect(noPrNote()).not.toHaveTextContent(m);
+ expect(noPrNote()).not.toHaveTextContent('非資料缺漏');expect(noPrNote()).toHaveTextContent('無法確認');expect(noPrNote()).toHaveTextContent('不是 PR');
+});
+test('B1.3 D1-C missing or unknown PR coverage is not treated as complete',async()=>{
+ mockGeometry();
+ await loadLive(withCoverage(lateOnly(),{complete:undefined as unknown as boolean}));setRange('全部歷史');await fireResize();
+ for(const m of MONTHS)expect(noPrNote()).not.toHaveTextContent(m);
+ expect(noPrNote()).not.toHaveTextContent('非資料缺漏');expect(noPrNote()).toHaveTextContent('無法確認');
+});
+test('B1.3 D1-D a Partial snapshot makes no absence claim even when the PR list itself paged to the end',async()=>{
+ mockGeometry();
+ await loadLive(withCoverage(lateOnly(),{complete:true},{status:'partial',warnings:['main history truncated after 1000 commits.']}));setRange('全部歷史');await fireResize();
+ for(const m of MONTHS)expect(noPrNote()).not.toHaveTextContent(m);
+ expect(noPrNote()).not.toHaveTextContent('非資料缺漏');expect(noPrNote()).toHaveTextContent('無法確認');
+});
+test('B1.3 D1-E empty months follow Asia/Singapore calendar months across the UTC midnight boundary',async()=>{
+ mockGeometry();
+ // 2026-05-31T17:30Z is 2026-06-01 01:30 in Singapore: June has a PR, May does not.
+ await loadLive(lateOnly('2026-05-31T17:30:00Z'));setRange('6 個月');await fireResize();
+ expect(noPrNote()).toHaveTextContent('2026-05');expect(noPrNote()).toHaveTextContent('2026-07');expect(noPrNote()).not.toHaveTextContent('2026-06');
+});
+
+const T=(iso:string)=>Date.parse(iso);
+const SGT_DAY=(iso:string)=>T(iso)-((T(iso)+8*3_600_000)%86_400_000);
+const spanHistory=(commitDates:string[],prDates:string[],over:Partial<DevelopmentHistory>={})=>{
+ const base=makeHistory();
+ return makeHistory({commits:commitDates.map((d,i)=>c(`x${i}`,[],d)),pulls:prDates.map((d,i)=>({...base.pulls[i%base.pulls.length],number:100+i,createdAt:d})),...over});
+};
+test('B1.3 D2 All History starts at the earliest fetched commit when it precedes the first PR',()=>{
+ const h=spanHistory(['2026-03-01T00:00:00Z','2026-06-01T00:00:00Z'],['2026-05-01T00:00:00Z']);
+ expect(timelineSpan(h,'all').start).toBe(SGT_DAY('2026-03-01T00:00:00Z'));
+ expect(formatSgt(new Date(timelineSpan(h,'all').start).toISOString(),false)).toBe('2026-03-01');
+});
+test('B1.3 D2 the earliest PR wins when it is older than every fetched commit',()=>{
+ expect(timelineSpan(spanHistory(['2026-06-01T00:00:00Z'],['2026-04-01T00:00:00Z','2026-05-01T00:00:00Z']),'all').start).toBe(SGT_DAY('2026-04-01T00:00:00Z'));
+});
+test('B1.3 D2 empty commit list, empty PR list and empty history all fall back safely',()=>{
+ const h=makeHistory();
+ expect(timelineSpan(spanHistory([],['2026-05-01T00:00:00Z']),'all').start).toBe(SGT_DAY('2026-05-01T00:00:00Z'));
+ expect(timelineSpan(spanHistory(['2026-03-01T00:00:00Z'],[]),'all').start).toBe(SGT_DAY('2026-03-01T00:00:00Z'));
+ const empty=timelineSpan(spanHistory([],[]),'all');
+ expect(empty.start).toBe(SGT_DAY(h.fetchedAt));expect(empty.start).toBeLessThanOrEqual(empty.end);
+});
+test('B1.3 D2 invalid or missing timestamps are ignored, never used as the start',()=>{
+ const h=spanHistory(['not-a-date','','2026-04-10T00:00:00Z'],['also-bad','2026-05-01T00:00:00Z']);
+ h.commits.push({...c('nodate',[],'2026-01-01T00:00:00Z'),committerDate:null as unknown as string});
+ const { start }=timelineSpan(h,'all');
+ expect(Number.isFinite(start)).toBe(true);expect(start).toBe(SGT_DAY('2026-04-10T00:00:00Z'));
+ expect(Number.isFinite(timelineSpan(spanHistory(['bad'],['bad']),'all').start)).toBe(true);
+});
+test('B1.3 D2 SGT conversion: a commit just after UTC 16:00 belongs to the next Singapore day',()=>{
+ const { start }=timelineSpan(spanHistory(['2026-02-28T16:30:00Z'],['2026-05-01T00:00:00Z']),'all');
+ expect(start).toBe(T('2026-02-28T16:00:00Z'));expect(formatSgt(new Date(start).toISOString(),false)).toBe('2026-03-01');
+});
+test('B1.3 D2 a partial snapshot does not change the start, and 1/3/6 month ranges are untouched',()=>{
+ const full=spanHistory(['2026-03-01T00:00:00Z'],['2026-05-01T00:00:00Z']);
+ const partial=withCoverage(full,{complete:false},{status:'partial'});
+ expect(timelineSpan(partial,'all').start).toBe(timelineSpan(full,'all').start);
+ for(const r of ['1m','3m','6m'] as const)expect(timelineSpan(partial,r)).toEqual(timelineSpan(makeHistory({fetchedAt:full.fetchedAt}),r));
+});
+const commitMarks=()=>document.querySelectorAll('.g-commit-tick, .g-commit-dot').length;
+test('B1.3 D2 All History draws the known main commits that precede the first PR (same marks as 6 months here)',async()=>{
+ mockGeometry();await loadLive();
+ setRange('6 個月');await fireResize();const sixMonths=commitMarks();
+ setRange('全部歷史');await fireResize();
+ expect(sixMonths).toBeGreaterThanOrEqual(6);expect(commitMarks()).toBe(sixMonths); // m1 (2026-04-26) and m2 (2026-09-20) precede PR #13 (2026-09-24)
+});
+test('B1.3 D2 All History is labelled as fetched history, not complete repository history',async()=>{
+ mockGeometry();await loadLive();setRange('全部歷史');await fireResize();
+ const scope=screen.getByTestId('all-history-scope');
+ expect(scope).toHaveTextContent('已取得');expect(scope).not.toHaveTextContent('Partial');
+ expect(scope).not.toHaveTextContent('完整 repository 歷史 ✓');
+});
+test('B1.3 D2 a Partial snapshot keeps the Partial / UNKNOWN wording in the All History scope note',async()=>{
+ mockGeometry();
+ await loadLive(withCoverage(makeHistory(),{complete:false},{status:'partial'}));setRange('全部歷史');await fireResize();
+ const scope=screen.getByTestId('all-history-scope');
+ expect(scope).toHaveTextContent('Partial');expect(scope).toHaveTextContent('不代表完整 repository 歷史');
+ setRange('6 個月');expect(screen.queryByTestId('all-history-scope')).toBeNull();
+});
