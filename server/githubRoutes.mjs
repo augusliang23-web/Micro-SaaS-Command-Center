@@ -1,7 +1,13 @@
 import express from 'express';
 import { isLoopbackOrigin } from './codexHandoffRoutes.mjs';
 import { fetchGithubRepos, GithubCliError } from './githubRepos.mjs';
-import { fetchPullRequestStatus, fetchChangedFiles, fetchRecentCommits, isRealGithubRepo } from './githubPullStatus.mjs';
+import { fetchPullRequestStatus, fetchChangedFiles, fetchRecentCommits, isRealGithubRepo, aggregateCiResponse } from './githubPullStatus.mjs';
+import {
+  fetchDevelopmentHistory,
+  fetchPullDetail,
+  isAllowlistedHistoryRepo,
+  createHistoryCache,
+} from './githubDevelopmentHistory.mjs';
 
 function requestOrigin(req) {
   const origin = req.get('origin');
@@ -34,6 +40,9 @@ export function createGithubRouter({
   fetchPullStatus = fetchPullRequestStatus,
   fetchFiles = fetchChangedFiles,
   fetchCommits = fetchRecentCommits,
+  fetchHistory = fetchDevelopmentHistory,
+  fetchHistoryPull = (repo, number, opts) => fetchPullDetail(repo, number, { ...opts, aggregateCi: aggregateCiResponse }),
+  historyCache = createHistoryCache(),
 } = {}) {
   const router = express.Router();
 
@@ -125,6 +134,68 @@ export function createGithubRouter({
       }
       console.error('Error fetching recent GitHub commits:', error);
       res.status(500).json({ error: 'Failed to fetch recent commits.' });
+    }
+  });
+
+  // Read-only development history, bound to the exact allowlisted repository.
+  // A refresh bypasses the per-process cache; a client disconnect cancels the
+  // in-flight `gh` reads so an abandoned request cannot keep consuming quota.
+  function historyErrorResponse(res, error) {
+    if (error instanceof GithubCliError) {
+      const map = { not_authenticated: 401, forbidden: 403, missing: 404, rate_limited: 429, not_found: 503, timeout: 504, aborted: 499 };
+      const status = map[error.kind] ?? 502;
+      res.status(status).json({ error: error.message, kind: error.kind, resetAt: error.resetAt ?? null, status: 'unavailable' });
+      return;
+    }
+    console.error('Error fetching GitHub development history:', error);
+    res.status(500).json({ error: 'Failed to fetch development history.', kind: 'failed', status: 'unavailable' });
+  }
+
+  function abortOnClose(req, res) {
+    const controller = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
+    return controller.signal;
+  }
+
+  router.get('/development-history', async (req, res) => {
+    const repo = typeof req.query.repo === 'string' ? req.query.repo : '';
+    if (!isAllowlistedHistoryRepo(repo)) {
+      res.status(403).json({ error: 'Repository is not allowlisted for development history.', kind: 'forbidden', status: 'unavailable' });
+      return;
+    }
+    const refresh = req.query.refresh === '1';
+    const cached = refresh ? null : historyCache.get(repo);
+    if (cached) {
+      res.json({ ...cached, cache: 'hit' });
+      return;
+    }
+    try {
+      const history = await fetchHistory(repo, { signal: abortOnClose(req, res) });
+      if (history?.repository !== repo) throw new GithubCliError('History response repository mismatch.', 'failed');
+      historyCache.set(repo, history);
+      res.json({ ...history, cache: refresh ? 'refreshed' : 'miss' });
+    } catch (error) {
+      historyErrorResponse(res, error);
+    }
+  });
+
+  router.get('/development-history/pull', async (req, res) => {
+    const repo = typeof req.query.repo === 'string' ? req.query.repo : '';
+    const number = typeof req.query.number === 'string' && /^\d{1,7}$/.test(req.query.number) ? Number(req.query.number) : NaN;
+    if (!isAllowlistedHistoryRepo(repo)) {
+      res.status(403).json({ error: 'Repository is not allowlisted for development history.', kind: 'forbidden', status: 'unavailable' });
+      return;
+    }
+    if (!Number.isInteger(number) || number < 1) {
+      res.status(400).json({ error: 'Query param "number" must be a positive integer.', kind: 'failed', status: 'unavailable' });
+      return;
+    }
+    try {
+      res.json(await fetchHistoryPull(repo, number, { signal: abortOnClose(req, res) }));
+    } catch (error) {
+      historyErrorResponse(res, error);
     }
   });
 
