@@ -85,14 +85,14 @@ describe('V1 identity isolation and live allowlist',()=>{
   fireEvent.click(within(card('PM Dashboard')).getByRole('button',{name:'開啟開發地圖'}));await flush();
   const history=calls.filter(c=>c.url.includes('/api/github/development-history'));
   expect(history).toHaveLength(1);expect(history[0].method).toBe('GET');expect(history[0].url).toContain(`repo=${encodeURIComponent(PM_REPO)}`);
-  expect(screen.getByText('REGISTERED · LIVE GITHUB READ-ONLY')).toBeVisible();
+  expect(screen.getByText('REGISTERED')).toBeVisible();expect(screen.getByTestId('g-source-badge')).toHaveTextContent('正在查詢'); // request pending: no read claim yet
  });
  test('F. selecting a non-allowlisted project in the map shows Not available and issues no GitHub request',async()=>{
   const calls=mockFetch(state([PM,OTHER]));render(<ReadOnlyCommandCenter/>);await flush();
   nav('開發地圖');await flush();
   fireEvent.click(within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getByRole('button',{name:/Other App/}));await flush();
   expect(screen.getByLabelText('開發地圖不可用')).toHaveTextContent('Not available');
-  expect(document.body).not.toHaveTextContent('LIVE GITHUB READ-ONLY 唯讀歷史圖');
+  expect(screen.queryByTestId('g-source-badge')).toBeNull();expect(document.body).not.toHaveTextContent(/LIVE/);
   expect(calls.filter(c=>c.url.includes('development-history')).every(c=>c.url.includes(encodeURIComponent(PM_REPO)))).toBe(true);
   expect(calls.some(c=>c.url.includes('someone'))).toBe(false);
  });

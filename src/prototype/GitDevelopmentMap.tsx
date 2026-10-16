@@ -169,6 +169,13 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
   const [query, setQuery] = useState('');
   const [selection, setSelection] = useState<Selection>(null);
   const dataStatus = state.status === 'loading' && !data ? 'Loading' : state.status === 'error' ? (data ? 'Needs refresh' : 'Unavailable') : data?.status === 'complete' ? 'Complete' : 'Partial history';
+  // Allowlisted != fetched, and a previous snapshot != the latest state: the badge only claims what the load state proves.
+  const sourceBadge = (() => {
+    if (data && state.refreshing) return { text: `GitHub 唯讀 · 重新整理中 · 顯示上一次成功快照（${formatSgt(data.fetchedAt)}）`, read: false };
+    if (state.status === 'error') return { text: data ? `GitHub 唯讀 · Needs refresh · 上一次成功讀取 ${formatSgt(data.fetchedAt)}` : 'GitHub 資料不可用', read: false };
+    if (!data) return { text: 'GitHub 唯讀 · 正在查詢', read: false };
+    return { text: `GitHub 唯讀 · 已讀取 · ${data.status === 'complete' ? 'Complete' : 'Partial'}`, read: true };
+  })();
   const chooseRange = (r: RangeId) => { setRange(r); setFit('auto'); }; // a new range always restarts at Auto Fit
   const spanDays = data ? effectiveSpanDays(timelineSpan(data, range).start, timelineSpan(data, range).end) : 1;
   const nextZoom = (dir: 1 | -1) => zoomStep(liveScale, dir, spanDays);
@@ -202,7 +209,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
       <div>
         <p className="p-eyebrow">DEVELOPMENT MAP · PM DASHBOARD</p>
         <h1>{identity.displayName}</h1>
-        <p className="g-badges"><span className="g-badge is-live">REGISTERED · LIVE GITHUB READ-ONLY</span><span className="g-badge">Project ID：{identity.projectId}</span></p>
+        <p className="g-badges"><span className="g-badge">{identity.source}</span><span className={`g-badge ${sourceBadge.read ? 'is-live' : ''}`} data-testid="g-source-badge">{sourceBadge.text}</span><span className="g-badge">Project ID：{identity.projectId}</span></p>
       </div>
       <button className="p-secondary" onClick={refresh} disabled={state.refreshing} aria-label="重新整理 GitHub 資料"><RefreshCw size={14} className={state.refreshing ? 'is-spinning' : ''} />{state.refreshing ? '讀取中…' : '重新整理'}</button>
     </header>

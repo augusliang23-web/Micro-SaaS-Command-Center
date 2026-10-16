@@ -113,7 +113,7 @@ test('B1 F/T: timeline range is anchored to the verified fetch time and open PRs
 
 test('B1: live view reads only the allowlisted repo and shows provenance, counts and Not checked boundaries',async()=>{
  const {spy,pending}=mockFetch();render(<Harness/>);openLive();
- expect(screen.getByText('REGISTERED · LIVE GITHUB READ-ONLY')).toBeVisible();
+ expect(screen.getByTestId('g-source-badge')).toHaveTextContent('GitHub 唯讀 · 正在查詢'); // allowlisted, not yet fetched
  expect(pending).toHaveLength(1);expect(pending[0].url).toBe(`/api/github/development-history?repo=${encodeURIComponent(PM)}`);
  expect(screen.getByRole('status')).toHaveTextContent('正在從 GitHub 讀取');
  pending[0].resolve(makeHistory());await flush();
@@ -563,7 +563,7 @@ test('B1.1 rail is keyboard operable and does not switch project',async()=>{
  mockGeometry();await loadLive();
  const toggle=screen.getByRole('button',{name:'收折側邊欄'});toggle.focus();expect(toggle).toHaveFocus();
  fireEvent.click(toggle);expect(screen.getByRole('button',{name:'展開側邊欄'})).toHaveAttribute('aria-expanded','false');
- expect(screen.getByRole('heading',{name:'PM Dashboard'})).toBeVisible();expect(screen.getByText('REGISTERED · LIVE GITHUB READ-ONLY')).toBeVisible();
+ expect(screen.getByRole('heading',{name:'PM Dashboard'})).toBeVisible();expect(screen.getByText('REGISTERED')).toBeVisible();expect(screen.getByTestId('g-source-badge')).toHaveTextContent('GitHub 唯讀');
 });
 
 test('B1.1 compact branch labels narrow the label column, keep main and production-pages identifiable, and refit',async()=>{
@@ -1095,4 +1095,55 @@ test('B1.3 P2 a successful refresh after a failed one restores the verified mont
  fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));m.pending[1].resolve({error:'slow',kind:'timeout'},504);await flush();
  fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));m.pending[2].resolve(lateOnly());await flush();
  for(const month of MONTHS)expect(noPrNote()).toHaveTextContent(month);expect(noPrNote()).toHaveTextContent('非資料缺漏');
+});
+
+// ---------------- B1.4 · source badge reflects the actual GitHub retrieval state ----------------
+const sourceBadge=()=>screen.getByTestId('g-source-badge');
+const headerText=()=>(document.querySelector('.g-header') as HTMLElement).textContent??'';
+const lastChecked=()=>within(screen.getByLabelText('資料來源')).getByText('Last checked').nextElementSibling as HTMLElement;
+const clickRefresh=()=>fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
+describe('B1.4 source badge: allowlisted is not fetched, a previous snapshot is not the latest state',()=>{
+ test('1. initial loading shows a neutral querying label and no LIVE claim',()=>{
+  const {pending}=mockFetch();render(<Harness/>);
+  expect(pending).toHaveLength(1);expect(sourceBadge()).toHaveTextContent('GitHub 唯讀 · 正在查詢');
+  expect(headerText()).not.toMatch(/LIVE/i);expect(sourceBadge()).not.toHaveClass('is-live');
+ });
+ test('2. an initial API error shows GitHub 資料不可用 and no LIVE claim',async()=>{
+  const {pending}=mockFetch();render(<Harness/>);pending[0].resolve({error:'x',kind:'not_authenticated'},401);await flush();
+  expect(sourceBadge()).toHaveTextContent('GitHub 資料不可用');expect(headerText()).not.toMatch(/LIVE/i);expect(sourceBadge()).not.toHaveClass('is-live');
+  expect(lastChecked()).toHaveTextContent('Not checked');
+ });
+ test('3. a complete response shows the successful read label with Complete and Last checked',async()=>{
+  await loadLive();
+  expect(sourceBadge()).toHaveTextContent('GitHub 唯讀 · 已讀取 · Complete');expect(sourceBadge()).toHaveClass('is-live');
+  expect(lastChecked()).toHaveTextContent(formatSgt(makeHistory().fetchedAt));expect(headerText()).toContain('REGISTERED');
+ });
+ test('4. a partial response keeps Partial and never says Complete',async()=>{
+  await loadLive(withCoverage(makeHistory(),{complete:false},{status:'partial',warnings:['Pull request list truncated after 5 pages.']}));
+  expect(sourceBadge()).toHaveTextContent('Partial');expect(sourceBadge()).not.toHaveTextContent('Complete');
+ });
+ test('5. a refresh in progress is labelled as pending over the previous successful snapshot',async()=>{
+  const m=await loadLive();clickRefresh();
+  expect(m.pending).toHaveLength(2);
+  expect(sourceBadge()).toHaveTextContent('重新整理中');expect(sourceBadge()).toHaveTextContent('上一次成功');
+  expect(sourceBadge()).not.toHaveTextContent('已讀取');expect(sourceBadge()).not.toHaveClass('is-live');
+  expect(lastChecked()).toHaveTextContent(formatSgt(makeHistory().fetchedAt));
+ });
+ test('6. a failed refresh shows Needs refresh and keeps the previous Last checked',async()=>{
+  const m=await loadLive();clickRefresh();m.pending[1].resolve({error:'slow',kind:'timeout'},504);await flush();
+  expect(sourceBadge()).toHaveTextContent('Needs refresh');expect(sourceBadge()).not.toHaveTextContent('已讀取');expect(headerText()).not.toMatch(/LIVE/i);
+  expect(lastChecked()).toHaveTextContent(formatSgt(makeHistory().fetchedAt));expect(screen.getByLabelText('資料來源')).toHaveTextContent('Needs refresh');
+ });
+ test('7. a successful retry restores the read label with the new Last checked',async()=>{
+  const m=await loadLive();clickRefresh();m.pending[1].resolve({error:'slow',kind:'timeout'},504);await flush();
+  clickRefresh();expect(sourceBadge()).toHaveTextContent('重新整理中');
+  const fresh=makeHistory({fetchedAt:'2026-10-16T03:00:00.000Z'});m.pending[2].resolve(fresh);await flush();
+  expect(sourceBadge()).toHaveTextContent('GitHub 唯讀 · 已讀取 · Complete');expect(lastChecked()).toHaveTextContent(formatSgt(fresh.fetchedAt));
+  expect(screen.queryByRole('alert')).toBeNull();
+ });
+ test('8. a DEMO identity never shows a source badge and issues no GitHub request',()=>{
+  const {pending}=mockFetch();render(<Harness/>);
+  fireEvent.click(within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getAllByRole('button').find(b=>/DEMO/.test(b.getAttribute('aria-label')??''))!);
+  expect(screen.queryByTestId('g-source-badge')).toBeNull();expect(pending).toHaveLength(1); // only the initial registered request
+ });
 });
