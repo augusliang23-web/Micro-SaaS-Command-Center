@@ -75,8 +75,9 @@ describe('V1 identity isolation and live allowlist',()=>{
   expect(calls.filter(c=>c.url.includes('development-history'))).toHaveLength(0);
  });
  test('D. registered identity is built from id + repository only, REGISTERED, and a display name cannot confer a repository',()=>{
-  const [a]=registeredFromSavedState({projects:[{id:'  ',name:PM_REPO,repository:''}]});
-  expect(a.identity).toEqual({source:'REGISTERED',projectId:undefined,repository:undefined,displayName:PM_REPO});
+  const [a,b]=registeredFromSavedState({projects:[{id:'  ',name:PM_REPO,repository:'someone/x'},{id:'ok',name:PM_REPO,repository:''}]});
+  expect(a.identity).toEqual({source:'REGISTERED',projectId:undefined,repository:'someone/x',displayName:PM_REPO});
+  expect(b.identity.source).not.toBe('REGISTERED'); // no usable repository: identity cannot be established, fail closed
  });
  test('E. only the exact allowlisted registered PM Dashboard opens the live viewer (one GET for that repository)',async()=>{
   const calls=mockFetch(state([OTHER,PM]));render(<ReadOnlyCommandCenter/>);await flush();
@@ -137,5 +138,65 @@ describe('V1 feature isolation and read-only frontend',()=>{
    const code=readFileSync(`${process.cwd()}/${f}`,'utf8').replace(/\/\*[\s\S]*?\*\//g,'').replace(/^\s*\/\/.*$/gm,'');
    expect(code).not.toMatch(/method:\s*['"](?:PUT|POST|DELETE|PATCH)/i);expect(code).not.toMatch(/\/api\/(tasks|bridge)/);
   }
+ });
+});
+
+// ---------------- B1.4 review remediation: P1 explicit DEMO identity, P2 no LIVE claim before verification ----------------
+const DEMO_PM=project({id:'demo-pm-1',name:'PM Dashboard',repository:PM_REPO,dataMode:'demo'});
+const historyCalls=(calls:Call[])=>calls.filter(c=>c.url.includes('/api/github/development-history'));
+
+describe('P1 explicit DEMO projects never become REGISTERED or live',()=>{
+ test('a dataMode "demo" project with the exact allowlisted repository is classified DEMO and cannot open the live map',async()=>{
+  const calls=mockFetch(state([DEMO_PM]));render(<ReadOnlyCommandCenter/>);await flush();
+  const c=card('PM Dashboard');
+  expect(c).toHaveTextContent('DEMO');expect(c).not.toHaveTextContent('REGISTERED');expect(c).not.toHaveTextContent('LIVE');expect(c).not.toHaveTextContent('GitHub 可查詢');
+  expect(within(c).queryByRole('button',{name:'開啟開發地圖'})).toBeNull();
+  nav('開發地圖');await flush();
+  expect(historyCalls(calls)).toHaveLength(0);
+  expect(screen.getByLabelText('開發地圖不可用')).toBeVisible();
+ });
+ test('registeredFromSavedState maps dataMode "demo" to a DEMO identity and keeps legacy projects REGISTERED',()=>{
+  const [demo,legacy]=registeredFromSavedState({projects:[DEMO_PM,PM]});
+  expect(demo.identity.source).toBe('DEMO');expect(legacy.identity.source).toBe('REGISTERED');expect(legacy.identity.projectId).toBe('reg-pm');
+  expect(registeredFromSavedState({projects:[{...DEMO_PM,dataMode:' DEMO '}]})[0].identity.source).toBe('DEMO');
+ });
+ test('an unrecognised dataMode value fails closed: not REGISTERED, not live',async()=>{
+  const calls=mockFetch(state([project({id:'odd',name:'Odd',repository:PM_REPO,dataMode:'sample'}),project({id:'odd2',name:'Odd2',repository:PM_REPO,dataMode:7})]));
+  render(<ReadOnlyCommandCenter/>);await flush();
+  for(const n of ['Odd','Odd2']){expect(card(n)).not.toHaveTextContent('REGISTERED');expect(card(n)).toHaveTextContent('身分無法確認');expect(within(card(n)).queryByRole('button',{name:'開啟開發地圖'})).toBeNull();}
+  nav('開發地圖');await flush();expect(historyCalls(calls)).toHaveLength(0);
+ });
+ test('migration fixture provenance is not evidence of DEMO: a legacy registered PM stays eligible',async()=>{
+  expect((PM as {provenance:{github:{authority:string}}}).provenance.github.authority).toBe('fixture');
+  mockFetch(state([PM]));render(<ReadOnlyCommandCenter/>);await flush();
+  expect(card('PM Dashboard')).toHaveTextContent('REGISTERED');expect(within(card('PM Dashboard')).getByRole('button',{name:'開啟開發地圖'})).toBeVisible();
+ });
+ test('a same-name DEMO project beside the registered PM stays isolated: one history request, for the registered project only',async()=>{
+  const calls=mockFetch(state([DEMO_PM,PM]));render(<ReadOnlyCommandCenter/>);await flush();
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect(screen.getAllByRole('button',{name:'開啟開發地圖'})).toHaveLength(1);
+  nav('開發地圖');await flush();
+  expect(historyCalls(calls)).toHaveLength(1);
+  expect(screen.getByLabelText('資料來源')).toHaveTextContent(PM_REPO);
+  const rail=within(screen.getByRole('navigation',{name:'專案（開發地圖）'}));
+  fireEvent.click(rail.getAllByRole('button').find(b=>/DEMO/.test(b.getAttribute('aria-label')??''))!);await flush();
+  expect(historyCalls(calls)).toHaveLength(1);expect(screen.getByLabelText('開發地圖不可用')).toBeVisible();
+  expect(calls.every(c=>c.method==='GET')).toBe(true);
+ });
+});
+
+describe('P2 eligibility to query is not presented as verified LIVE',()=>{
+ test('the project card says 可查詢 · 尚未驗證 and does not say LIVE before any GitHub request succeeds',async()=>{
+  mockFetch(state([PM,OTHER]));render(<ReadOnlyCommandCenter/>);await flush();
+  const pm=card('PM Dashboard');
+  expect(pm).toHaveTextContent('GitHub 可查詢 · 尚未驗證');expect(pm).not.toHaveTextContent('LIVE');
+  expect(card('Other App')).toHaveTextContent('NOT CONNECTED');expect(card('Other App')).not.toHaveTextContent('可查詢');
+ });
+ test('on the map page, before the GitHub response, the rail and banner make no LIVE claim from the V1 shell',async()=>{
+  mockFetch(state([PM,OTHER]));render(<ReadOnlyCommandCenter/>);await flush();
+  nav('開發地圖');await flush(); // history request is still pending
+  for(const b of within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getAllByRole('button'))expect(b.getAttribute('aria-label')).not.toMatch(/LIVE/);
+  expect(document.querySelector('.p-live-bar')?.textContent ?? '').not.toMatch(/LIVE/);
+  expect(screen.getByLabelText('資料來源')).toHaveTextContent('Not checked');
  });
 });
