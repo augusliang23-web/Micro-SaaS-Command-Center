@@ -475,29 +475,59 @@ function reviewRelation(commitId, headSha) {
   return commitId.toLowerCase() === headSha.toLowerCase() ? 'current_head' : 'historical';
 }
 
-function laterReview(a, b) {
-  const ta = Date.parse(a.submitted_at);
-  const tb = Date.parse(b.submitted_at);
-  const na = Number.isNaN(ta) ? -Infinity : ta;
-  const nb = Number.isNaN(tb) ? -Infinity : tb;
-  if (na !== nb) return na > nb;
-  const ia = Number(a.id);
-  const ib = Number(b.id);
-  return Number.isFinite(ia) && Number.isFinite(ib) ? ia > ib : false;
+/**
+ * Ordering is claimed only when it is PROVABLE: both submitted_at values parse and differ, or they are equal and both
+ * review ids are positive integers that differ. Anything else (missing/invalid timestamp, equal timestamp with a missing,
+ * invalid or equal id) is undecidable: neither review may be assumed to supersede the other. This is a strict partial
+ * order, so the set of un-superseded reviews does not depend on input order.
+ */
+function reviewTime(review) {
+  const ms = Date.parse(review?.submitted_at);
+  return Number.isFinite(ms) ? ms : null;
+}
+function reviewIdNumber(review) {
+  const id = review?.id;
+  const n = typeof id === 'number' ? id : typeof id === 'string' && /^[0-9]+$/.test(id) ? Number(id) : Number.NaN;
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+function provablyLater(a, b) {
+  const ta = reviewTime(a);
+  const tb = reviewTime(b);
+  if (ta === null || tb === null) return false;
+  if (ta !== tb) return ta > tb;
+  const ia = reviewIdNumber(a);
+  const ib = reviewIdNumber(b);
+  return ia !== null && ib !== null && ia > ib;
+}
+// When a reviewer's un-superseded reviews cannot be ordered, the most conservative one is the effective review:
+// a blocker outranks a dismissal, which outranks an approval; among approvals the least trusted head relation wins.
+const DECISION_PRECEDENCE = { CHANGES_REQUESTED: 3, DISMISSED: 2, APPROVED: 1 };
+const RELATION_RISK = { unknown: 3, historical: 2, current_head: 1 };
+function conservativeFirst(headSha) {
+  const rank = (r) => [DECISION_PRECEDENCE[r.state] ?? 0, RELATION_RISK[reviewRelation(r.commit_id, headSha)] ?? 0];
+  return (a, b) => {
+    const [pa, ra] = rank(a);
+    const [pb, rb] = rank(b);
+    return pb - pa || rb - ra || String(a.id ?? '').localeCompare(String(b.id ?? '')) || String(a.commit_id ?? '').localeCompare(String(b.commit_id ?? '')) || String(a.submitted_at ?? '').localeCompare(String(b.submitted_at ?? ''));
+  };
 }
 
 export function summarizeReviews(reviews, headSha) {
   if (!Array.isArray(reviews) || reviews.length === 0) return { status: 'no_reviews', reviewers: [] };
-  const latest = new Map();
+  const byReviewer = new Map();
   let commented = false;
   reviews.forEach((review, index) => {
     if (review?.state === 'COMMENTED') commented = true;
     if (!DECISIVE_REVIEW_STATES.has(review?.state)) return;
     const login = review.user?.login;
     const key = login ? `user:${login}` : `anonymous:${review.id ?? `index-${index}`}`;
-    const prev = latest.get(key);
-    if (!prev || laterReview(review, prev)) latest.set(key, review);
+    byReviewer.set(key, [...(byReviewer.get(key) ?? []), review]);
   });
+  const latest = new Map();
+  for (const [key, group] of byReviewer) {
+    const current = group.filter((candidate) => !group.some((other) => other !== candidate && provablyLater(other, candidate)));
+    latest.set(key, [...current].sort(conservativeFirst(headSha))[0]);
+  }
   const reviewers = [...latest.values()]
     .map((r) => ({
       reviewer: r.user?.login ?? null,
@@ -507,7 +537,7 @@ export function summarizeReviews(reviews, headSha) {
       submittedAt: r.submitted_at ?? null,
       relation: reviewRelation(r.commit_id, headSha),
     }))
-    .sort((a, b) => (a.reviewer ?? '\uffff').localeCompare(b.reviewer ?? '\uffff') || Number(a.reviewId) - Number(b.reviewId));
+    .sort((a, b) => (a.reviewer ?? '\uffff').localeCompare(b.reviewer ?? '\uffff') || Number(a.reviewId) - Number(b.reviewId) || String(a.state).localeCompare(String(b.state)) || String(a.commitId).localeCompare(String(b.commitId)));
   const approvals = reviewers.filter((r) => r.state === 'APPROVED');
   let status;
   if (reviewers.some((r) => r.state === 'CHANGES_REQUESTED')) status = 'changes_requested';

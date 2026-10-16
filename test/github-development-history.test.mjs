@@ -774,3 +774,116 @@ test('B1.4 server: the history module has no filesystem, shell, process-spawn or
   const routes = readFileSync(new URL('../server/githubRoutes.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(routes, /router\.(post|put|patch|delete|all)\(/);
 });
+
+// ---------------- Issue #44: ambiguous review ordering fails closed ----------------
+// Deterministic, synthetic review records (not GitHub evidence). HEAD is the PR head the reviews are compared with.
+{
+  const HEAD = 'a'.repeat(40);
+  const OLD = 'b'.repeat(40);
+  const T = '2026-10-01T00:00:00Z';
+  const rv = (state, over = {}) => ({ user: { login: 'alice' }, state, commit_id: HEAD, submitted_at: T, ...over });
+  const permutations = (list) => (list.length <= 1 ? [list] : list.flatMap((x, i) => permutations([...list.slice(0, i), ...list.slice(i + 1)]).map((rest) => [x, ...rest])));
+  const everyOrder = (list, head = HEAD) => permutations(list).map((order) => summarizeReviews(order, head));
+  const approvalsIn = (summary) => summary.reviewers.filter((r) => r.state === 'APPROVED');
+
+  test('#44 A/B: same reviewer, same timestamp, missing ids, APPROVED vs CHANGES_REQUESTED -> blocker kept in either input order', () => {
+    const list = [rv('APPROVED'), rv('CHANGES_REQUESTED')];
+    for (const s of everyOrder(list)) {
+      assert.equal(s.status, 'changes_requested');
+      assert.notEqual(s.status, 'current_head_approval');
+      assert.equal(approvalsIn(s).length, 0, 'an approval that cannot be ordered must not stay in the serialized reviewers');
+      assert.ok(s.reviewers.some((r) => r.state === 'CHANGES_REQUESTED'));
+    }
+    assert.deepEqual(everyOrder(list)[0], everyOrder(list)[1], 'result must not depend on array order');
+  });
+
+  test('#44 C: same timestamp with valid distinct numeric ids -> the larger id is the later review, in any order', () => {
+    const approvedLater = [rv('CHANGES_REQUESTED', { id: 10 }), rv('APPROVED', { id: 11 })];
+    for (const s of everyOrder(approvedLater)) { assert.equal(s.status, 'current_head_approval'); assert.equal(s.reviewers[0].reviewId, 11); }
+    const blockerLater = [rv('APPROVED', { id: 10 }), rv('CHANGES_REQUESTED', { id: 11 })];
+    for (const s of everyOrder(blockerLater)) assert.equal(s.status, 'changes_requested');
+    for (const s of everyOrder([rv('APPROVED', { id: '12' }), rv('CHANGES_REQUESTED', { id: '9' })])) assert.equal(s.status, 'current_head_approval'); // numeric strings compare as numbers, not text
+  });
+
+  test('#44 D: same timestamp with invalid, equal or partial ids fails closed in every order', () => {
+    const cases = [
+      [rv('APPROVED', { id: 'x' }), rv('CHANGES_REQUESTED', { id: 'y' })],
+      [rv('APPROVED', { id: null }), rv('CHANGES_REQUESTED', { id: 7 })],
+      [rv('APPROVED', { id: 7 }), rv('CHANGES_REQUESTED', { id: 7 })],
+      [rv('APPROVED', { id: -1 }), rv('CHANGES_REQUESTED', { id: 0 })],
+      [rv('APPROVED', { id: 1.5 }), rv('CHANGES_REQUESTED', { id: 2.5 })],
+    ];
+    for (const list of cases) for (const s of everyOrder(list)) { assert.equal(s.status, 'changes_requested', JSON.stringify(list)); assert.equal(approvalsIn(s).length, 0); }
+  });
+
+  test('#44 E: missing or invalid timestamps never let the first-seen APPROVED win', () => {
+    const cases = [
+      [rv('APPROVED', { submitted_at: undefined }), rv('CHANGES_REQUESTED', { submitted_at: undefined })],
+      [rv('APPROVED', { submitted_at: 'not-a-date' }), rv('CHANGES_REQUESTED', { submitted_at: 'also-bad' })],
+      [rv('APPROVED', { submitted_at: null, id: 1 }), rv('CHANGES_REQUESTED', { submitted_at: null, id: 2 })], // ids do not order records whose timestamps are unusable
+      [rv('APPROVED'), rv('CHANGES_REQUESTED', { submitted_at: 'garbage' })],
+    ];
+    for (const list of cases) for (const s of everyOrder(list)) { assert.equal(s.status, 'changes_requested', JSON.stringify(list)); assert.equal(approvalsIn(s).length, 0); }
+  });
+
+  test('#44 F: ambiguous APPROVED vs DISMISSED never yields an active current-head approval', () => {
+    const list = [rv('APPROVED'), rv('DISMISSED')];
+    for (const s of everyOrder(list)) { assert.equal(s.status, 'approval_dismissed'); assert.equal(approvalsIn(s).length, 0); }
+    for (const s of everyOrder([rv('APPROVED', { id: 1 }), rv('DISMISSED', { id: 2 })])) assert.equal(s.status, 'approval_dismissed');
+    for (const s of everyOrder([rv('APPROVED', { id: 2 }), rv('DISMISSED', { id: 1 })])) assert.equal(s.status, 'current_head_approval');
+    // CHANGES_REQUESTED outranks DISMISSED and APPROVED when all three are tied.
+    for (const s of everyOrder([rv('APPROVED'), rv('DISMISSED'), rv('CHANGES_REQUESTED')])) assert.equal(s.status, 'changes_requested');
+  });
+
+  test('#44: tied APPROVED records on different commits take the least-trusted relation (order invariant)', () => {
+    const list = [rv('APPROVED', { commit_id: HEAD }), rv('APPROVED', { commit_id: OLD })];
+    for (const s of everyOrder(list)) assert.equal(s.status, 'historical_approval');
+    for (const s of everyOrder([rv('APPROVED', { commit_id: HEAD }), rv('APPROVED', { commit_id: null })])) assert.equal(s.status, 'review_head_unknown');
+  });
+
+  test('#44 G/I/J/K: historical, head-less, current-head and legitimately superseded reviews keep their semantics', () => {
+    assert.equal(summarizeReviews([rv('APPROVED', { commit_id: OLD })], HEAD).status, 'historical_approval');
+    assert.equal(summarizeReviews([rv('APPROVED', { commit_id: null })], HEAD).status, 'review_head_unknown');
+    assert.equal(summarizeReviews([rv('APPROVED', { commit_id: '' })], HEAD).status, 'review_head_unknown');
+    assert.equal(summarizeReviews([rv('APPROVED')], HEAD).status, 'current_head_approval');
+    assert.equal(summarizeReviews([rv('APPROVED')], null).status, 'review_head_unknown');
+    const superseded = [rv('CHANGES_REQUESTED', { id: 1, submitted_at: '2026-10-01T00:00:00Z' }), rv('APPROVED', { id: 2, submitted_at: '2026-10-02T00:00:00Z' })];
+    for (const s of everyOrder(superseded)) assert.equal(s.status, 'current_head_approval');
+    const revoked = [rv('APPROVED', { submitted_at: '2026-10-01T00:00:00Z' }), rv('CHANGES_REQUESTED', { submitted_at: '2026-10-02T00:00:00Z' })];
+    for (const s of everyOrder(revoked)) assert.equal(s.status, 'changes_requested');
+    // A decided, different timestamp wins over ids that point the other way (ids only break exact timestamp ties).
+    for (const s of everyOrder([rv('APPROVED', { id: 99, submitted_at: '2026-10-01T00:00:00Z' }), rv('CHANGES_REQUESTED', { id: 1, submitted_at: '2026-10-02T00:00:00Z' })])) assert.equal(s.status, 'changes_requested');
+  });
+
+  test('#44 L: mixed reviewers, anonymous accounts, COMMENTED-only and no reviews keep their semantics', () => {
+    const mixed = [rv('APPROVED', { user: { login: 'alice' } }), rv('CHANGES_REQUESTED', { user: { login: 'bob' } })];
+    for (const s of everyOrder(mixed)) { assert.equal(s.status, 'changes_requested'); assert.equal(s.reviewers.length, 2); }
+    // two different reviewers tied at the same instant are NOT competing: each keeps their own decision
+    for (const s of everyOrder([rv('APPROVED', { user: { login: 'alice' } }), rv('APPROVED', { user: { login: 'bob' } })])) assert.deepEqual(s.reviewers.map((r) => r.reviewer), ['alice', 'bob']);
+    // deleted accounts are kept individually, so a blocker cannot vanish and an approval cannot hide it
+    const anon = [rv('APPROVED', { user: null, id: 1 }), rv('CHANGES_REQUESTED', { user: null, id: 2 })];
+    for (const s of everyOrder(anon)) { assert.equal(s.status, 'changes_requested'); assert.equal(s.reviewers.length, 2); }
+    assert.equal(summarizeReviews([rv('COMMENTED')], HEAD).status, 'commented_only');
+    assert.equal(summarizeReviews([rv('COMMENTED'), rv('APPROVED', { id: 5 })], HEAD).status, 'current_head_approval');
+    assert.equal(summarizeReviews([], HEAD).status, 'no_reviews');
+    assert.equal(summarizeReviews(undefined, HEAD).status, 'no_reviews');
+  });
+
+  test('#44 H: a truncated review list stays PARTIAL in the served detail whatever the tie rule decides', () => {
+    // fetchPullDetail marks truncated review pages partial before any ordering matters; the ordering only fills `observed`.
+    const src = readFileSync(new URL('../server/githubDevelopmentHistory.mjs', import.meta.url), 'utf8');
+    assert.match(src, /status: reviewsComplete \? observedReview\.status : 'partial'/);
+    assert.match(src, /\.\.\.\(reviewsComplete \? \{\} : \{ observed: observedReview\.status \}\)/);
+  });
+
+  test('#44: the ordering rule is pure (no new GitHub request) and keeps the serialized reviewer shape', () => {
+    const s = summarizeReviews([rv('APPROVED', { id: 3 })], HEAD);
+    assert.deepEqual(Object.keys(s).sort(), ['reviewers', 'status']);
+    assert.deepEqual(Object.keys(s.reviewers[0]).sort(), ['commitId', 'relation', 'reviewId', 'reviewer', 'state', 'submittedAt']);
+    const src = readFileSync(new URL('../server/githubDevelopmentHistory.mjs', import.meta.url), 'utf8');
+    const start = src.indexOf('const DECISIVE_REVIEW_STATES');
+    const end = src.indexOf('/** Per-process memory cache');
+    assert.ok(start > 0 && end > start, 'review ordering section not found');
+    assert.doesNotMatch(src.slice(start, end), /execFile|ghApi|fetch\(|spawn|process\.env/); // no GitHub, process or environment access
+  });
+}
