@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { CodexAppServerClient } from './server/codexAppServerClient.mjs';
@@ -21,11 +20,18 @@ import { fetchChangedFiles, isRealGithubRepo } from './server/githubPullStatus.m
 import { fetchLocalDiff } from './server/localGitStatus.mjs';
 import { GithubCliError } from './server/githubRepos.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
-const PORT = 3000;
+const DEFAULT_PORT = 3000;
+// An explicit PORT must be a plain decimal 1-65535. An invalid explicit value fails closed instead of falling back to 3000.
+function resolvePort(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_PORT;
+  if (!/^[1-9][0-9]{0,4}$/.test(raw) || Number(raw) > 65535) {
+    console.error(`Invalid PORT ${JSON.stringify(raw.slice(0, 32))}: expected a decimal integer from 1 to 65535.`);
+    process.exit(1);
+  }
+  return Number(raw);
+}
+const PORT = resolvePort(process.env.PORT);
 const HOST = '127.0.0.1';
 const EXPECTED_COMMAND_CENTER_ORIGIN = process.env.COMMAND_CENTER_ORIGIN || `http://${HOST}:${PORT}`;
 
