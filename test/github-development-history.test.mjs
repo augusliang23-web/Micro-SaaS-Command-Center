@@ -417,11 +417,16 @@ test('P2-1: CI is reported with the exact head SHA it was read for', async () =>
 const SHA = (name) => `sha-${name.replace(/\//g, '_')}`;
 function movingRoutes({ branchReads, compareLog, mainCommits }) {
   const headFor = (name) => (name === 'main' ? 'm3' : name === 'production-pages' ? 'pp1' : PULLS.find((p) => p.state === 'open' && p.head.ref === name)?.head.sha ?? SHA(name));
-  const names = ['main', 'production-pages', 'integration/v23-foundation', 'claude/v23-product-integration', 'claude/v23-browser-e2e-hardening', 'integration/v23-e2e-candidate', 'claude/v23-gate2-closeout', 'claude/v23-uat-backend-activation', 'claude/v23-uat-frontend-activation'];
+  // 'unrelated/old-branch' is not main, production-pages or any open PR head/base: it is never compared.
+  const names = ['main', 'production-pages', 'integration/v23-foundation', 'claude/v23-product-integration', 'claude/v23-browser-e2e-hardening', 'integration/v23-e2e-candidate', 'claude/v23-gate2-closeout', 'claude/v23-uat-backend-activation', 'claude/v23-uat-frontend-activation', 'unrelated/old-branch'];
   let reads = 0;
   return [
     [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput({ default_branch: 'main', html_url: `https://github.com/${REPO}` })],
-    [/\/branches\?/, () => { const moved = branchReads(reads++); return ghOutput(names.map((name) => ({ name, commit: { sha: moved[name] ?? headFor(name) }, protected: false }))); }],
+    [/\/branches\?/, () => {
+      const moved = branchReads(reads++);
+      const present = [...names.filter((name) => !(moved.__remove ?? []).includes(name)), ...Object.keys(moved.__add ?? {})];
+      return ghOutput(present.map((name) => ({ name, commit: { sha: moved.__add?.[name] ?? moved[name] ?? headFor(name) }, protected: false })));
+    }],
     [/\/pulls\?state=all/, () => ghOutput(PULLS)],
     [/\/commits\?sha=/, (path) => { mainCommits?.push(path); return ghOutput([commit('m3', ['m2'], '2026-10-14T05:13:33Z'), commit('m2', [], '2026-10-10T00:37:33Z')]); }],
     [/\/compare\//, (path) => { compareLog.push(path); return ghOutput({ status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1, merge_base_commit: { sha: 'm3' }, commits: [commit(`c-${path.split('...')[1].split('?')[0]}`, ['m3'], '2026-10-15T00:00:00Z')] }); }],
@@ -470,4 +475,63 @@ test('Snapshot: an OPEN PR whose head differs from its branch head is flagged an
   assert.equal(history.status, 'partial');
   const mismatch = history.consistency.prHeadMismatches.find((m) => m.number === 55);
   assert.deepEqual(mismatch, { number: 55, headRef: 'claude/v23-browser-e2e-hardening', prHeadSha: PULLS.find((p) => p.number === 55).head.sha, branchHeadSha: 'newer-head' });
+});
+
+// ---------------- Final provenance hardening: P2-4 snapshot completeness ----------------
+// Any branch-list drift makes the repository snapshot Partial. A comparison whose
+// refs did not move keeps its own pinned, complete status (edge proof != snapshot completeness).
+const drift = (reads) => async () => {
+  const { execFileFn } = fakeGh(movingRoutes({ compareLog: [], branchReads: reads }));
+  return fetchDevelopmentHistory(REPO, { execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
+};
+const refsOf = (h) => h.consistency.driftedRefs.map((r) => `${r.ref}:${r.relevant}`).sort();
+
+test('P2-4 negative control: an unrelated branch moving makes the snapshot Partial, not Complete', async () => {
+  const history = await drift((n) => (n === 0 ? {} : { 'unrelated/old-branch': 'pushed-meanwhile' }))();
+  assert.equal(history.status, 'partial');
+  assert.equal(history.consistency.status, 'inconsistent');
+  assert.deepEqual(history.consistency.driftedRefs, [{ ref: 'unrelated/old-branch', observed: SHA('unrelated/old-branch'), reread: 'pushed-meanwhile', relevant: false }]);
+  assert.match(history.warnings.join(' '), /moved during the read: unrelated\/old-branch/);
+  // Edge proof is separate: every comparison is still pinned to observed SHAs and complete.
+  assert.ok(history.comparisons.length > 0);
+  assert.ok(history.comparisons.every((c) => c.complete && c.baseSha === 'm3' && c.headSha && c.error === null));
+  assert.deepEqual(history.consistency.prHeadMismatches, []);
+});
+
+test('P2-4: a new branch appearing during the read makes the snapshot Partial', async () => {
+  const history = await drift((n) => (n === 0 ? {} : { __add: { 'feature/just-created': 'new-sha' } }))();
+  assert.equal(history.status, 'partial');
+  assert.deepEqual(history.consistency.driftedRefs, [{ ref: 'feature/just-created', observed: null, reread: 'new-sha', relevant: false }]);
+});
+
+test('P2-4: a branch disappearing during the read makes the snapshot Partial', async () => {
+  const history = await drift((n) => (n === 0 ? {} : { __remove: ['unrelated/old-branch'] }))();
+  assert.equal(history.status, 'partial');
+  assert.deepEqual(history.consistency.driftedRefs, [{ ref: 'unrelated/old-branch', observed: SHA('unrelated/old-branch'), reread: null, relevant: false }]);
+});
+
+test('P2-4: the default branch moving is Partial and marked as an edge-relevant ref', async () => {
+  const history = await drift((n) => (n === 0 ? {} : { main: 'm4' }))();
+  assert.equal(history.status, 'partial');
+  assert.deepEqual(refsOf(history), ['main:true']);
+});
+
+test('P2-4: a stacked PR base branch moving is Partial and edge-relevant', async () => {
+  const history = await drift((n) => (n === 0 ? {} : { 'claude/v23-product-integration': 'moved-base' }))();
+  assert.equal(history.status, 'partial');
+  assert.deepEqual(refsOf(history), ['claude/v23-product-integration:true']);
+});
+
+test('P2-4: relevant and unrelated drift together are both reported; none is dropped', async () => {
+  const history = await drift((n) => (n === 0 ? {} : { 'unrelated/old-branch': 'x', 'production-pages': 'pp2' }))();
+  assert.deepEqual(refsOf(history), ['production-pages:true', 'unrelated/old-branch:false']);
+  assert.equal(history.status, 'partial');
+});
+
+test('P2-4: a stable snapshot is Complete/consistent but still not atomic', async () => {
+  const history = await drift(() => ({}))();
+  assert.equal(history.status, 'complete');
+  assert.equal(history.consistency.status, 'consistent');
+  assert.equal(history.consistency.atomic, false);
+  assert.deepEqual(history.consistency.driftedRefs, []);
 });

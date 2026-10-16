@@ -356,8 +356,10 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
 
 /**
  * Re-reads the branch list after the dependent reads and reports drift.
+ * Any drift makes the whole snapshot inconsistent (top-level Partial).
  * `relevant` marks refs that edges or ancestry claims depend on (the default
- * branch and every compared focus ref). Open PRs whose head SHA differs from
+ * branch and every compared focus ref); unrelated drift does not by itself
+ * invalidate an edge whose refs did not move. Open PRs whose head SHA differs from
  * their head branch's observed head are listed too: the PR list and branch
  * list were read at different instants, so any claim that joins them is UNKNOWN.
  */
@@ -388,7 +390,9 @@ export async function assessConsistency({ repo, opts, branches, pulls, defaultBr
       prHeadMismatches.push({ number: pr.number, headRef: pr.headRef, prHeadSha: pr.headSha, branchHeadSha: branchHead });
     }
   }
-  const inconsistent = driftedRefs.some((r) => r.relevant) || prHeadMismatches.length > 0;
+  // Snapshot completeness: ANY observed drift (moved, new or removed branch) makes the repository
+  // snapshot inconsistent/Partial. `relevant` only tells the UI which per-edge claims are affected.
+  const inconsistent = driftedRefs.length > 0 || prHeadMismatches.length > 0;
   if (driftedRefs.length) warnings.push(`Branch heads moved during the read: ${driftedRefs.map((r) => r.ref).join(', ')}.`);
   if (prHeadMismatches.length) warnings.push(`PR head differs from branch head for: ${prHeadMismatches.map((m) => `#${m.number}`).join(', ')}.`);
   return { atomic: false, status: inconsistent ? 'inconsistent' : 'consistent', rereadAt: now().toISOString(), driftedRefs, prHeadMismatches };

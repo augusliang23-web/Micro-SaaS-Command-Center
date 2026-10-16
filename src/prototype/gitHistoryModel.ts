@@ -273,22 +273,31 @@ export const shortSha = (sha: string | null | undefined) => (sha ? sha.slice(0, 
 export type Reconciliation = {
   snapshotHead: string | null; currentHead: string | null;
   headMismatch: boolean; stateChange: { from: string; to: string } | null;
-  /** CI belongs to exactly the head the detail reported AND the head the list displays. */
+  /** Any of the snapshot head, current PR head or CI head is absent. */
+  missingSha: boolean;
+  /** Snapshot and current PR head are both known (review/file data can be tied to the displayed head). */
+  headsKnown: boolean;
+  /** snapshot head = current PR head = CI head, all present. The only state that may show CI against the displayed head. */
   ciApplies: boolean; ciHeadConsistent: boolean; needsRefresh: boolean;
 };
 /**
  * The list snapshot and the on-demand PR detail are separate reads. CI/review
- * data may only be attached to the displayed head SHA when every SHA agrees;
- * otherwise the panel must say the data is stale or unverified.
+ * data may only be attached to the displayed head SHA when every SHA is present
+ * and equal; otherwise the panel must say the data is stale or unverified.
+ * Missing information fails closed, never open.
  */
 export function reconcilePullDetail(pr: HistoryPull, detail: PullDetail): Reconciliation {
   const snapshotHead = pr.headSha;
   const currentHead = detail.pull.headSha;
-  const headMismatch = Boolean(snapshotHead && currentHead && snapshotHead !== currentHead);
-  const ciHeadConsistent = Boolean(detail.ci.headSha && currentHead && detail.ci.headSha === currentHead);
-  const ciApplies = ciHeadConsistent && Boolean(snapshotHead) && snapshotHead === detail.ci.headSha;
+  const ciHead = detail.ci.headSha;
+  const headsKnown = Boolean(snapshotHead && currentHead);
+  const missingSha = !headsKnown || !ciHead;
+  const headMismatch = headsKnown && snapshotHead !== currentHead;
+  const ciHeadConsistent = Boolean(ciHead && currentHead && ciHead === currentHead);
+  const ciApplies = !missingSha && snapshotHead === currentHead && currentHead === ciHead;
   const stateChange = pr.status !== detail.pull.status ? { from: STATUS_LABEL[pr.status], to: STATUS_LABEL[detail.pull.status] } : null;
-  return { snapshotHead, currentHead, headMismatch, stateChange, ciApplies, ciHeadConsistent, needsRefresh: headMismatch || Boolean(stateChange) };
+  const ciChecked = detail.ci.status !== 'not_checked';
+  return { snapshotHead, currentHead, headMismatch, stateChange, missingSha, headsKnown, ciApplies, ciHeadConsistent, needsRefresh: headMismatch || Boolean(stateChange) || missingSha || (ciChecked && !ciApplies) };
 }
 /** Partial wins over any decision: a truncated list cannot prove Approved. */
 export function reviewIsPartial(reviews: PullDetail['reviews']): boolean {
@@ -298,14 +307,17 @@ export function reviewIsPartial(reviews: PullDetail['reviews']): boolean {
 export const driftedRefNames = (history: DevelopmentHistory) => new Set(history.consistency?.driftedRefs.map((r) => r.ref) ?? []);
 export const prHeadMismatch = (history: DevelopmentHistory, number: number) => history.consistency?.prHeadMismatches.find((m) => m.number === number) ?? null;
 /**
- * Ancestry of a PR head vs its base branch head. Any ref that moved while the
- * snapshot was read, or an open PR whose list head disagrees with its branch,
- * makes the claim UNKNOWN instead of VERIFIED.
+ * Ancestry of a PR head vs its base branch head. A claim is judged only by the
+ * refs it uses: a moved base, a moved head branch of an open PR, or a list head
+ * that disagrees with its branch makes THIS claim UNKNOWN. Drift on unrelated
+ * branches makes the whole snapshot Partial (see consistency) but does not
+ * downgrade a claim whose participating refs are unchanged.
  */
-export type AncestryClaim = { state: 'yes' | 'no' | 'unknown'; baseHead: string | null; reason?: 'base_moved' | 'pr_head_mismatch' | 'missing_commits' };
+export type AncestryClaim = { state: 'yes' | 'no' | 'unknown'; baseHead: string | null; reason?: 'base_moved' | 'pr_head_moved' | 'pr_head_mismatch' | 'missing_commits' };
 export function ancestryClaim(history: DevelopmentHistory, pr: HistoryPull, index: CommitIndex): AncestryClaim {
   const baseHead = history.branches.find((b) => b.name === pr.baseRef)?.headSha ?? null;
   if (pr.baseRef && driftedRefNames(history).has(pr.baseRef)) return { state: 'unknown', reason: 'base_moved', baseHead };
+  if (pr.state === 'open' && pr.headRef && driftedRefNames(history).has(pr.headRef)) return { state: 'unknown', reason: 'pr_head_moved', baseHead };
   if (prHeadMismatch(history, pr.number)) return { state: 'unknown', reason: 'pr_head_mismatch', baseHead };
   const result = isAncestor(index, baseHead, pr.headSha);
   return result === 'unknown' ? { state: 'unknown', reason: 'missing_commits', baseHead } : { state: result ? 'yes' : 'no', baseHead };

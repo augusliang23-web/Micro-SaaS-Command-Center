@@ -146,7 +146,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
       <div><dt>Last checked</dt><dd>{data ? formatSgt(data.fetchedAt) : 'Not checked'}{data?.cache === 'hit' ? '（伺服器快取 ≤5 分鐘）' : ''}</dd></div>
       <div><dt>Data status</dt><dd><span className={`g-status is-${dataStatus.split(' ')[0].toLowerCase()}`}>{dataStatus}</span></dd></div>
     </dl>
-    {data && <p className="g-muted g-note">非原子快照：分支、PR、commit 為多次獨立的 GET 讀取{data.consistency ? (data.consistency.status === 'consistent' ? `；結束前重讀分支 head（${formatSgt(data.consistency.rereadAt)}）：未發現移動` : data.consistency.status === 'inconsistent' ? '；結束前重讀發現 head 已移動，相關關係標為 UNKNOWN' : '；未能重讀分支 head，一致性未驗證') : ''}。</p>}
+    {data && <p className="g-muted g-note">非原子快照：分支、PR、commit 為多次獨立的 GET 讀取{data.consistency ? (data.consistency.status === 'consistent' ? `；結束前重讀分支 head（${formatSgt(data.consistency.rereadAt)}）：未發現移動` : data.consistency.status === 'inconsistent' ? '；結束前重讀發現分支 head 已移動：整體快照標為 Partial；未受影響的已驗證 Git 關係維持原狀，受影響者標為 UNKNOWN' : '；未能重讀分支 head，一致性未驗證') : ''}。</p>}
     {state.status === 'error' && <p className="g-banner is-error" role="alert"><AlertTriangle size={15} />{ERROR_TEXT[state.error!.kind] ?? ERROR_TEXT.failed}{state.error?.resetAt ? ` 重置時間：${formatSgt(state.error.resetAt)}` : ''}{data ? ' 目前顯示上一次成功讀取的資料（Needs refresh）。' : ''}</p>}
     {state.status === 'loading' && !data && <p className="g-banner" role="status">正在從 GitHub 讀取 {repo} 的分支、PR 與 commit 歷史…</p>}
     {data && data.warnings.length > 0 && <p className="g-banner is-warn"><AlertTriangle size={15} />Partial history：{data.warnings.join(' ')}</p>}
@@ -397,14 +397,17 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }
     let ciText: string = loading;
     if (d && rec) {
       const total = d.ci.total !== null && d.ci.total !== undefined ? `（${d.ci.total} 個 check run）` : '';
+      // Fail closed: an unqualified CI result is rendered only when snapshot head = PR head = CI head.
       if (d.ci.status === 'not_checked') ciText = 'Not checked（CI 讀取失敗）';
+      else if (rec.ciApplies) ciText = `${CI_LABEL[d.ci.status]}${total} · head ${shortSha(d.ci.headSha)}`;
+      else if (rec.missingSha) ciText = `Not verified · 缺少 head SHA（快照 ${shortSha(rec.snapshotHead)}／目前 ${shortSha(rec.currentHead)}／CI ${shortSha(d.ci.headSha)}），無法證明 CI 屬於顯示的 head`;
       else if (!rec.ciHeadConsistent) ciText = `Not verified · CI 讀取的 head ${shortSha(d.ci.headSha)} 與 PR 目前 head ${shortSha(d.pull.headSha)} 不一致`;
       else if (rec.headMismatch) ciText = `Stale data · 針對 ${shortSha(d.ci.headSha)} 的 CI：${CI_LABEL[d.ci.status]}${total} · 不適用於快照 head ${shortSha(pr.headSha)}`;
-      else ciText = `${CI_LABEL[d.ci.status]}${total} · head ${shortSha(d.ci.headSha)}`;
+      else ciText = 'Not verified · 無法證明 CI 屬於顯示的 head';
     }
     let reviewText: string = loading;
     if (d && rec) {
-      if (rec.headMismatch) reviewText = 'Not verified · 快照已過期，請先重新整理';
+      if (rec.headMismatch || !rec.headsKnown) reviewText = rec.headMismatch ? 'Not verified · 快照已過期，請先重新整理' : 'Not verified · 缺少 head SHA，無法確認 review 屬於顯示的 head';
       else if (d.reviews.status === 'not_checked') reviewText = 'Not checked（review 讀取失敗）';
       else if (reviewIsPartial(d.reviews)) reviewText = `Partial / UNKNOWN（僅讀到 ${d.reviews.count ?? '?'} 筆，review 歷史不完整，不是已驗證的決定${d.reviews.observed && d.reviews.observed !== 'no_reviews' && d.reviews.observed !== 'partial' ? `；已讀部分：${REVIEW_LABEL[d.reviews.observed]}` : ''}）`;
       else reviewText = `${REVIEW_LABEL[d.reviews.status]}${d.reviews.count ? `（${d.reviews.count} 筆）` : ''}`;
@@ -412,6 +415,7 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }
     const ancestryText = ancestry.state === 'yes' ? `已驗證：${pr.baseRef} 目前 head ${shortSha(ancestry.baseHead)} 是 PR head 的祖先`
       : ancestry.state === 'no' ? `已驗證：${pr.baseRef} 目前 head ${shortSha(ancestry.baseHead)} 不是 PR head 的祖先（base 已前進或分歧）`
       : ancestry.reason === 'base_moved' ? `UNKNOWN（快照期間 base 分支 ${pr.baseRef} 的 head 已移動）`
+      : ancestry.reason === 'pr_head_moved' ? `UNKNOWN（快照期間 PR head 分支 ${pr.headRef} 已移動）`
       : ancestry.reason === 'pr_head_mismatch' ? 'UNKNOWN（PR 清單與分支清單的 head 不一致）'
       : 'UNKNOWN（相關 commit 未全部取得）';
     return <aside className="g-detail" aria-label="PR 詳細資訊">
@@ -419,8 +423,10 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }
       <h2>#{pr.number} {pr.title}</h2>
       <p><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span>{pr.isDraft && pr.state === 'open' ? ' Draft' : ''}</p>
       {rec?.needsRefresh && d && <div className="g-banner is-warn" role="status"><AlertTriangle size={15} /><div>
-        <strong>Needs refresh · Stale data</strong>
+        <strong>Needs refresh{rec.headMismatch ? ' · Stale data' : ' · Not verified'}</strong>
         {rec.headMismatch && <p>快照 head {shortSha(rec.snapshotHead)}，目前 head {shortSha(rec.currentHead)}：PR 在快取期間有新 commit。下方 CI／review 屬於較新的 head，不能套用到快照顯示的 head。</p>}
+        {!rec.headMismatch && rec.missingSha && <p>head SHA 缺漏（快照 {shortSha(rec.snapshotHead)}／目前 {shortSha(rec.currentHead)}／CI {shortSha(d.ci.headSha)}）：無法證明 CI 屬於顯示的 head。</p>}
+        {!rec.headMismatch && !rec.missingSha && !rec.ciApplies && d.ci.status !== 'not_checked' && <p>CI 讀取的 head {shortSha(d.ci.headSha)} 與 PR 目前 head {shortSha(d.pull.headSha)} 不一致。</p>}
         {rec.stateChange && <p>狀態已變更：{rec.stateChange.from} → {rec.stateChange.to}（快照 {formatSgt(data.fetchedAt)}；即時 {formatSgt(d.fetchedAt)}）。</p>}
         <button className="g-link" onClick={refresh}>重新讀取快照</button>
       </div></div>}
@@ -435,7 +441,7 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }
         <Field label="Latest head SHA（快照）"><span className="g-mono">{pr.headSha ?? 'Not available'}</span></Field>
         <Field label="Review" testId="pr-review">{reviewText}</Field>
         <Field label="CI" testId="pr-ci">{ciText}</Field>
-        <Field label="Changed files">{d?.pull.changedFiles != null && rec && !rec.headMismatch ? `${d.pull.changedFiles} 個檔案 · +${d.pull.additions} / −${d.pull.deletions} · ${d.pull.commits} commits` : rec?.headMismatch ? 'Not verified（快照已過期）' : 'Not available'}</Field>
+        <Field label="Changed files">{d?.pull.changedFiles != null && rec && !rec.headMismatch && rec.headsKnown ? `${d.pull.changedFiles} 個檔案 · +${d.pull.additions} / −${d.pull.deletions} · ${d.pull.commits} commits` : rec && (rec.headMismatch || !rec.headsKnown) ? 'Not verified（快照已過期或缺少 head SHA）' : 'Not available'}</Field>
         <Field label="Stacked 關係（PR metadata）">{parent ? <button className="g-link" onClick={() => select({ kind: 'pr', number: parent.number })}>base = PR #{parent.number} 的 head</button> : `base = ${pr.baseRef}`}{children.length ? <> · 上層：{children.map((c) => <button key={c.number} className="g-link" onClick={() => select({ kind: 'pr', number: c.number })}>#{c.number}</button>)}</> : null}</Field>
         <Field label="Git ancestry（commit parents）">{ancestryText}</Field>
         {mismatch && <Field label="Snapshot 一致性">PR 清單與分支清單的 head 不一致（PR {shortSha(mismatch.prHeadSha)} vs 分支 {shortSha(mismatch.branchHeadSha)}）：此 PR 的 ancestry 視為 UNKNOWN。</Field>}

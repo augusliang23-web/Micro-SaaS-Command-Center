@@ -203,7 +203,7 @@ test('mode toggle explicitly selects DEMO even when the display name is unchange
 });
 
 // ---------------- Track B B1 · live read-only PM Dashboard development map ----------------
-import {formatSgt,liveRepositoryFor,stackParent,stackChildren,relatedPulls,indexCommits,isAncestor,mergeEvidence,buildTimeline,LANES} from './prototype/gitHistoryModel';
+import {formatSgt,liveRepositoryFor,stackParent,stackChildren,relatedPulls,indexCommits,isAncestor,mergeEvidence,buildTimeline,LANES,reconcilePullDetail,ancestryClaim} from './prototype/gitHistoryModel';
 import type {DevelopmentHistory,HistoryPull,HistoryCommit} from './prototype/gitHistoryTypes';
 import {LIVE_PM_DASHBOARD} from './prototype/data';
 
@@ -552,4 +552,84 @@ test('Snapshot: drifted refs and PR/branch head mismatches downgrade status and 
 test('Snapshot: a consistent read still labels itself non-atomic',async()=>{
  await openPr(55,makeHistory({consistency:{atomic:false,status:'consistent',rereadAt:'2026-10-15T23:57:30.000Z',driftedRefs:[],prHeadMismatches:[]}}));
  expect(screen.getByText(/非原子快照/)).toBeVisible();expect(screen.getByLabelText('資料來源')).toHaveTextContent('Complete');
+});
+
+// ---------------- Final provenance hardening: P2-3 CI SHA fail-closed ----------------
+const withSnapshotHead=(head:string|null)=>makeHistory({pulls:makeHistory().pulls.map(p=>p.number===55?{...p,headSha:head}:p)});
+const ciOf=()=>within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-ci');
+const reviewOf=()=>within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-review');
+
+test('P2-3 negative control: missing snapshot SHA + current head B + CI PASS on B never shows an unqualified PASS',async()=>{
+ const m=await openPr(55,withSnapshotHead(null));
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_B},ci:{status:'passing',total:5,headSha:SHA_B}}));await flush();
+ expect(ciOf()).toHaveTextContent('Not verified');expect(ciOf()).not.toHaveTextContent(/^CI passed/);expect(ciOf()).not.toHaveTextContent('CI passed（5 個 check run） · head');
+ expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
+ expect(reviewOf()).toHaveTextContent('Not verified');
+});
+
+test('P2-3: missing current PR SHA is Not verified and Needs refresh',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:null},ci:{status:'passing',total:5,headSha:SHA_A}}));await flush();
+ expect(ciOf()).toHaveTextContent('Not verified');expect(ciOf()).not.toHaveTextContent(/^CI passed/);
+ expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
+});
+
+test('P2-3: missing CI SHA is Not verified and Needs refresh',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{ci:{status:'passing',total:5,headSha:null}}));await flush();
+ expect(ciOf()).toHaveTextContent('Not verified');expect(ciOf()).not.toHaveTextContent(/^CI passed/);
+ expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
+});
+
+test('P2-3: every SHA missing at once still fails closed',async()=>{
+ const m=await openPr(55,withSnapshotHead(null));
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:null},ci:{status:'passing',total:5,headSha:null}}));await flush();
+ expect(ciOf()).toHaveTextContent('Not verified');expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
+});
+
+test('P2-3: mismatched SHAs stay Not verified / Stale; matching SHAs are the only path to an unqualified result',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_A},ci:{status:'passing',total:5,headSha:SHA_B}}));await flush();
+ expect(ciOf()).toHaveTextContent('Not verified');
+ cleanup();vi.restoreAllMocks();
+ const ok=await openPr();
+ detailReq(ok).resolve(detailWith(55));await flush();
+ expect(ciOf()).toHaveTextContent(`CI passed（5 個 check run） · head ${SHA_A}`);expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).not.toHaveTextContent('Needs refresh');
+});
+
+test.each([
+ ['snapshot null',null,SHA_B,SHA_B,false,true],
+ ['current null',SHA_A,null,SHA_A,false,true],
+ ['ci null',SHA_A,SHA_A,null,false,true],
+ ['snapshot≠current',SHA_A,SHA_B,SHA_B,false,false],
+ ['ci≠current',SHA_A,SHA_A,SHA_B,false,false],
+ ['all equal',SHA_A,SHA_A,SHA_A,true,false],
+])('P2-3 reconcilePullDetail truth table: %s',(_n,snap,cur,ci,applies,missing)=>{
+ const pr=makeHistory().pulls.find(p=>p.number===55)!;
+ const detail=detailWith(55,{pull:{headSha:cur},ci:{status:'passing',total:5,headSha:ci}}) as any;
+ const rec=reconcilePullDetail({...pr,headSha:snap},detail);
+ expect(rec.ciApplies).toBe(applies);
+ expect(rec.missingSha).toBe(missing);
+ expect(rec.needsRefresh).toBe(!applies); // CI that cannot be tied to the displayed head always asks for a refresh
+});
+
+// ---------------- Final provenance hardening: P2-4 completeness vs edge proof ----------------
+test('P2-4: unrelated drift makes the snapshot Partial but keeps an unaffected verified edge',async()=>{
+ const unrelated=makeHistory({status:'partial',warnings:['Branch heads moved during the read: codex/stale-experiment.'],
+  consistency:{atomic:false,status:'inconsistent',rereadAt:'2026-10-15T23:57:30.000Z',driftedRefs:[{ref:'codex/stale-experiment',observed:'not-fetched',reread:'later',relevant:false}],prHeadMismatches:[]}});
+ await openPr(55,unrelated);
+ const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ expect(screen.getByLabelText('資料來源')).toHaveTextContent('Partial history');
+ expect(panel).toHaveTextContent('已驗證：claude/v23-product-integration 目前 head p1 是 PR head 的祖先'); // its own refs did not move
+ expect(screen.getByText(/非原子快照/)).toHaveTextContent('整體快照標為 Partial');
+ expect(screen.getByText(/非原子快照/)).toHaveTextContent('未受影響的已驗證 Git 關係維持原狀');
+});
+
+test('P2-4: a moved base or a moved PR head branch turns that edge UNKNOWN',()=>{
+ const h=makeHistory();const idx=indexCommits(h.commits);const pr55=h.pulls.find(p=>p.number===55)!;
+ const drifted=(ref:string)=>({...h,consistency:{atomic:false as const,status:'inconsistent' as const,rereadAt:null,driftedRefs:[{ref,observed:'a',reread:'b',relevant:true}],prHeadMismatches:[]}});
+ expect(ancestryClaim(h,pr55,idx).state).toBe('yes');
+ expect(ancestryClaim(drifted('codex/stale-experiment'),pr55,idx).state).toBe('yes'); // unrelated ref
+ expect(ancestryClaim(drifted('claude/v23-product-integration'),pr55,idx)).toMatchObject({state:'unknown',reason:'base_moved'});
+ expect(ancestryClaim(drifted('claude/v23-browser-e2e-hardening'),pr55,idx)).toMatchObject({state:'unknown',reason:'pr_head_moved'});
 });

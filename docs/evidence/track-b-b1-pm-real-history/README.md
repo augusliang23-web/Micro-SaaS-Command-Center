@@ -87,8 +87,8 @@ Browser note: port 3000 was occupied by the user's long-running `command-center-
 
 ## Validation (updated after P2 remediation)
 
-- `npm run test:ui` — 7 files, 94 tests passed.
-- `node --test` focused: `github-development-history` (26), `github-pull-status`, `github-repos`, `local-git-status`, `status-provenance`, `verdict`, `local-state` — 109 passed.
+- `npm run test:ui` — 7 files, 107 tests passed.
+- `node --test` focused: `github-development-history` (33), `github-pull-status`, `github-repos`, `local-git-status`, `status-provenance`, `verdict`, `local-state` — 116 passed.
 - `npm run lint` (tsc) — pass. `npm run build` — exit 0 (pre-existing `import.meta`/chunk-size warnings only).
 - `git diff --check` — clean.
 - npm safety: no repo `.npmrc`; no `npm_config_*`/`NPM_TOKEN`/`NODE_AUTH_TOKEN` env names; no install, no registry access.
@@ -109,3 +109,15 @@ Residual: the PR detail's CI and review reads are two requests after the PR reco
 Existing B1 tests changed for the new behavior: backend fixtures now give branches heads equal to their open PR heads, read main history by SHA and assert SHA-based compares; the UI `detailFor` fixture now uses each PR's own head SHA instead of a hard-coded `e1` (the old fixture served CI for the wrong SHA, which the new gate correctly rejects).
 
 Final live revalidation (2026-10-16 08:32 SGT): 68 branches, 58 PRs, 13 OPEN, status `complete`, consistency `consistent` (re-read found no drift), 15 compares all pinned, 20/20 spot-check PRs match `gh api`. Real PR detail for #55, #57, #36: CI head equals PR head, reviews `no_reviews` complete. Browser 1366×768 and 390×844: page `scrollWidth` equals viewport, graph frame scrolls internally. The stale banner was also viewed in the real UI with an injected (simulated, not live) detail response for PR #57 (head changed); that screenshot is not committed because the Issue allowlist names only three PNGs.
+
+## Final provenance hardening (second independent review: P2-3, P2-4)
+
+Starting HEAD `f69031f88612205cfa611af4ec69a5ce7444cce1`. Negative controls were written first and run against that commit in a throwaway worktree: 3 backend and 10 UI tests failed there; all pass after the fix.
+
+**P2-3 CI SHA fail-closed.** The earlier code computed `ciApplies` but did not use it as the final condition: with a missing snapshot head, current head B and CI PASS on B, the panel rendered an unqualified "CI passed". Now an unqualified CI result is rendered only when snapshot head = current PR head = CI check-run head, all present. A missing snapshot, current or CI SHA, or any mismatch, shows "Not verified" (or "Stale data" when the heads differ) and "Needs refresh"; review and changed-files data are also "Not verified" when the snapshot or current head is unknown. Covered by a six-row `reconcilePullDetail` truth table and rendered-panel tests for each missing SHA, all-missing, mismatched and matching cases.
+
+**P2-4 completeness vs edge proof.** Previously a non-focus branch that moved or appeared during the read was listed in `driftedRefs` while `consistency.status` stayed `consistent` and the top-level status stayed `complete`. Now any drift (moved, new or removed branch) makes the repository snapshot `inconsistent` and `partial`. Per-edge proof stays separate: a comparison is still pinned to its observed SHAs and complete, and an ancestry claim is downgraded to UNKNOWN only when a ref it uses moved (its base, or the head branch of an open PR) or when the PR list head disagrees with its branch; unrelated drift leaves it verified. `relevant` on each drifted ref tells the UI which claims are affected. Tests: unrelated branch moves, new branch, removed branch, main moves, stacked PR base moves, combined drift, stable snapshot; plus the per-edge cases in the model.
+
+**Model disclosure.** The Issue requires Opus. The P2 remediation commit `f69031f` and this follow-up were produced in a session running Sonnet 5.5. This was disclosed in the earlier report and is not rewritten here; the earlier commit trailer says Sonnet 5.5.
+
+Validation: 107 UI and 116 Node tests, lint, build and `git diff --check` pass. Live check (2026-10-16 10:55 SGT): 68 branches, 58 PRs, 13 OPEN, status `complete`, consistency `consistent`, 20/20 spot-check PRs match `gh api`. Browser smoke at 1366×768 and 390×844 (actual widths measured): no page-wide overflow, CI shown only with its matching head SHA.
