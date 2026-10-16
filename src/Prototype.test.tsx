@@ -1,6 +1,6 @@
 import {act,cleanup,fireEvent,render,screen,within,waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {afterEach,beforeEach,expect,test,vi} from 'vitest';
+import {afterEach,beforeEach,describe,expect,test,vi} from 'vitest';
 import App from './App';
 import {PrototypeShell} from './prototype/PrototypeShell';
 import {initialProjects,initialAttentionItems,initialNextBestAction,initialExecutionSnapshot} from './mockData';
@@ -933,4 +933,247 @@ test('B1.1 no agent, prompt or model controls exist in the focus UX',async()=>{
  mockGeometry();await loadLive();clickPr(55);
  for(const b of screen.getAllByRole('button'))expect(b.textContent+(b.getAttribute('aria-label')??'')).not.toMatch(/執行|Execute|Generate|Dispatch|AI Command|Prompt|\bMerge\b|Approve|\bDeploy\b/i);
  expect(screen.queryByRole('textbox',{name:/指令|Prompt/})).toBeNull();
+});
+
+// ---------------- B1.1 six-P2 remediation: negative controls (written first, run against PR #37 HEAD 4e36fff) ----------------
+import {readFileSync} from 'node:fs';
+const shortHistory=(fetchedAt:string,createdAts:string[])=>{
+ const base=makeHistory();
+ return makeHistory({fetchedAt,pulls:base.pulls.slice(0,createdAts.length).map((p,i)=>({...p,createdAt:createdAts[i],updatedAt:createdAts[i],mergedAt:p.merged?createdAts[i]:null,closedAt:p.merged?createdAts[i]:null}))});
+};
+const fillOf=()=>lastCheckedLeft()/drawable();
+// 'all' starts at the SGT midnight of the earliest PR, so fetchedAt shortly after 16:00Z gives a sub-day span.
+const SHORT_CASES:[string,string,string[]][]=[
+ ['30-minute history','2026-10-15T16:30:00.000Z',['2026-10-15T16:05:00Z','2026-10-15T16:12:00Z','2026-10-15T16:20:00Z']],
+ ['1-hour history','2026-10-15T17:00:00.000Z',['2026-10-15T16:05:00Z','2026-10-15T16:30:00Z','2026-10-15T16:50:00Z']],
+ ['1-day history','2026-10-16T15:30:00.000Z',['2026-10-15T16:10:00Z','2026-10-16T02:00:00Z','2026-10-16T12:00:00Z']],
+ ['dense history (many PRs in minutes)','2026-10-15T16:30:00.000Z',['2026-10-15T16:01:00Z','2026-10-15T16:02:00Z','2026-10-15T16:03:00Z','2026-10-15T16:04:00Z','2026-10-15T16:05:00Z','2026-10-15T16:06:00Z','2026-10-15T16:07:00Z','2026-10-15T16:08:00Z','2026-10-15T16:09:00Z','2026-10-15T16:10:00Z']],
+];
+test.each(SHORT_CASES)('P2-1 negative control: %s fills the drawable plot, stays inside it and keeps readable ticks',async(_n,fetchedAt,created)=>{
+ mockGeometry();await loadLive(shortHistory(fetchedAt,created));setRange('全部歷史');await fireResize();
+ expect(canvas().dataset.fit).toBe('auto');
+ expect(fillOf()).toBeGreaterThanOrEqual(0.9); // old clamp: 1-day minimum span and 60 px/day cap leave ~3–7%
+ expect(canvasWidth()).toBeLessThanOrEqual(drawable()+1);
+ for(const card of cardEls())expect(parseFloat(card.style.left)+parseFloat(card.style.width)).toBeLessThanOrEqual(canvasWidth());
+ const labels=[...document.querySelectorAll('.g-tick-label')].map(t=>t.textContent);
+ expect(labels.length).toBeGreaterThanOrEqual(2);expect(new Set(labels).size).toBe(labels.length); // sub-day spans get time-of-day ticks
+});
+
+test('P2-1: fitPxPerDay fits actual positive spans and handles zero, inverted and invalid intervals safely',()=>{
+ const plotWidth=920;const MIN=60_000;
+ for(const spanMs of [30*MIN,60*MIN,1440*MIN,30*1440*MIN]){
+  const scale=fitPxPerDay({start:0,end:spanMs,plotWidth});
+  expect(PLOT_GUTTER_LEFT+(spanMs/DAY)*scale+PLOT_GUTTER_RIGHT).toBeCloseTo(plotWidth,3); // the span spans exactly the plot
+ }
+ for(const bad of [{start:5,end:5},{start:9,end:1},{start:NaN,end:1},{start:0,end:Infinity}]){
+  const scale=fitPxPerDay({...bad,plotWidth});expect(Number.isFinite(scale)).toBe(true);expect(scale).toBeGreaterThan(0);
+ }
+ expect(Number.isFinite(fitPxPerDay({start:0,end:DAY,plotWidth:0}))).toBe(true);
+ expect(Number.isFinite(fitPxPerDay({start:0,end:DAY,plotWidth:-5}))).toBe(true);
+});
+
+test('P2-1: an empty history and a zero-length interval render without NaN or overflow',async()=>{
+ mockGeometry();
+ await loadLive(makeHistory({pulls:[],fetchedAt:'2026-10-15T16:00:00.000Z'})); // fetched exactly at SGT midnight: start === end
+ setRange('全部歷史');await fireResize();
+ expect(Number.isFinite(ppd())).toBe(true);expect(Number.isFinite(lastCheckedLeft())).toBe(true);expect(canvasWidth()).toBeLessThanOrEqual(drawable()+1);
+ expect(cardEls()).toHaveLength(0);
+});
+
+const ZOOM_CASES:[string,number,'1 個月'|'3 個月'|'6 個月'|'全部歷史'][]=[
+ ['fit above 60 px/day (the old cap)',2800,'1 個月'],['fit ≈ 29 px/day',1366,'1 個月'],['fit ≈ 10 px/day',1366,'3 個月'],['fit at the 4 px/day floor',700,'全部歷史'],
+];
+test.each(ZOOM_CASES)('P2-2 negative control: from Auto Fit (%s) Zoom In increases and Zoom Out decreases the effective scale',async(_n,width,range)=>{
+ mockGeometry();WINDOW_W=width;
+ const long=makeHistory({pulls:makeHistory().pulls.map(p=>p.number===13?{...p,createdAt:'2026-04-27T01:00:00Z'}:p)});
+ await loadLive(range==='全部歷史'?long:makeHistory());setRange(range);await fireResize();
+ const fit=ppd();
+ fireEvent.click(screen.getByRole('button',{name:'放大'}));expect(canvas().dataset.fit).toBe('manual');
+ expect(ppd()).toBeGreaterThan(fit); // old: 60 -> 40 px/day shrinks the graph
+ fireEvent.click(screen.getByRole('button',{name:'Auto Fit'}));await fireResize();expect(ppd()).toBeCloseTo(fit,5);
+ fireEvent.click(screen.getByRole('button',{name:'縮小'}));
+ expect(ppd()).toBeLessThan(fit);
+});
+
+test('P2-2: repeated zoom in and out is strictly monotonic and reversible, then Auto Fit restores the fit',async()=>{
+ mockGeometry();WINDOW_W=2800;await loadLive();setRange('1 個月');await fireResize();
+ const fit=ppd();const seen=[fit];
+ for(let i=0;i<3;i++){fireEvent.click(screen.getByRole('button',{name:'放大'}));seen.push(ppd());}
+ for(let i=1;i<seen.length;i++)expect(seen[i]).toBeGreaterThan(seen[i-1]);
+ for(let i=0;i<3;i++){fireEvent.click(screen.getByRole('button',{name:'縮小'}));const now=ppd();expect(now).toBeLessThan(seen[seen.length-1-i]);}
+ expect(ppd()).toBeCloseTo(fit,5);
+ fireEvent.click(screen.getByRole('button',{name:'Auto Fit'}));await fireResize();expect(canvas().dataset.fit).toBe('auto');expect(ppd()).toBeCloseTo(fit,5);
+});
+
+test('P2-2: at a numeric boundary the zoom button is disabled instead of reversing direction',async()=>{
+ mockGeometry();await loadLive();setRange('1 個月');await fireResize();
+ for(let i=0;i<40&&!(screen.getByRole('button',{name:'放大'}) as HTMLButtonElement).disabled;i++){const before=ppd();fireEvent.click(screen.getByRole('button',{name:'放大'}));expect(ppd()).toBeGreaterThan(before);}
+ expect(screen.getByRole('button',{name:'放大'})).toBeDisabled();expect(canvasWidth()).toBeLessThan(250_000);
+ for(let i=0;i<80&&!(screen.getByRole('button',{name:'縮小'}) as HTMLButtonElement).disabled;i++){const before=ppd();fireEvent.click(screen.getByRole('button',{name:'縮小'}));expect(ppd()).toBeLessThan(before);}
+ expect(screen.getByRole('button',{name:'縮小'})).toBeDisabled();expect(ppd()).toBeGreaterThan(0);
+});
+
+const detailRequests=(m:{pending:Pending[]},n=55)=>m.pending.filter(p=>p.url.includes('/development-history/pull')&&p.url.includes(`number=${n}`));
+test('P2-3 negative control: closing and reopening the same PR on the same snapshot reuses the detail (no second GET)',async()=>{
+ const m=await openPr();expect(detailRequests(m)).toHaveLength(1);
+ detailReq(m).resolve(detailWith(55));await flush();
+ expect(within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-ci')).toHaveTextContent('CI passed');
+ fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));expect(screen.queryByRole('dialog')).toBeNull();
+ clickPr(55);await flush();
+ expect(detailRequests(m)).toHaveLength(1); // old: 2
+ expect(within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-ci')).toHaveTextContent('CI passed（5 個 check run） · head e1'); // shown immediately from the cache
+});
+
+test('P2-3: a refreshed snapshot invalidates the cache; the SHA fail-closed guard still applies to cached detail',async()=>{
+ const m=await openPr();detailReq(m).resolve(detailWith(55));await flush();
+ fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
+ m.pending.at(-1)!.resolve(makeHistory({fetchedAt:'2026-10-16T03:00:00.000Z',pulls:makeHistory().pulls.map(p=>p.number===55?{...p,headSha:SHA_B}:p)}));await flush();
+ clickPr(55);await flush();
+ expect(detailRequests(m)).toHaveLength(2); // new snapshot version => a fresh detail request is allowed
+ expect(within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-ci')).toHaveTextContent('Not checked'); // the old CI is not reused
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_A},ci:{status:'passing',total:5,headSha:SHA_A}}));await flush();
+ const dialog=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(within(dialog).getByTestId('pr-ci')).toHaveTextContent('Stale data');expect(within(dialog).getByTestId('pr-ci')).not.toHaveTextContent(/^CI passed/);
+ fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));clickPr(55);await flush();
+ expect(detailRequests(m)).toHaveLength(2);expect(within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-ci')).toHaveTextContent('Stale data'); // cached, still fail-closed
+});
+
+test('P2-3: the cache does not leak across projects or sessions',async()=>{
+ const m=await openPr();detailReq(m).resolve(detailWith(55));await flush();fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));
+ const rail=()=>within(screen.getByRole('navigation',{name:'專案（開發地圖）'}));
+ fireEvent.click(rail().getByRole('button',{name:/SwipeRight/}));expect(screen.getByLabelText('開發地圖不可用')).toBeVisible();
+ fireEvent.click(rail().getByRole('button',{name:/PM Dashboard · LIVE/}));
+ const history=m.pending.filter(p=>p.url.includes('development-history?')).at(-1)!;history.resolve(makeHistory());await flush();
+ clickPr(55);await flush();
+ expect(detailRequests(m)).toHaveLength(2); // a new project session starts with an empty cache
+ expect(within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-ci')).toHaveTextContent('Not checked');
+});
+
+// The 最近合併 card also lists milestone PRs after the merges, so the first match is the merge entry.
+const bottom=(label:string,card='OPEN PR 堆疊')=>within(screen.getByRole('heading',{name:new RegExp(`^${card}`)}).closest('article') as HTMLElement).getAllByRole('button',{name:label})[0];
+const ENTRIES:[string,()=>Promise<HTMLElement>][]=[
+ ['timeline PR card',async()=>screen.getByRole('button',{name:/^PR #55 ·/})],
+ ['timeline commit node',async()=>screen.getByRole('button',{name:/^main commit M13 ·/})],
+ ['PR list link',async()=>{fireEvent.click(screen.getByRole('tab',{name:/清單/}));return screen.getByRole('button',{name:/^PR #55 ·/});}],
+ ['Git topology node',async()=>{fireEvent.click(screen.getByRole('tab',{name:/Git 拓樸/}));return within(screen.getByRole('region',{name:'Git 拓樸圖'})).getByRole('button',{name:/^commit M13 ·/});}],
+ ['bottom info card (OPEN PR stack)',async()=>bottom('#55')],
+ ['bottom info card (recent merge)',async()=>bottom('#13','最近合併')],
+];
+const CLOSERS:[string,()=>void][]=[
+ ['Close button',()=>fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}))],
+ ['Escape',()=>fireEvent.keyDown(window,{key:'Escape'})],
+ ['outside click',()=>fireEvent.pointerDown(document.body)],
+];
+describe.each(ENTRIES)('P2-4 focus origin: %s',(_label,getEntry)=>{
+ test.each(CLOSERS)('closed by %s returns focus to the element that opened the panel',async(_c,close)=>{
+  mockGeometry();await loadLive();
+  const frame=document.querySelector('.g-frame') as HTMLElement;frame.scrollTop=40;frame.scrollLeft=0;
+  const opener=await getEntry();fireEvent.click(opener);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  close();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(opener); // old: bottom-card openers land on the timeline card
+  if(frame.isConnected)expect(frame.scrollTop).toBe(40); // restoring focus must not move the graph
+ });
+});
+
+test('P2-4: when the opener is gone, focus falls back to the visible scrollable region instead of the page body',async()=>{
+ mockGeometry();await loadLive();
+ fireEvent.click(screen.getByRole('button',{name:/^PR #55 ·/})); // opened from a timeline card ...
+ fireEvent.click(screen.getByRole('tab',{name:/Git 拓樸/}));     // ... whose view is then replaced, disconnecting the opener
+ expect(screen.queryByRole('button',{name:/^PR #55 ·/})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));
+ expect(document.activeElement).toBe(screen.getByRole('region',{name:'可水平捲動的 Git 拓樸'}));
+});
+
+test('P2-5 negative control: a desktop panel that becomes a mobile modal pulls focus inside and traps the keyboard',async()=>{
+ mockGeometry();await loadLive();
+ clickPr(55);const dialog=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(dialog).toHaveAttribute('aria-modal','false');expect(screen.queryByTestId('g-backdrop')).toBeNull();
+ const background=screen.getByRole('button',{name:'Auto Fit'});background.focus();expect(background).toHaveFocus();
+ window.innerWidth=390;await act(async()=>{window.dispatchEvent(new Event('resize'));await Promise.resolve();});
+ const sheet=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(sheet).toHaveAttribute('aria-modal','true');expect(screen.getByTestId('g-backdrop')).toBeInTheDocument();
+ expect(sheet.contains(document.activeElement)).toBe(true); // old: focus stays on the background Auto Fit button
+ background.focus();expect(sheet.contains(document.activeElement)).toBe(true); // a background control cannot keep focus
+ const items=sheet.querySelectorAll<HTMLElement>('a[href], button:not([disabled])');const first=items[0];const last=items[items.length-1];
+ last.focus();fireEvent.keyDown(sheet,{key:'Tab'});expect(first).toHaveFocus();
+ first.focus();fireEvent.keyDown(sheet,{key:'Tab',shiftKey:true});expect(last).toHaveFocus();
+ for(const control of [screen.getByRole('button',{name:'放大'}),screen.getByLabelText('PR 狀態篩選'),screen.getByRole('tab',{name:/清單/})]){control.focus();expect(sheet.contains(document.activeElement)).toBe(true);}
+});
+
+test('P2-5: going back to desktop restores the non-modal behaviour',async()=>{
+ mockGeometry();window.innerWidth=390;await loadLive();clickPr(55);
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveAttribute('aria-modal','true');
+ window.innerWidth=1024;await act(async()=>{window.dispatchEvent(new Event('resize'));await Promise.resolve();});
+ const dialog=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(dialog).toHaveAttribute('aria-modal','false');expect(screen.queryByTestId('g-backdrop')).toBeNull();expect(dialog).not.toHaveClass('is-sheet');
+ const background=screen.getByRole('button',{name:'Auto Fit'});background.focus();expect(background).toHaveFocus(); // background is usable again
+ fireEvent.pointerDown(document.body);expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+// ---- P2-6: the CSS cascade, computed from the real stylesheet text ----
+type CssRule={selectors:string[];decl:Record<string,string>;maxWidth:number|null;order:number};
+function parseCss(text:string):CssRule[]{
+ const css=text.replace(/\/\*[\s\S]*?\*\//g,'');const rules:CssRule[]=[];let i=0;let order=0;
+ const skipBlock=()=>{let depth=0;do{if(css[i]==='{')depth++;if(css[i]==='}')depth--;i++;}while(depth>0&&i<css.length);};
+ const block=(maxWidth:number|null)=>{
+  while(i<css.length){
+   while(/\s/.test(css[i]??'x'))i++;
+   if(i>=css.length)return;
+   if(css[i]==='}'){i++;return;}
+   const open=css.indexOf('{',i);const head=css.slice(i,open).trim();
+   if(head.startsWith('@media')){const m=head.replace(/\s/g,'').match(/max-width:(\d+)px/);i=open+1;block(m?Number(m[1]):-1);continue;}
+   if(head.startsWith('@')){i=open;skipBlock();continue;}
+   const close=css.indexOf('}',open);const decl:Record<string,string>={};
+   for(const d of css.slice(open+1,close).split(';')){const k=d.indexOf(':');if(k>0)decl[d.slice(0,k).trim()]=d.slice(k+1).trim().replace(/\s*!important/,'');}
+   rules.push({selectors:head.split(',').map(x=>x.trim()),decl,maxWidth,order:order++});i=close+1;
+  }
+ };
+ block(null);return rules;
+}
+const cascade=(rules:CssRule[],selector:string,prop:string,viewport:number)=>{
+ let winner:string|undefined;let best=-1;
+ const specificity=(s:string)=>(s.match(/\.[\w-]+|\[[^\]]+\]/g)??[]).length*10+(s.match(/(^|[\s>+~])[a-z][\w-]*/gi)??[]).length;
+ for(const r of rules){
+  if(r.maxWidth!==null&&(r.maxWidth<0||viewport>r.maxWidth))continue;
+  if(!r.selectors.includes(selector))continue;
+  const value=r.decl[prop]??(prop==='overflow-x'||prop==='overflow-y'?r.decl.overflow:undefined);
+  if(value===undefined)continue;
+  const weight=specificity(selector)*100000+r.order;if(weight>=best){best=weight;winner=value;}
+ }
+ return winner;
+};
+const stylesheet=parseCss(readFileSync(`${process.cwd()}/src/prototype/prototype.css`,'utf8'));
+
+test('P2-6 negative control: at 390 px the project rail is a horizontal, scrollable strip; at 1366 px a vertical rail',()=>{
+ for(const [selector,prop,mobile,desktop] of [
+  ['.g-rail','flex-direction','row','column'],['.g-rail-list','flex-direction','row','column'],['.g-rail','overflow-x','auto','hidden'],
+ ] as const){
+  expect(cascade(stylesheet,selector,prop,390),`${selector} ${prop} @390`).toBe(mobile); // old: column / hidden win because they are declared later
+  expect(cascade(stylesheet,selector,prop,1366),`${selector} ${prop} @1366`).toBe(desktop);
+ }
+ expect(cascade(stylesheet,'.g-rail-list button','width',390)).toBe('auto');
+ expect(cascade(stylesheet,'.g-shell','grid-template-columns',390)).toBe('minmax(0,1fr)');
+ expect(cascade(stylesheet,'.g-shell','grid-template-columns',1366)).toBe('var(--g-rail-w,220px) minmax(0,1fr)');
+});
+
+test('P2-6: the collapsed-rail variants never override the mobile direction or overflow, and the sheet rules stay mobile-safe',()=>{
+ for(const r of stylesheet.filter(x=>x.selectors.some(s=>s.includes('is-rail-collapsed')&&s.includes('.g-rail')&&!s.includes('g-rail-')||s==='.is-rail-collapsed .g-rail'))){
+  expect(r.decl['flex-direction']).toBeUndefined();expect(r.decl.overflow).toBeUndefined();expect(r.decl['overflow-x']).toBeUndefined();
+ }
+ expect(cascade(stylesheet,'.g-floating','position',390)).toBe('fixed');
+ expect(cascade(stylesheet,'.g-floating','width',390)).toBe('auto');expect(cascade(stylesheet,'.g-floating','bottom',390)).toBe('0');
+});
+
+// ---- information design: Commit is not PR ----
+test('Commit ≠ PR: the legend names months without any PR as source facts and never links commits to PRs',async()=>{
+ mockGeometry();
+ const long=makeHistory({pulls:makeHistory().pulls.map(p=>p.number===13?{...p,createdAt:'2026-04-27T01:00:00Z',mergedAt:'2026-04-27T02:00:00Z',closedAt:'2026-04-27T02:00:00Z'}:p)});
+ await loadLive(long);setRange('全部歷史');await fireResize();
+ const note=screen.getByTestId('no-pr-months');
+ for(const month of ['2026-05','2026-06','2026-07','2026-08','2026-09'])expect(note).toHaveTextContent(month);
+ expect(note).not.toHaveTextContent('2026-04');expect(note).not.toHaveTextContent('2026-10');
+ expect(note).toHaveTextContent('不是 PR');expect(note).toHaveTextContent('非資料缺漏');
 });

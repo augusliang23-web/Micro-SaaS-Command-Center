@@ -163,25 +163,61 @@ export const CARD_MIN_WIDTH = 196;
 export const PLOT_GUTTER_LEFT = 12;
 export const PLOT_GUTTER_RIGHT = 20;
 export const MIN_FIT_PX_PER_DAY = 4; // below this, Auto Fit stops compressing and the plot scrolls internally
-export const MAX_FIT_PX_PER_DAY = 60;
+export const MAX_PX_PER_DAY = 1e12; // numeric safety only; real spans never come close (a 1 ms span on a 1000 px plot is ~1e11)
 export const FALLBACK_PLOT_WIDTH = 960; // used only before the container has been measured
-const MIN_TICK_SPACING = 84;
+const MIN_TICK_SPACING = 84; // day-or-longer tick labels
+const MIN_TIME_TICK_SPACING = 116; // labels that include a time of day are wider
+const MINUTE = 60_000;
+const TIME_TICK_STEPS = [1, 5, 15, 30, 60, 180, 360, 720].map((m) => m * MINUTE);
+const DAY_TICK_STEPS = [1, 2, 7, 14];
+export const ZOOM_FACTOR = 1.5;
+export const MIN_MANUAL_PX_PER_DAY = 1;
+export const MAX_CANVAS_WIDTH = 120_000; // keeps the zoomed canvas far below browser size limits
+export const MIN_AXIS_WIDTH = 120;
 
+/**
+ * Length of the real interval in days. A zero-length, inverted or invalid interval has nothing to scale, so it is
+ * treated as one nominal day: the plot still renders, and no time relationship is invented.
+ */
+export function effectiveSpanDays(start: number, end: number): number {
+  const ms = end - start;
+  return Number.isFinite(ms) && ms > 0 ? ms / DAY_MS : 1;
+}
 /** px/day that spreads the real date span [start, end] across the drawable plot width. Dates are never distorted. */
 export function fitPxPerDay(opts: { start: number; end: number; plotWidth: number }): number {
   const plotWidth = opts.plotWidth > 0 && Number.isFinite(opts.plotWidth) ? opts.plotWidth : FALLBACK_PLOT_WIDTH;
-  const spanDays = Math.max(1, (opts.end - opts.start) / DAY_MS);
-  return Math.min(MAX_FIT_PX_PER_DAY, Math.max(MIN_FIT_PX_PER_DAY, (plotWidth - PLOT_GUTTER_LEFT - PLOT_GUTTER_RIGHT) / spanDays));
+  const usable = Math.max(1, plotWidth - PLOT_GUTTER_LEFT - PLOT_GUTTER_RIGHT);
+  return Math.min(MAX_PX_PER_DAY, Math.max(MIN_FIT_PX_PER_DAY, usable / effectiveSpanDays(opts.start, opts.end)));
+}
+/**
+ * Next manual scale. Zoom in always multiplies and zoom out always divides the CURRENT effective scale, whatever
+ * mode it came from. Returns null at a numeric boundary so the control can be disabled instead of reversing.
+ */
+export function zoomStep(current: number, direction: 1 | -1, spanDays: number): number | null {
+  if (!Number.isFinite(current) || current <= 0 || !Number.isFinite(spanDays) || spanDays <= 0) return null;
+  const next = direction > 0 ? current * ZOOM_FACTOR : current / ZOOM_FACTOR;
+  if (direction > 0) return next * spanDays + PLOT_GUTTER_LEFT + PLOT_GUTTER_RIGHT > MAX_CANVAS_WIDTH ? null : next;
+  return next < MIN_MANUAL_PX_PER_DAY || next * spanDays < MIN_AXIS_WIDTH ? null : next;
 }
 export const timelineSpan = (history: DevelopmentHistory, range: RangeId) => {
   const earliest = history.pulls.reduce<string | null>((min, p) => (p.createdAt && (!min || p.createdAt < min) ? p.createdAt : min), null);
   return { start: rangeStart(range, history.fetchedAt, earliest), end: Date.parse(history.fetchedAt) };
 };
-/** Day ticks (1/2/7/14) while they stay legible, otherwise SGT calendar-month starts. */
+/**
+ * Time-of-day ticks for sub-day spans, then day ticks (1/2/7/14) while they stay legible, otherwise SGT calendar-month
+ * starts. Sub-day ticks sit on SGT wall-clock multiples of their step.
+ */
 export function timelineTicks(start: number, end: number, pxPerDay: number, x: (ms: number) => number) {
   const ticks: { x: number; label: string }[] = [];
   const iso = (t: number) => new Date(t).toISOString();
-  const step = [1, 2, 7, 14].find((d) => d * pxPerDay >= MIN_TICK_SPACING);
+  const timeStep = TIME_TICK_STEPS.find((ms) => (ms / DAY_MS) * pxPerDay >= MIN_TIME_TICK_SPACING);
+  if (timeStep !== undefined && timeStep < DAY_MS) {
+    for (let t = Math.ceil((start + SGT_OFFSET_MS) / timeStep) * timeStep - SGT_OFFSET_MS; t <= end; t += timeStep) {
+      ticks.push({ x: x(t), label: formatSgt(iso(t), true).replace(/ SGT$/, '') });
+    }
+    if (ticks.length) return ticks;
+  }
+  const step = DAY_TICK_STEPS.find((d) => d * pxPerDay >= MIN_TICK_SPACING);
   if (step) {
     for (let t = start; t <= end; t += step * DAY_MS) ticks.push({ x: x(t), label: formatSgt(iso(t), false) });
     return ticks;

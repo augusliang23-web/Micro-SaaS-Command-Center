@@ -207,11 +207,6 @@
 @media(max-width:1000px) { .g-provenance { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:760px) {
   .g-shell { grid-template-columns:minmax(0,1fr); }
-  .g-rail { flex-direction:row; align-items:center; overflow-x:auto; padding:10px 12px; gap:6px; }
-  .g-rail-title,.g-rail-foot { display:none; }
-  .g-rail-head { flex-shrink:0; margin:0; }
-  .g-rail-list { flex-direction:row; gap:6px; }
-  .g-rail-list button { width:auto; flex-shrink:0; }
   .g-content { padding:18px 16px 28px; }
   .g-header { flex-direction:column; }
   .g-header h1 { font-size:23px; }
@@ -249,3 +244,14 @@
 .g-floating.is-sheet::before { content:""; display:block; width:40px; height:4px; border-radius:2px; background:#c9d4cc; margin:8px auto 0; }
 .g-floating .g-detail-head { position:sticky; top:0; background:#fff; padding:2px 0 6px; z-index:1; }
 @media(max-width:760px) { .g-floating { top:auto; right:0; bottom:0; left:0; width:auto; max-height:82vh; border-radius:16px 16px 0 0; border-width:1px 0 0; } }
+
+/* Mobile project rail. Declared AFTER the shared .g-rail rules above so the cascade cannot override it:
+   a horizontal strip that scrolls inside itself (never the page), with every project reachable. */
+@media(max-width:760px) {
+  .g-rail { flex-direction:row; align-items:center; overflow-x:auto; overflow-y:hidden; padding:10px 12px; gap:6px; }
+  .is-rail-collapsed .g-rail { padding:10px 12px; }
+  .g-rail-title,.g-rail-foot { display:none; }
+  .g-rail-head { flex-shrink:0; margin:0; }
+  .g-rail-list { flex-direction:row; flex-shrink:0; gap:6px; }
+  .g-rail-list button { width:auto; flex-shrink:0; }
+}
