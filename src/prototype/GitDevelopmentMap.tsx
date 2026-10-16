@@ -244,7 +244,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
       </div>}
       <div className="g-layout">
         <section className="g-graph-panel" aria-label={view === 'topology' ? 'Git 拓樸圖' : view === 'list' ? 'PR 清單' : '開發時間軸'}>
-          {view === 'timeline' && <Timeline data={data} range={range} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} />}
+          {view === 'timeline' && <Timeline data={data} range={range} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
           {view === 'topology' && <Topology data={data} range={range} selection={selection} select={openDetail} />}
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={openDetail} />}
         </section>
@@ -274,9 +274,10 @@ function prLabel(pr: HistoryPull) {
   return `PR #${pr.number} · ${pr.title} · ${STATUS_LABEL[pr.status]} · ${pr.headRef ?? '?'} → ${pr.baseRef ?? '?'} · 建立 ${formatSgt(pr.createdAt)}${pr.mergedAt ? ` · 合併 ${formatSgt(pr.mergedAt)}` : ''}`;
 }
 
-function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select }: {
+function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
   data: DevelopmentHistory; range: RangeId; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
   fit: 'auto' | 'manual'; manualScale: number; compactLabels: boolean; onScale: (pxPerDay: number) => void; query: string; selection: Selection; select: (s: Selection, origin?: Element | null) => void;
+  /** The last refresh failed: the held snapshot is historical, so it cannot support a current absence claim. */ refreshFailed?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
@@ -397,7 +398,7 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
             </button>; })}
       </div>
     </div>
-    <div className="g-legend"><span data-testid="no-pr-months">main／production-pages 上的圓點是 commit，不是 PR，兩者沒有推定關聯；PR 卡片只代表 GitHub PR 的建立到合併／關閉期間。{prAbsenceVerifiable(data) ? (emptyMonths.length ? `此範圍內沒有建立任何 PR 的月份：${emptyMonths.join('、')}（來源事實，並非資料缺漏）。` : '') : 'GitHub 歷史資料不完整，無法確認此範圍內是否有月份沒有 PR。'}</span><span><i className="is-solid" />實線：已驗證 merge commit（parent 含 PR head）</span><span><i className="is-dashed" />虛線：PR 回報的 base（PR metadata，非 fork point）</span><span><i className="is-dotted" />點線：僅 PR 合併紀錄，無 Git parent 證據</span><span>卡片底部條＝實際 PR 期間（建立 → 合併／關閉／Last checked）</span></div>
+    <div className="g-legend"><span data-testid="no-pr-months">main／production-pages 上的圓點是 commit，不是 PR，兩者沒有推定關聯；PR 卡片只代表 GitHub PR 的建立到合併／關閉期間。{refreshFailed ? '最近一次重新整理失敗（Needs refresh）：目前顯示的是上一次成功讀取的資料，無法確認目前此範圍內是否有月份沒有 PR。' : prAbsenceVerifiable(data) ? (emptyMonths.length ? `此範圍內沒有建立任何 PR 的月份：${emptyMonths.join('、')}（來源事實，並非資料缺漏）。` : '') : 'GitHub 歷史資料不完整，無法確認此範圍內是否有月份沒有 PR。'}</span><span><i className="is-solid" />實線：已驗證 merge commit（parent 含 PR head）</span><span><i className="is-dashed" />虛線：PR 回報的 base（PR metadata，非 fork point）</span><span><i className="is-dotted" />點線：僅 PR 合併紀錄，無 Git parent 證據</span><span>卡片底部條＝實際 PR 期間（建立 → 合併／關閉／Last checked）</span></div>
   </>;
 }
 

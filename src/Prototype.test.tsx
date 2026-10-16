@@ -1273,3 +1273,20 @@ test('B1.3 D2 a Partial snapshot keeps the Partial / UNKNOWN wording in the All 
  expect(scope).toHaveTextContent('Partial');expect(scope).toHaveTextContent('不代表完整 repository 歷史');
  setRange('6 個月');expect(screen.queryByTestId('all-history-scope')).toBeNull();
 });
+
+test('B1.3 P2 a Complete snapshot followed by a failed refresh no longer asserts month-level absence as current fact',async()=>{
+ mockGeometry();
+ const m=await loadLive(lateOnly());setRange('全部歷史');await fireResize();
+ for(const month of MONTHS)expect(noPrNote()).toHaveTextContent(month); // fresh Complete snapshot: claim allowed
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));m.pending[1].resolve({error:'slow',kind:'timeout'},504);await flush();
+ expect(screen.getByLabelText('資料來源')).toHaveTextContent('Needs refresh');
+ for(const month of MONTHS)expect(noPrNote()).not.toHaveTextContent(month);
+ expect(noPrNote()).not.toHaveTextContent('非資料缺漏');expect(noPrNote()).toHaveTextContent('重新整理失敗');expect(noPrNote()).toHaveTextContent('無法確認');expect(noPrNote()).toHaveTextContent('不是 PR');
+});
+test('B1.3 P2 a successful refresh after a failed one restores the verified month claim',async()=>{
+ mockGeometry();
+ const m=await loadLive(lateOnly());setRange('全部歷史');await fireResize();
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));m.pending[1].resolve({error:'slow',kind:'timeout'},504);await flush();
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));m.pending[2].resolve(lateOnly());await flush();
+ for(const month of MONTHS)expect(noPrNote()).toHaveTextContent(month);expect(noPrNote()).toHaveTextContent('非資料缺漏');
+});
