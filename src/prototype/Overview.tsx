@@ -1,6 +1,6 @@
-import { ArrowUpRight, GitBranch, Wallet, Clock3 } from 'lucide-react';
+import { ArrowUpRight, GitBranch, Wallet, Clock3, Network } from 'lucide-react';
 import { PROJECTS, SNAPSHOT, Page, costFor, headroom, money, tasksFor } from './data';
-export function Overview({ selected, navigate }: { selected: string; navigate: (page: Page, project: string) => void }) {
+export function Overview({ selected, navigate, openLiveHistory }: { selected: string; navigate: (page: Page, project: string) => void; openLiveHistory?: () => void }) {
   return <>
     <div className="p-page-heading"><div><p className="p-eyebrow">PROJECT OVERVIEW</p><h1>你的開發組合，一眼掌握。</h1><p>先看見阻塞，再決定下一步。這裡的任務、狀態與成本都是本地範例。</p></div><span className="p-pill"><Clock3 size={14} /> {SNAPSHOT}</span></div>
     <div className="p-stats">
@@ -18,7 +18,7 @@ export function Overview({ selected, navigate }: { selected: string; navigate: (
           <dl className="p-info-list"><div><dt>開發狀態</dt><dd>等待確認（示範）</dd></div><div><dt>里程碑</dt><dd>{p.milestone}</dd></div><div><dt>任務</dt><dd>{tasksFor(p.name).length} 個任務範例</dd></div><div><dt>阻塞</dt><dd>{p.blocker}</dd></div></dl>
           <div className="p-next"><ArrowUpRight size={15} /><div><span>下一步</span><p>{p.next}</p></div></div>
           <button className="p-cost-link" onClick={() => navigate('cost', p.name)} aria-label="查看 Cost Guard"><Wallet size={15} /><span>成本樣本 · {money(cost.usd)} USD</span><span>{remaining === null ? 'Not enough data' : `預算餘裕 ${remaining.toFixed(0)}%`}</span></button>
-          <div className="p-card-actions"><button onClick={() => navigate('workspace', p.name)}><GitBranch size={15} /> 進入工作區</button></div>
+          <div className="p-card-actions"><button onClick={() => navigate('workspace', p.name)}><GitBranch size={15} /> 進入工作區</button>{p.name === 'PM Dashboard' && openLiveHistory && <button onClick={openLiveHistory} aria-label="開啟 PM Dashboard 真實 GitHub 開發地圖（REGISTERED，唯讀）"><Network size={15} /> LIVE 開發地圖</button>}</div>
           <small className="p-source">來源：本地 DEMO fixture · 非即時狀態<br />最後檢視：{SNAPSHOT}</small>
         </article>;
       })}
