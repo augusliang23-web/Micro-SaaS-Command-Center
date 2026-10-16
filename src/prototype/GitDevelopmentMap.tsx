@@ -6,7 +6,7 @@ import {
 import type { DevelopmentHistory, HistoryCommit, HistoryErrorKind, HistoryPull, LiveIdentity, PullDetail } from './gitHistoryTypes';
 import {
   LANES, LaneId, RANGE_LABEL, RangeId, STATE_LABEL, STATUS_LABEL, StateFilter, MERGE_EVIDENCE_LABEL,
-  PLOT_GUTTER_LEFT, ancestryClaim, effectiveSpanDays, timelineSpan, zoomStep, branchKind, buildTimeline, buildTopology, commitAssociations, prAbsenceVerifiable, driftedRefNames, formatSgt, identityKey, indexCommits, prHeadMismatch, reconcilePullDetail, reviewIsPartial,
+  PLOT_GUTTER_LEFT, ancestryClaim, effectiveSpanDays, timelineSpan, zoomStep, branchKind, buildTimeline, buildTopology, commitAssociations, prAbsenceVerifiable, driftedRefNames, formatSgt, identityKey, indexCommits, prHeadMismatch, reconcilePullDetail, reviewIsPartial, reviewProvenance, buildStackGraph, flattenStack, stackStatus,
   laneById, laneForBranch, liveRepositoryFor, matchesState, mergeEvidence, rangeStart, relatedPulls, shortSha,
   stackChildren, stackParent, timelineX,
 } from './gitHistoryModel';
@@ -92,7 +92,12 @@ function usePullDetail(repo: string | null, scopeKey: string, number: number | n
 }
 
 const CI_LABEL = { not_checked: 'Not checked', none: 'No CI checks', passing: 'CI passed', failing: 'CI failed', running: 'CI running', pending: 'CI pending', unknown: 'CI unknown（不完整或無法判定）' } as const;
-const REVIEW_LABEL = { not_checked: 'Not checked', no_reviews: '沒有已送出的 review', partial: 'Partial / UNKNOWN', approved: 'Approved', changes_requested: 'Changes requested', commented_only: '僅留言（無核准）' } as const;
+const REVIEW_LABEL = {
+  not_checked: 'Not checked', no_reviews: '沒有已送出的 review', partial: 'Partial / UNKNOWN', changes_requested: 'Changes requested', commented_only: '僅留言（無核准）',
+  current_head_approval: 'Current-head approval', historical_approval: 'Historical approval', review_head_unknown: 'Approval commit unknown', approval_dismissed: 'Approval dismissed',
+} as const;
+const REVIEWER_STATE = { APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', DISMISSED: 'Dismissed' } as const;
+const RELATION_LABEL = { current_head: '＝目前 head', historical: '較早 commit（非目前 head）', unknown: '缺少 commit_id，無法比對' } as const;
 const AXIS = 34;
 const SHEET_MAX_WIDTH = 760; // at or below this viewport width, details open as a bottom sheet
 const SHORT_LANE: Record<LaneId, string> = { main: 'main', 'production-pages': 'prod', 'v23-integration': 'V2.3 int', 'v23-feature': 'V2.3 feat', permissions: 'Perm', 'pdf-delivery': 'PDF', other: 'Other' };
@@ -554,6 +559,7 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh, 
   if (pr) {
     const parent = stackParent(pr, data.pulls);
     const children = stackChildren(pr, data.pulls);
+    const stack = stackStatus(pr, data.pulls);
     const ancestry = ancestryClaim(data, pr, index);
     const evidence = mergeEvidence(pr, index);
     const mismatch = prHeadMismatch(data, pr.number);
@@ -571,12 +577,29 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh, 
       else if (rec.headMismatch) ciText = `Stale data · 針對 ${shortSha(d.ci.headSha)} 的 CI：${CI_LABEL[d.ci.status]}${total} · 不適用於快照 head ${shortSha(pr.headSha)}`;
       else ciText = 'Not verified · 無法證明 CI 屬於顯示的 head';
     }
-    let reviewText: string = loading;
+    let reviewText: ReactNode = loading;
     if (d && rec) {
-      if (rec.headMismatch || !rec.headsKnown) reviewText = rec.headMismatch ? 'Not verified · 快照已過期，請先重新整理' : 'Not verified · 缺少 head SHA，無法確認 review 屬於顯示的 head';
-      else if (d.reviews.status === 'not_checked') reviewText = 'Not checked（review 讀取失敗）';
-      else if (reviewIsPartial(d.reviews)) reviewText = `Partial / UNKNOWN（僅讀到 ${d.reviews.count ?? '?'} 筆，review 歷史不完整，不是已驗證的決定${d.reviews.observed && d.reviews.observed !== 'no_reviews' && d.reviews.observed !== 'partial' ? `；已讀部分：${REVIEW_LABEL[d.reviews.observed]}` : ''}）`;
-      else reviewText = `${REVIEW_LABEL[d.reviews.status]}${d.reviews.count ? `（${d.reviews.count} 筆）` : ''}`;
+      const prov = reviewProvenance(d, rec);
+      const head = shortSha(prov.head);
+      const count = d.reviews.count ? `（${d.reviews.count} 筆）` : '';
+      const reviewerList = prov.reviewers.length > 0 && prov.state !== 'NEEDS_REFRESH'
+        ? <ul className="g-plain" data-testid="pr-review-reviewers">{prov.reviewers.map((x) => <li key={`${x.reviewer ?? 'anonymous'}-${x.reviewId ?? x.commitId}`}>{x.reviewer ?? '（已刪除帳號）'} · {REVIEWER_STATE[x.state]} · commit <span className="g-mono">{x.commitId ? shortSha(x.commitId) : 'Not available'}</span> · {RELATION_LABEL[x.relation]}</li>)}</ul>
+        : null;
+      const NOT_MERGE = '（僅是 review 紀錄，不代表 GitHub 允許合併或可部署）';
+      let line: string;
+      switch (prov.state) {
+        case 'NEEDS_REFRESH': line = 'Not verified · 快照已過期，請先重新整理'; break;
+        case 'NOT_CHECKED': line = 'Not checked（review 讀取失敗）'; break;
+        case 'NO_REVIEWS': line = '沒有已送出的 review'; break;
+        case 'COMMENTED_ONLY': line = '僅留言（無核准）'; break;
+        case 'PARTIAL_REVIEW_HISTORY': line = `Partial / UNKNOWN（僅讀到 ${d.reviews.count ?? '?'} 筆，review 歷史不完整，不是已驗證的決定${d.reviews.observed && d.reviews.observed !== 'no_reviews' && d.reviews.observed !== 'partial' ? `；已讀部分：${(REVIEW_LABEL as Record<string, string>)[d.reviews.observed] ?? '未知狀態'}（未驗證）` : ''}）`; break;
+        case 'CURRENT_HEAD_APPROVAL': line = `Current-head approval · 核准對應目前 head ${head}${NOT_MERGE}`; break;
+        case 'HISTORICAL_APPROVAL': line = `Historical approval · 核准的是較早的 commit，不是目前 head ${head}；不能視為目前 head 的核准`; break;
+        case 'APPROVAL_DISMISSED': line = 'Approval dismissed · 核准已被撤銷，不是有效核准'; break;
+        case 'CHANGES_REQUESTED': line = `Changes requested${count} · 仍有未解除的修改要求`; break;
+        case 'REVIEW_HEAD_UNKNOWN': line = !rec.headsKnown ? 'Not verified · 缺少 head SHA，無法確認 review 屬於顯示的 head' : 'Not verified · 核准紀錄缺少 commit_id 或無法與目前 head 比對，無法確認它對應哪個 commit'; break;
+      }
+      reviewText = <>{line}{reviewerList}</>;
     }
     const ancestryText = ancestry.state === 'yes' ? `已驗證：${pr.baseRef} 目前 head ${shortSha(ancestry.baseHead)} 是 PR head 的祖先`
       : ancestry.state === 'no' ? `已驗證：${pr.baseRef} 目前 head ${shortSha(ancestry.baseHead)} 不是 PR head 的祖先（base 已前進或分歧）`
@@ -608,7 +631,9 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh, 
         <Field label="Review" testId="pr-review">{reviewText}</Field>
         <Field label="CI" testId="pr-ci">{ciText}</Field>
         <Field label="Changed files">{d?.pull.changedFiles != null && rec && !rec.headMismatch && rec.headsKnown ? `${d.pull.changedFiles} 個檔案 · +${d.pull.additions} / −${d.pull.deletions} · ${d.pull.commits} commits` : rec && (rec.headMismatch || !rec.headsKnown) ? 'Not verified（快照已過期或缺少 head SHA）' : 'Not available'}</Field>
-        <Field label="Stacked 關係（PR metadata）">{parent ? <button className="g-link" onClick={(e) => select({ kind: 'pr', number: parent.number }, e.currentTarget)}>base = PR #{parent.number} 的 head</button> : `base = ${pr.baseRef}`}{children.length ? <> · 上層：{children.map((c) => <button key={c.number} className="g-link" onClick={(e) => select({ kind: 'pr', number: c.number }, e.currentTarget)}>#{c.number}</button>)}</> : null}</Field>
+        <Field label="Stacked 關係（PR metadata）" testId="pr-stack">{stack.state !== 'ok'
+          ? <>Stack relationship UNKNOWN — cyclic or ambiguous PR metadata（{stack.state === 'cycle' ? '循環參照' : stack.state === 'self_reference' ? '自我參照：head 與 base 同名' : '多個 PR 的 head 與此 PR 的 base 同名，無法判定 parent'}）{stack.peers.filter((n) => n !== pr.number).length > 0 && <> · 涉及：{stack.peers.filter((n) => n !== pr.number).map((n) => <button key={n} className="g-link" onClick={(e) => select({ kind: 'pr', number: n }, e.currentTarget)}>#{n}</button>)}</>}{children.length ? <> · 上層：{children.map((c) => <button key={c.number} className="g-link" onClick={(e) => select({ kind: 'pr', number: c.number }, e.currentTarget)}>#{c.number}</button>)}</> : null}</>
+          : <>{parent ? <button className="g-link" onClick={(e) => select({ kind: 'pr', number: parent.number }, e.currentTarget)}>base = PR #{parent.number} 的 head</button> : `base = ${pr.baseRef}`}{children.length ? <> · 上層：{children.map((c) => <button key={c.number} className="g-link" onClick={(e) => select({ kind: 'pr', number: c.number }, e.currentTarget)}>#{c.number}</button>)}</> : null}</>}</Field>
         <Field label="Git ancestry（commit parents）">{ancestryText}</Field>
         {mismatch && <Field label="Snapshot 一致性">PR 清單與分支清單的 head 不一致（PR {shortSha(mismatch.prHeadSha)} vs 分支 {shortSha(mismatch.branchHeadSha)}）：此 PR 的 ancestry 視為 UNKNOWN。</Field>}
         {pr.merged && <Field label="合併證據">{MERGE_EVIDENCE_LABEL[evidence]}{pr.mergeCommitSha ? <> · <button className="g-link g-mono" onClick={(e) => select({ kind: 'commit', sha: pr.mergeCommitSha! }, e.currentTarget)}>{shortSha(pr.mergeCommitSha)}</button></> : null}</Field>}
@@ -641,17 +666,22 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh, 
 const MILESTONES = [13, 23, 33, 34, 35, 40, 47, 48];
 function BottomCards({ data, select }: { data: DevelopmentHistory; select: (s: Selection, origin?: Element | null) => void }) {
   const open = data.pulls.filter((p) => p.state === 'open');
-  const roots = open.filter((p) => !stackParent(p, data.pulls)).sort((a, b) => (a.baseRef ?? '').localeCompare(b.baseRef ?? '') || a.number - b.number);
-  const renderTree = (pr: HistoryPull, depth: number): ReactNode => <li key={pr.number} style={{ paddingLeft: depth * 14 }}>
-    <button className="g-link" data-select onClick={(e) => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>#{pr.number}</button> <span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span> {pr.title}
-    {depth === 0 && <small className="g-mono"> ← base {pr.baseRef}</small>}
-    {stackChildren(pr, data.pulls).length > 0 && <ul>{stackChildren(pr, data.pulls).map((c) => renderTree(c, depth + 1))}</ul>}
-  </li>;
+  // Stack rows come from a cycle-safe graph (see buildStackGraph): every OPEN PR is listed exactly once, valid stacks keep
+  // their nesting, and cyclic / self-referencing / ambiguous relationships are marked UNKNOWN instead of being followed.
+  const stackRows = flattenStack(buildStackGraph(data.pulls));
+  const unverified = stackRows.filter((r) => r.issue !== null);
+  const ISSUE_CHIP = { cycle: '關係不明 · 循環', self_reference: '關係不明 · 自我參照', ambiguous_parent: '關係不明 · 多個可能的 parent' } as const;
   const merges = data.pulls.filter((p) => p.mergedAt).sort((a, b) => Date.parse(b.mergedAt!) - Date.parse(a.mergedAt!)).slice(0, 6);
   const index = indexCommits(data.commits);
   const unknownHeads = data.branches.filter((b) => !b.headSha || !index.has(b.headSha));
   return <section className="g-cards" aria-label="資訊卡">
-    <article><h3><GitBranch size={15} />OPEN PR 堆疊（{open.length}）</h3><p className="g-muted">依 PR 回報的 base/head 分組；OPEN ≠ 正在開發，CI／review 需點選 PR 才查詢。</p><ul className="g-tree">{roots.map((r) => renderTree(r, 0))}</ul></article>
+    <article><h3><GitBranch size={15} />OPEN PR 堆疊（{open.length}）</h3><p className="g-muted">依 PR 回報的 base/head 分組；OPEN ≠ 正在開發，CI／review 需點選 PR 才查詢。</p>
+      {unverified.length > 0 && <p className="g-banner is-warn" role="status"><AlertTriangle size={15} />Stack relationship UNKNOWN — cyclic or ambiguous PR metadata（涉及 {unverified.map((r) => `#${r.pr.number}`).join('、')}）。這些 PR 的 base/head 分支名稱形成循環、自我參照或有多個可能的 parent，因此不顯示為已驗證的堆疊；它們仍可點選查看。</p>}
+      <ul className="g-tree">{stackRows.map((r) => <li key={r.pr.number} data-pr-number={r.pr.number} data-depth={r.depth} data-stack-issue={r.issue ?? undefined} style={{ paddingLeft: Math.min(r.depth, 10) * 14 }}>
+        <button className="g-link" data-select onClick={(e) => select({ kind: 'pr', number: r.pr.number }, e.currentTarget)}>#{r.pr.number}</button> <span className={`g-chip is-${r.pr.status}`}>{STATUS_LABEL[r.pr.status]}</span> {r.pr.title}
+        {r.issue && <small className="g-muted"> · {ISSUE_CHIP[r.issue]}{r.issue !== 'self_reference' ? `（#${r.peers.join('、#')}）` : ''}</small>}
+        {r.depth === 0 && <small className="g-mono"> ← base {r.pr.baseRef}</small>}
+      </li>)}</ul></article>
     <article><h3><GitMerge size={15} />最近合併</h3><ul className="g-plain">{merges.map((p) => <li key={p.number}><button className="g-link" data-select onClick={(e) => select({ kind: 'pr', number: p.number }, e.currentTarget)}>#{p.number}</button> → {p.baseRef} · {formatSgt(p.mergedAt)}</li>)}</ul>
       <h3 className="g-sub">指定里程碑 PR（日期取自 GitHub）</h3><ul className="g-plain">{MILESTONES.map((n) => { const p = data.pulls.find((x) => x.number === n); return <li key={n}>{p ? <><button className="g-link" data-select onClick={(e) => select({ kind: 'pr', number: n }, e.currentTarget)}>#{n}</button> {STATUS_LABEL[p.status]} · {p.mergedAt ? `合併 ${formatSgt(p.mergedAt, false)}` : `建立 ${formatSgt(p.createdAt, false)}`}</> : `#${n} · Not available`}</li>; })}</ul></article>
     <article><h3><Database size={15} />資料覆蓋</h3><ul className="g-plain">

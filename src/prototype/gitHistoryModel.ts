@@ -1,7 +1,7 @@
 // Pure presentation model for the read-only GitHub development history.
 // Nothing here invents Git facts: verified edges come only from commit
 // parents; PR base/head refs stay labelled as reported PR metadata.
-import type { DevelopmentHistory, HistoryCommit, HistoryPull, LiveIdentity, PullDetail } from './gitHistoryTypes';
+import type { DevelopmentHistory, HistoryCommit, HistoryPull, LiveIdentity, PullDetail, ReviewerDecision } from './gitHistoryTypes';
 
 export const LIVE_HISTORY_REPOS = ['augusliang23-web/pm-dashboard'] as const;
 const SGT_OFFSET_MS = 8 * 3600_000;
@@ -9,7 +9,7 @@ const DAY_MS = 86_400_000;
 
 /** Exact allowlist match; a repository-like display name never qualifies. */
 export function liveRepositoryFor(identity: LiveIdentity | null | undefined): string | null {
-  if (!identity || identity.source !== 'REGISTERED' || !identity.projectId) return null;
+  if (!identity || identity.source !== 'REGISTERED' || !identity.projectId?.trim()) return null; // a blank id is no stable identity
   const repo = (identity.repository ?? '').trim().replace(/^(?:https?:\/\/)?(?:github\.com\/)/, '').replace(/\/$/, '');
   return (LIVE_HISTORY_REPOS as readonly string[]).includes(repo) ? repo : null;
 }
@@ -87,14 +87,113 @@ export function matchesState(pr: HistoryPull, filter: StateFilter) {
   return pr.status === filter;
 }
 
-/** Reported stacking: an OPEN PR whose head ref equals this PR's base ref. */
+// ---------- Stacked PRs (reported metadata, never verified ancestry) ----------
+/**
+ * A "stack" is only PR METADATA: an OPEN PR whose head branch NAME equals another PR's base branch NAME. Branch names
+ * are not commits, so this is never evidence of Git ancestry (see ancestryClaim for that). Because the names come
+ * from GitHub and can repeat, loop or point at themselves, the relationships are NOT assumed to form a tree.
+ *
+ * Invariants of the graph built below:
+ *  - every OPEN PR appears in exactly one place, so none is dropped or duplicated;
+ *  - a PR has at most ONE verified (unique, non-cyclic) parent; otherwise it is a root flagged with an issue;
+ *  - `parent` links can never loop (cycle members have no parent), so a traversal always terminates;
+ *  - nothing is invented: ambiguous, self-referencing and cyclic relationships are marked UNKNOWN, not guessed;
+ *  - the result depends only on the set of PRs, not on their order.
+ */
+export type StackIssue = 'cycle' | 'self_reference' | 'ambiguous_parent';
+export type StackNode = {
+  pr: HistoryPull;
+  /** The single verified parent PR number, or null (root, or an UNKNOWN relationship). */
+  parent: number | null;
+  children: number[];
+  issue: StackIssue | null;
+  /** The PRs involved in the issue (cycle members, or the competing parent candidates). */
+  peers: number[];
+};
+export type StackGraph = { nodes: Map<number, StackNode>; roots: number[] };
+export type StackRow = { pr: HistoryPull; depth: number; issue: StackIssue | null; peers: number[] };
+
+export function buildStackGraph(pulls: HistoryPull[]): StackGraph {
+  const open = new Map<number, HistoryPull>();
+  for (const p of pulls) if (p.state === 'open' && !open.has(p.number)) open.set(p.number, p);
+  const numbers = [...open.keys()].sort((a, b) => a - b);
+  const byHead = new Map<string, number[]>();
+  for (const n of numbers) {
+    const head = open.get(n)!.headRef;
+    if (head) byHead.set(head, [...(byHead.get(head) ?? []), n]);
+  }
+  const nodes = new Map<number, StackNode>();
+  const rawParent = new Map<number, number>();
+  for (const n of numbers) {
+    const pr = open.get(n)!;
+    const node: StackNode = { pr, parent: null, children: [], issue: null, peers: [] };
+    nodes.set(n, node);
+    if (!pr.baseRef) continue;
+    if (pr.headRef && pr.baseRef === pr.headRef) { node.issue = 'self_reference'; node.peers = [n]; continue; }
+    const candidates = (byHead.get(pr.baseRef) ?? []).filter((c) => c !== n);
+    if (candidates.length === 1) rawParent.set(n, candidates[0]!);
+    else if (candidates.length > 1) { node.issue = 'ambiguous_parent'; node.peers = candidates; }
+  }
+  // Cycle detection over the single-parent links: iterative, so deep chains cannot overflow the stack.
+  const mark = new Map<number, 1 | 2>();
+  for (const start of numbers) {
+    if (mark.has(start)) continue;
+    const path: number[] = [];
+    let cur: number | undefined = start;
+    while (cur !== undefined && !mark.has(cur)) { mark.set(cur, 1); path.push(cur); cur = rawParent.get(cur); }
+    if (cur !== undefined && mark.get(cur) === 1) {
+      const cycle = path.slice(path.indexOf(cur)).sort((a, b) => a - b);
+      for (const m of cycle) { const node = nodes.get(m)!; node.issue = 'cycle'; node.peers = cycle; }
+    }
+    for (const m of path) mark.set(m, 2);
+  }
+  for (const n of numbers) {
+    const node = nodes.get(n)!;
+    const parent = rawParent.get(n);
+    if (parent !== undefined && node.issue === null) { node.parent = parent; nodes.get(parent)!.children.push(n); }
+  }
+  const roots = numbers.filter((n) => nodes.get(n)!.parent === null);
+  const healthy = roots.filter((n) => nodes.get(n)!.issue === null).sort((a, b) => (nodes.get(a)!.pr.baseRef ?? '').localeCompare(nodes.get(b)!.pr.baseRef ?? '') || a - b);
+  return { nodes, roots: [...healthy, ...roots.filter((n) => nodes.get(n)!.issue !== null)] };
+}
+
+/** Depth-first rows (parents before children, children by PR number). Iterative: depth cannot overflow the stack. */
+export function flattenStack(graph: StackGraph): StackRow[] {
+  const rows: StackRow[] = [];
+  const stack: { n: number; depth: number }[] = [...graph.roots].reverse().map((n) => ({ n, depth: 0 }));
+  while (stack.length) {
+    const { n, depth } = stack.pop()!;
+    const node = graph.nodes.get(n)!;
+    rows.push({ pr: node.pr, depth, issue: node.issue, peers: node.peers });
+    for (let i = node.children.length - 1; i >= 0; i--) stack.push({ n: node.children[i]!, depth: depth + 1 });
+  }
+  return rows;
+}
+
+const graphCache = new WeakMap<HistoryPull[], StackGraph>();
+function stackGraphFor(pulls: HistoryPull[]): StackGraph {
+  let g = graphCache.get(pulls);
+  if (!g) { g = buildStackGraph(pulls); graphCache.set(pulls, g); }
+  return g;
+}
+export function stackStatus(pr: HistoryPull, pulls: HistoryPull[]): { state: 'ok' | StackIssue; peers: number[] } {
+  const node = stackGraphFor(pulls).nodes.get(pr.number);
+  return node && node.issue ? { state: node.issue, peers: node.peers } : { state: 'ok', peers: [] };
+}
+/** Reported stacking: the ONE verified open PR whose head ref equals this PR's base ref; null when unknown or ambiguous. */
 export function stackParent(pr: HistoryPull, pulls: HistoryPull[]): HistoryPull | null {
-  if (!pr.baseRef) return null;
-  const candidates = pulls.filter((p) => p.number !== pr.number && p.headRef === pr.baseRef);
-  return candidates.find((p) => p.state === 'open') ?? null;
+  const g = stackGraphFor(pulls);
+  const node = g.nodes.get(pr.number);
+  if (node) return node.parent === null ? null : g.nodes.get(node.parent)!.pr;
+  if (!pr.baseRef) return null; // not an OPEN PR: the same unique-candidate rule, without a graph position
+  const candidates = [...g.nodes.values()].filter((x) => x.pr.number !== pr.number && x.pr.headRef === pr.baseRef);
+  return candidates.length === 1 ? candidates[0]!.pr : null;
 }
 export function stackChildren(pr: HistoryPull, pulls: HistoryPull[]) {
-  return pulls.filter((p) => p.state === 'open' && p.number !== pr.number && pr.headRef && p.baseRef === pr.headRef);
+  const g = stackGraphFor(pulls);
+  const node = g.nodes.get(pr.number);
+  if (node) return node.children.map((n) => g.nodes.get(n)!.pr);
+  return pr.headRef ? [...g.nodes.values()].filter((x) => x.pr.baseRef === pr.headRef && x.parent === null && x.issue === null).map((x) => x.pr) : [];
 }
 export function relatedPulls(pr: HistoryPull, pulls: HistoryPull[]): Set<number> {
   const related = new Set<number>([pr.number]);
@@ -103,6 +202,7 @@ export function relatedPulls(pr: HistoryPull, pulls: HistoryPull[]): Set<number>
   while (cursor && !seen.has(cursor.number)) { seen.add(cursor.number); related.add(cursor.number); cursor = stackParent(cursor, pulls); }
   const queue = [pr];
   while (queue.length) for (const child of stackChildren(queue.shift()!, pulls)) if (!related.has(child.number)) { related.add(child.number); queue.push(child); }
+  for (const peer of stackStatus(pr, pulls).peers) related.add(peer); // members of the same unverified relationship
   return related;
 }
 
@@ -390,6 +490,45 @@ export function reconcilePullDetail(pr: HistoryPull, detail: PullDetail): Reconc
   const stateChange = pr.status !== detail.pull.status ? { from: STATUS_LABEL[pr.status], to: STATUS_LABEL[detail.pull.status] } : null;
   const ciChecked = detail.ci.status !== 'not_checked';
   return { snapshotHead, currentHead, headMismatch, stateChange, missingSha, headsKnown, ciApplies, ciHeadConsistent, needsRefresh: headMismatch || Boolean(stateChange) || missingSha || (ciChecked && !ciApplies) };
+}
+// ---------- Review provenance (B1.4 P2-1) ----------
+export type ReviewProvenanceState =
+  | 'CURRENT_HEAD_APPROVAL' | 'HISTORICAL_APPROVAL' | 'REVIEW_HEAD_UNKNOWN' | 'CHANGES_REQUESTED'
+  | 'NO_REVIEWS' | 'PARTIAL_REVIEW_HISTORY' | 'NOT_CHECKED' | 'COMMENTED_ONLY' | 'APPROVAL_DISMISSED'
+  | 'NEEDS_REFRESH';
+export type ReviewProvenance = { state: ReviewProvenanceState; head: string | null; reviewers: ReviewerDecision[] };
+const sameCommit = (a: string | null | undefined, b: string | null | undefined) => Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+/**
+ * What the review data may honestly say about the PR head the panel is showing. The commit each review was
+ * made on is compared HERE, with the head of the same read, instead of trusting a status word from the server.
+ * A matching review record is evidence of a review only; it is not proof that GitHub currently permits a merge.
+ * Missing or inconsistent data fails closed.
+ */
+export function reviewProvenance(detail: PullDetail, rec: Reconciliation): ReviewProvenance {
+  const r = detail.reviews;
+  const head = detail.pull.headSha;
+  const out = (state: ReviewProvenanceState, reviewers: ReviewerDecision[] = []): ReviewProvenance => ({ state, head, reviewers });
+  if (rec.headMismatch) return out('NEEDS_REFRESH'); // snapshot head != fresh head: never reuse a review for the shown head
+  if (!rec.headsKnown) return out('REVIEW_HEAD_UNKNOWN');
+  if (r.status === 'not_checked') return out('NOT_CHECKED');
+  if (reviewIsPartial(r)) return out('PARTIAL_REVIEW_HISTORY', Array.isArray(r.reviewers) ? r.reviewers : []);
+  if (r.status === 'no_reviews') return out('NO_REVIEWS');
+  if (r.status === 'commented_only') return out('COMMENTED_ONLY');
+  const reviewers = Array.isArray(r.reviewers) ? r.reviewers : null;
+  // A blocker is never hidden, even if the provenance detail is missing.
+  if (reviewers === null) return out(r.status === 'changes_requested' ? 'CHANGES_REQUESTED' : 'REVIEW_HEAD_UNKNOWN');
+  // The server compared the reviews with the head of its own read; if that is not the head shown here, nothing can be tied to it.
+  const comparedHead = r.headSha ?? null;
+  const consistent = comparedHead === null || sameCommit(comparedHead, head);
+  const recomputed = reviewers.map((x) => ({ ...x, relation: !consistent || !x.commitId || !head ? 'unknown' as const : sameCommit(x.commitId, head) ? 'current_head' as const : 'historical' as const }));
+  const approvals = recomputed.filter((x) => x.state === 'APPROVED');
+  if (recomputed.some((x) => x.state === 'CHANGES_REQUESTED')) return out('CHANGES_REQUESTED', recomputed);
+  if (approvals.some((x) => x.relation === 'current_head')) return out('CURRENT_HEAD_APPROVAL', recomputed);
+  if (approvals.some((x) => x.relation === 'historical')) return out('HISTORICAL_APPROVAL', recomputed);
+  if (approvals.length > 0) return out('REVIEW_HEAD_UNKNOWN', recomputed);
+  if (recomputed.some((x) => x.state === 'DISMISSED')) return out('APPROVAL_DISMISSED', recomputed);
+  // Anything else (including a legacy "approved" with no per-review commit) is not a verified decision.
+  return out('REVIEW_HEAD_UNKNOWN', recomputed);
 }
 /** Partial wins over any decision: a truncated list cannot prove Approved. */
 export function reviewIsPartial(reviews: PullDetail['reviews']): boolean {

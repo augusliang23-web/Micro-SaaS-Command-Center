@@ -271,8 +271,9 @@ test('R: PR detail distinguishes Not checked, No CI checks and CI passed', async
   assert.equal(failedRead.ci.status, 'not_checked');
   assert.equal(none.reviews.status, 'no_reviews');
   assert.equal(none.pull.changedFiles, 12);
-  assert.equal(summarizeReviews([{ user: { login: 'a' }, state: 'COMMENTED', submitted_at: '2026-10-01T00:00:00Z' }]), 'commented_only');
-  assert.equal(summarizeReviews([{ user: { login: 'a' }, state: 'APPROVED', submitted_at: '2026-10-01T00:00:00Z' }]), 'approved');
+  assert.equal(summarizeReviews([{ user: { login: 'a' }, state: 'COMMENTED', submitted_at: '2026-10-01T00:00:00Z' }], 'h').status, 'commented_only');
+  // B1.4: an approval that names no commit is no longer a bare "approved".
+  assert.equal(summarizeReviews([{ user: { login: 'a' }, state: 'APPROVED', submitted_at: '2026-10-01T00:00:00Z' }], 'h').status, 'review_head_unknown');
 });
 
 test('cache is per repository, expires, and is cleared on demand', () => {
@@ -390,7 +391,10 @@ test('P2-2: review states stay distinct — none, partial, approved, changes req
     aggregateCi: aggregateCiResponse,
   })).reviews;
   assert.equal((await run([])).status, 'no_reviews');
-  assert.equal((await run([review('a', 'APPROVED', '2026-10-01T00:00:00Z')])).status, 'approved');
+  const PR55_HEAD = PULLS.find((p) => p.number === 55).head.sha;
+  // B1.4: an approval is "current_head_approval" only when its commit_id is the PR head read in the same request.
+  assert.equal((await run([{ ...review('a', 'APPROVED', '2026-10-01T00:00:00Z'), commit_id: PR55_HEAD }])).status, 'current_head_approval');
+  assert.equal((await run([review('a', 'APPROVED', '2026-10-01T00:00:00Z')])).status, 'review_head_unknown');
   assert.equal((await run([review('a', 'CHANGES_REQUESTED', '2026-10-01T00:00:00Z')])).status, 'changes_requested');
   assert.equal((await run([review('a', 'APPROVED', '2026-10-01T00:00:00Z')], true)).status, 'partial');
   const failed = (await fetchPullDetail(REPO, 55, { execFileFn: fakeGh(detailRoutes({ reviews: () => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' }) })).execFileFn, aggregateCi: aggregateCiResponse })).reviews;
@@ -534,4 +538,239 @@ test('P2-4: a stable snapshot is Complete/consistent but still not atomic', asyn
   assert.equal(history.consistency.status, 'consistent');
   assert.equal(history.consistency.atomic, false);
   assert.deepEqual(history.consistency.driftedRefs, []);
+});
+
+// ---------------- B1.4 remediation: review provenance (commit_id) ----------------
+// P2-1 (independent review): the backend collapsed GitHub reviews into one aggregate string and dropped each
+// review's commit_id, so an approval of an OLD commit could be shown as an approval of the CURRENT head.
+// These tests were written first and run against a45a01d, where the "defect" cases fail.
+const HEAD_A = 'a'.repeat(40);
+const HEAD_B = 'b'.repeat(40);
+const rv = (id, login, state, at, commitId) => ({ id, user: login === null ? null : { login }, state, submitted_at: at, ...(commitId === undefined ? {} : { commit_id: commitId }) });
+
+/** PR #55 read at `headSha` (null = the payload has no head SHA). */
+function detailAt(headSha, reviewRoute, { checks } = {}) {
+  const pull = { ...PULLS.find((p) => p.number === 55), changed_files: 1, additions: 1, deletions: 0, commits: 1 };
+  pull.head = { ...pull.head, sha: headSha };
+  return fetchPullDetail(REPO, 55, {
+    execFileFn: fakeGh([
+      [/\/pulls\/55$/, () => ghOutput(pull)],
+      [/\/check-runs/, checks ?? (() => ghOutput({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] }))],
+      [/\/reviews/, reviewRoute],
+    ]).execFileFn,
+    aggregateCi: aggregateCiResponse,
+  });
+}
+const reviewsOf = async (headSha, items, opts) => (await detailAt(headSha, () => ghOutput(items, opts))).reviews;
+const NEXT_PAGE = { headers: { Link: '<https://api.github.com/repositories/1/pulls/55/reviews?page=2>; rel="next"' } };
+
+test('B1.4 P2-1 CASE A: approval on the current head establishes current-head review provenance', async () => {
+  const r = await reviewsOf(HEAD_A, [rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)]);
+  assert.equal(r.status, 'current_head_approval');
+  assert.equal(r.headSha, HEAD_A);
+  assert.deepEqual(r.reviewers.map(({ reviewer, state, commitId, relation }) => ({ reviewer, state, commitId, relation })), [{ reviewer: 'bob', state: 'APPROVED', commitId: HEAD_A, relation: 'current_head' }]);
+});
+
+test('B1.4 P2-1 CASE B (original defect): approval on an OLDER commit is a historical approval, never current', async () => {
+  const r = await reviewsOf(HEAD_B, [rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)]);
+  assert.notEqual(r.status, 'approved');
+  assert.equal(r.status, 'historical_approval');
+  assert.equal(r.reviewers[0].relation, 'historical');
+  assert.equal(r.reviewers[0].commitId, HEAD_A);
+  assert.equal(r.headSha, HEAD_B);
+});
+
+test('B1.4 P2-1 CASE C: an approval with no commit_id cannot be tied to any commit', async () => {
+  for (const missing of [undefined, null, '']) {
+    const r = await reviewsOf(HEAD_B, [rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', missing)]);
+    assert.equal(r.status, 'review_head_unknown', `commit_id=${JSON.stringify(missing)}`);
+    assert.equal(r.reviewers[0].relation, 'unknown');
+  }
+  // The PR payload itself has no head SHA: nothing can be current.
+  const noHead = await reviewsOf(null, [rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)]);
+  assert.equal(noHead.status, 'review_head_unknown');
+});
+
+test('B1.4 P2-1 CASE D: an incomplete review list never yields an unqualified approval', async () => {
+  const r = await reviewsOf(HEAD_A, [rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)], NEXT_PAGE);
+  assert.equal(r.status, 'partial');
+  assert.equal(r.complete, false);
+  // What was read stays inspectable but is explicitly qualified as observed, not decided.
+  assert.equal(r.observed, 'current_head_approval');
+});
+
+test('B1.4 P2-1 CASE E: approval followed by CHANGES_REQUESTED leaves no hidden blocker', async () => {
+  const sameReviewer = await reviewsOf(HEAD_A, [rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A), rv(2, 'bob', 'CHANGES_REQUESTED', '2026-10-16T02:00:00Z', HEAD_A)]);
+  assert.equal(sameReviewer.status, 'changes_requested');
+  assert.deepEqual(sameReviewer.reviewers.map((x) => x.state), ['CHANGES_REQUESTED']);
+  // Different reviewers: the blocker wins, and the other approval stays visible and attributable.
+  const mixed = await reviewsOf(HEAD_A, [rv(1, 'ann', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A), rv(2, 'bob', 'CHANGES_REQUESTED', '2026-10-16T02:00:00Z', HEAD_A)]);
+  assert.equal(mixed.status, 'changes_requested');
+  assert.deepEqual(mixed.reviewers.map((x) => [x.reviewer, x.state]), [['ann', 'APPROVED'], ['bob', 'CHANGES_REQUESTED']]);
+  // A later approval by the same reviewer supersedes their own earlier request.
+  const superseded = await reviewsOf(HEAD_A, [rv(1, 'bob', 'CHANGES_REQUESTED', '2026-10-16T01:00:00Z', HEAD_A), rv(2, 'bob', 'APPROVED', '2026-10-16T02:00:00Z', HEAD_A)]);
+  assert.equal(superseded.status, 'current_head_approval');
+  // A changes-request on an older commit still blocks until it is dismissed or superseded.
+  const oldBlocker = await reviewsOf(HEAD_B, [rv(1, 'bob', 'CHANGES_REQUESTED', '2026-10-16T01:00:00Z', HEAD_A)]);
+  assert.equal(oldBlocker.status, 'changes_requested');
+  assert.equal(oldBlocker.reviewers[0].relation, 'historical');
+});
+
+test('B1.4 P2-1 CASE E2: a review from a deleted account is never dropped', async () => {
+  const r = await reviewsOf(HEAD_A, [rv(7, null, 'CHANGES_REQUESTED', '2026-10-16T01:00:00Z', HEAD_A), rv(8, 'ann', 'APPROVED', '2026-10-16T02:00:00Z', HEAD_A)]);
+  assert.equal(r.status, 'changes_requested');
+  assert.equal(r.reviewers.length, 2);
+});
+
+test('B1.4 P2-1 CASE F: a dismissed approval is not an active approval', async () => {
+  const r = await reviewsOf(HEAD_A, [rv(1, 'bob', 'DISMISSED', '2026-10-16T01:00:00Z', HEAD_A)]);
+  assert.equal(r.status, 'approval_dismissed');
+  assert.notEqual(r.status, 'current_head_approval');
+  assert.equal(r.reviewers[0].state, 'DISMISSED');
+  // Another reviewer's live approval is still reported as such, while the dismissal stays visible.
+  const withOther = await reviewsOf(HEAD_A, [rv(1, 'bob', 'DISMISSED', '2026-10-16T01:00:00Z', HEAD_A), rv(2, 'ann', 'APPROVED', '2026-10-16T02:00:00Z', HEAD_A)]);
+  assert.equal(withOther.status, 'current_head_approval');
+  assert.deepEqual(withOther.reviewers.map((x) => [x.reviewer, x.state]), [['ann', 'APPROVED'], ['bob', 'DISMISSED']]);
+});
+
+test('B1.4 P2-1 CASE G: several reviewers approving different commits stay individually attributable', async () => {
+  const r = await reviewsOf(HEAD_B, [rv(1, 'ann', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A), rv(2, 'bob', 'APPROVED', '2026-10-16T02:00:00Z', HEAD_B), rv(3, 'cy', 'APPROVED', '2026-10-16T03:00:00Z')]);
+  assert.equal(r.status, 'current_head_approval'); // at least one approval is demonstrably on the head
+  assert.deepEqual(r.reviewers.map((x) => [x.reviewer, x.commitId, x.relation]), [['ann', HEAD_A, 'historical'], ['bob', HEAD_B, 'current_head'], ['cy', null, 'unknown']]);
+  const noneCurrent = await reviewsOf(HEAD_B, [rv(1, 'ann', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A), rv(3, 'cy', 'APPROVED', '2026-10-16T03:00:00Z')]);
+  assert.equal(noneCurrent.status, 'historical_approval');
+});
+
+test('B1.4 P2-1 CASE I: CI on the current head and an approval of an older commit are reported independently', async () => {
+  const d = await detailAt(HEAD_B, () => ghOutput([rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)]));
+  assert.equal(d.ci.status, 'passing');
+  assert.equal(d.ci.headSha, HEAD_B);
+  assert.equal(d.reviews.status, 'historical_approval');
+});
+
+test('B1.4 P2-1 CASE J: a failed review read is Not checked, not Approved', async () => {
+  const d = await detailAt(HEAD_A, () => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' }));
+  assert.equal(d.reviews.status, 'not_checked');
+  assert.equal(d.reviews.reviewers, undefined);
+});
+
+test('B1.4 P2-1 CASE K: a later successful read recovers a valid current-head status', async () => {
+  const failed = await detailAt(HEAD_A, () => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' }));
+  assert.equal(failed.reviews.status, 'not_checked');
+  const recovered = await detailAt(HEAD_A, () => ghOutput([rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)]));
+  assert.equal(recovered.reviews.status, 'current_head_approval');
+});
+
+test('B1.4 P2-1 positive control: the classification is not degenerate (every state is reachable)', async () => {
+  const reach = new Set();
+  for (const [head, items, opts] of [
+    [HEAD_A, [], undefined],
+    [HEAD_A, [rv(1, 'a', 'COMMENTED', '2026-10-16T01:00:00Z', HEAD_A)], undefined],
+    [HEAD_A, [rv(1, 'a', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)], undefined],
+    [HEAD_B, [rv(1, 'a', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)], undefined],
+    [HEAD_B, [rv(1, 'a', 'APPROVED', '2026-10-16T01:00:00Z')], undefined],
+    [HEAD_A, [rv(1, 'a', 'CHANGES_REQUESTED', '2026-10-16T01:00:00Z', HEAD_A)], undefined],
+    [HEAD_A, [rv(1, 'a', 'DISMISSED', '2026-10-16T01:00:00Z', HEAD_A)], undefined],
+    [HEAD_A, [rv(1, 'a', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)], NEXT_PAGE],
+  ]) reach.add((await reviewsOf(head, items, opts)).status);
+  assert.deepEqual([...reach].sort(), ['approval_dismissed', 'changes_requested', 'commented_only', 'current_head_approval', 'historical_approval', 'no_reviews', 'partial', 'review_head_unknown']);
+});
+
+test('B1.4 P2-1: summarizeReviews no longer returns a bare approval (it needs the head SHA)', () => {
+  const items = [rv(1, 'a', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A)];
+  assert.equal(summarizeReviews(items, HEAD_A).status, 'current_head_approval');
+  assert.equal(summarizeReviews(items, HEAD_B).status, 'historical_approval');
+  assert.equal(summarizeReviews(items, null).status, 'review_head_unknown');
+  assert.equal(summarizeReviews([], HEAD_A).status, 'no_reviews');
+});
+
+test('B1.4 P2-1: submitted_at ordering decides the effective review; invalid states are ignored, input order does not matter', () => {
+  const list = [rv(1, 'bob', 'APPROVED', '2026-10-16T01:00:00Z', HEAD_A), rv(2, 'bob', 'CHANGES_REQUESTED', '2026-10-16T02:00:00Z', HEAD_A), rv(3, 'bob', 'WHATEVER', '2026-10-16T03:00:00Z', HEAD_A), rv(4, 'bob', 'COMMENTED', '2026-10-16T04:00:00Z', HEAD_A)];
+  assert.equal(summarizeReviews(list, HEAD_A).status, 'changes_requested');
+  assert.equal(summarizeReviews([...list].reverse(), HEAD_A).status, 'changes_requested');
+});
+
+// ---------------- B1.4 remediation: server read-only boundary (inspection tests) ----------------
+import { readFileSync } from 'node:fs';
+import { ghApiPage } from '../server/githubDevelopmentHistory.mjs';
+
+test('B1.4 server: every history route is GET-only and no write verb is routed anywhere on the GitHub router', () => {
+  const router = createGithubRouter();
+  const routes = router.stack.filter((l) => l.route).map((l) => ({ path: l.route.path, methods: Object.keys(l.route.methods).filter((m) => l.route.methods[m]) }));
+  assert.ok(routes.some((r) => r.path === '/development-history'));
+  assert.ok(routes.some((r) => r.path === '/development-history/pull'));
+  for (const r of routes) assert.deepEqual(r.methods, ['get'], `${r.path} must be GET only`);
+});
+
+test('B1.4 server: the repository allowlist is exact — arrays, case, slashes, traversal and look-alikes are all refused before any read', async () => {
+  let calls = 0;
+  await withRouter({ fetchHistory: async (repo) => { calls += 1; return { repository: repo }; }, fetchHistoryPull: async () => { calls += 1; return {}; } }, async (base) => {
+    // positive control: the exact repository still works
+    assert.equal((await fetch(`${base}/development-history?repo=${REPO}`)).status, 200);
+    assert.equal(calls, 1);
+    const bad = [
+      'repo=augusliang23-web/PM-Dashboard', `repo=${REPO}/`, `repo=%2F${REPO}`, `repo=${REPO}%2F..%2Fother`, `repo=${REPO}%00`, `repo=${REPO}.git`,
+      `repo=${REPO}&repo=augusliang23-web/other`, 'repo[]=augusliang23-web/pm-dashboard', 'repo=', '', `repo=https://github.com/${REPO}`,
+    ];
+    for (const q of bad) {
+      assert.equal((await fetch(`${base}/development-history?${q}`)).status, 403, q);
+      assert.equal((await fetch(`${base}/development-history/pull?${q}${q ? '&' : ''}number=5`)).status, 403, q);
+    }
+    assert.equal(calls, 1, 'a refused request never reaches the GitHub reader');
+  });
+});
+
+test('B1.4 server: the PR number is a strict positive decimal integer', async () => {
+  const seen = [];
+  await withRouter({ fetchHistoryPull: async (repo, number) => { seen.push(number); return { repository: repo, number }; } }, async (base) => {
+    assert.equal((await fetch(`${base}/development-history/pull?repo=${REPO}&number=55`)).status, 200);
+    for (const n of ['0', '-1', '1.5', '1e3', '55abc', '%2055', '', '12345678', '0x10', '55&number=56']) {
+      const res = await fetch(`${base}/development-history/pull?repo=${REPO}&number=${n}`);
+      assert.ok([400].includes(res.status) || n === '55&number=56', `number=${n} -> ${res.status}`);
+    }
+    // a repeated parameter is an array, not a number
+    assert.equal((await fetch(`${base}/development-history/pull?repo=${REPO}&number=55&number=56`)).status, 400);
+  });
+  assert.deepEqual(seen, [55]);
+});
+
+test('B1.4 server: query parameters cannot turn a read into a mutation — every spawned gh call is a fixed GET on the allowlisted repository', async () => {
+  const { execFileFn, calls } = fakeGh([
+    ...standardRoutes(),
+    [/\/pulls\/55$/, () => ghOutput({ ...PULLS.find((p) => p.number === 55), changed_files: 1, additions: 1, deletions: 0, commits: 1 })],
+    [/\/check-runs/, () => ghOutput({ total_count: 0, check_runs: [] })],
+    [/\/reviews/, () => ghOutput([])],
+  ]);
+  await fetchDevelopmentHistory(REPO, { execFileFn });
+  await fetchPullDetail(REPO, 55, { execFileFn, aggregateCi: aggregateCiResponse });
+  assert.ok(calls.length > 5);
+  for (const { cmd, args, opts } of calls) {
+    assert.equal(cmd, 'gh');
+    assert.deepEqual(args.slice(0, 4), ['api', '--method', 'GET', '-i']);
+    assert.equal(args.length, 5, 'no extra flags such as -f/-F/--input that would add a request body');
+    assert.match(args[4], /^repos\/augusliang23-web\/pm-dashboard(\/|\?|$)/);
+    assert.equal(opts?.shell, undefined, 'never through a shell');
+  }
+});
+
+test('B1.4 server: ghApiPage refuses anything that is not a plain repos/ path', async () => {
+  const { execFileFn, calls } = fakeGh([[/./, () => ghOutput({})]]);
+  for (const path of ['user', '/repos/x/y', 'repos/x y', 'repos/x\ny', 'graphql', '', undefined, 42, 'orgs/x/repos']) {
+    await assert.rejects(ghApiPage(path, { execFileFn }), (e) => e instanceof GithubCliError, String(path));
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('B1.4 server: the history module has no filesystem, shell, process-spawn or agent capability (static inspection)', () => {
+  const src = readFileSync(new URL('../server/githubDevelopmentHistory.mjs', import.meta.url), 'utf8');
+  const imports = [...src.matchAll(/^import .* from '([^']+)';/gm)].map((m) => m[1]).sort();
+  assert.deepEqual(imports, ['./githubRepos.mjs', 'node:child_process']);
+  assert.match(src, /import \{ execFile \} from 'node:child_process'/);
+  assert.doesNotMatch(src, /\b(spawn|spawnSync|execSync|execFileSync|fork)\s*\(/);
+  assert.doesNotMatch(src, /shell\s*:\s*true/);
+  assert.doesNotMatch(src, /writeFile|appendFile|createWriteStream|unlink|rmSync|mkdir|process\.env/);
+  assert.doesNotMatch(src, /--method['"]?\s*,\s*['"](POST|PUT|PATCH|DELETE)/i);
+  assert.equal([...src.matchAll(/'--method', '(\w+)'/g)].map((m) => m[1]).join(','), 'GET');
+  const routes = readFileSync(new URL('../server/githubRoutes.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(routes, /router\.(post|put|patch|delete|all)\(/);
 });

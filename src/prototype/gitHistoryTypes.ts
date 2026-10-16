@@ -43,12 +43,21 @@ export type DevelopmentHistory = {
   comparisons: HistoryComparison[];
 };
 export type CiStatus = 'not_checked' | 'none' | 'passing' | 'failing' | 'running' | 'pending' | 'unknown';
-export type ReviewStatus = 'not_checked' | 'no_reviews' | 'partial' | 'approved' | 'changes_requested' | 'commented_only';
+// Review provenance (B1.4): an approval is only ever described relative to the commit it was made on.
+export type ReviewStatus =
+  | 'not_checked' | 'no_reviews' | 'partial' | 'commented_only' | 'changes_requested'
+  | 'current_head_approval' | 'historical_approval' | 'review_head_unknown' | 'approval_dismissed';
+export type ReviewRelation = 'current_head' | 'historical' | 'unknown';
+/** The effective (latest decisive) review of one reviewer, with the commit it was submitted against. */
+export type ReviewerDecision = {
+  reviewer: string | null; reviewId: number | null; state: 'APPROVED' | 'CHANGES_REQUESTED' | 'DISMISSED';
+  commitId: string | null; submittedAt: string | null; relation: ReviewRelation;
+};
 export type PullDetail = {
   source: 'GitHub'; repository: string; number: number; fetchedAt: string;
   pull: HistoryPull & { changedFiles: number | null; additions: number | null; deletions: number | null; commits: number | null };
   ci: { status: CiStatus; total: number | null; headSha: string | null };
-  reviews: { status: ReviewStatus; count: number | null; complete: boolean; observed?: ReviewStatus };
+  reviews: { status: ReviewStatus; count: number | null; complete: boolean; headSha?: string | null; reviewers?: ReviewerDecision[]; observed?: ReviewStatus };
 };
 export type HistoryErrorKind = 'not_authenticated' | 'forbidden' | 'missing' | 'rate_limited' | 'not_found' | 'timeout' | 'aborted' | 'failed' | 'network';
 export type LiveIdentity = { source: 'REGISTERED' | 'DEMO'; projectId?: string; repository?: string; displayName: string };

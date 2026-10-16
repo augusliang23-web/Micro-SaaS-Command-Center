@@ -400,7 +400,7 @@ export async function assessConsistency({ repo, opts, branches, pulls, defaultBr
 
 /**
  * On-demand detail for ONE PR: the single-PR record (changed file counts),
- * check runs for its head SHA and submitted reviews. All GET; never comments,
+ * check runs for its head SHA and submitted reviews (with each review's commit_id). All GET; never comments,
  * approves, merges or re-runs checks.
  */
 export async function fetchPullDetail(repo, number, { execFileFn = execFile, signal, now = () => new Date(), aggregateCi } = {}) {
@@ -425,7 +425,7 @@ export async function fetchPullDetail(repo, number, { execFileFn = execFile, sig
   ]);
   const reviewItems = reviews?.items ?? null;
   const reviewsComplete = reviews?.complete === true;
-  const observedReview = reviewItems === null ? null : summarizeReviews(reviewItems);
+  const observedReview = reviewItems === null ? null : summarizeReviews(reviewItems, headSha ?? null);
   return {
     source: 'GitHub',
     repository: repo,
@@ -444,27 +444,79 @@ export async function fetchPullDetail(repo, number, { execFileFn = execFile, sig
             // A decision derived from a truncated list is not a verdict: later
             // pages may hold newer or conflicting reviews. `observed` keeps
             // what the read pages showed (a blocker stays visible).
-            status: reviewsComplete ? observedReview : 'partial',
+            status: reviewsComplete ? observedReview.status : 'partial',
             count: reviewItems.length,
             complete: reviewsComplete,
-            ...(reviewsComplete ? {} : { observed: observedReview }),
+            // The PR head these reviews are compared with (same read as `pull.headSha`) and each effective review's
+            // own commit_id: provenance is preserved, not collapsed into one word.
+            headSha: headSha ?? null,
+            reviewers: observedReview.reviewers,
+            ...(reviewsComplete ? {} : { observed: observedReview.status }),
           },
   };
 }
 
-export function summarizeReviews(reviews) {
-  if (!Array.isArray(reviews) || reviews.length === 0) return 'no_reviews';
+/**
+ * Review provenance (B1.4 P2-1). GitHub returns, for every submitted review, the `commit_id` it was
+ * made against. A review summary that drops that field cannot tell an approval of the CURRENT head from
+ * an approval of a commit that has since been superseded, so it is kept here and compared with the PR head
+ * read in the same request. A review record is evidence of a review only: it is never proof that GitHub
+ * would currently permit a merge (required checks, required reviewers, branch rules and dismissal of stale
+ * reviews are not evaluated here) and never evidence of deployment.
+ *
+ * Effective review per reviewer = their latest decisive review (APPROVED, CHANGES_REQUESTED or DISMISSED);
+ * COMMENTED never supersedes a decision, unknown states are ignored. Reviews from a deleted account
+ * (no login) are kept individually so that a blocker cannot disappear.
+ */
+const DECISIVE_REVIEW_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED']);
+
+function reviewRelation(commitId, headSha) {
+  if (typeof commitId !== 'string' || commitId === '' || typeof headSha !== 'string' || headSha === '') return 'unknown';
+  return commitId.toLowerCase() === headSha.toLowerCase() ? 'current_head' : 'historical';
+}
+
+function laterReview(a, b) {
+  const ta = Date.parse(a.submitted_at);
+  const tb = Date.parse(b.submitted_at);
+  const na = Number.isNaN(ta) ? -Infinity : ta;
+  const nb = Number.isNaN(tb) ? -Infinity : tb;
+  if (na !== nb) return na > nb;
+  const ia = Number(a.id);
+  const ib = Number(b.id);
+  return Number.isFinite(ia) && Number.isFinite(ib) ? ia > ib : false;
+}
+
+export function summarizeReviews(reviews, headSha) {
+  if (!Array.isArray(reviews) || reviews.length === 0) return { status: 'no_reviews', reviewers: [] };
   const latest = new Map();
-  for (const review of reviews) {
+  let commented = false;
+  reviews.forEach((review, index) => {
+    if (review?.state === 'COMMENTED') commented = true;
+    if (!DECISIVE_REVIEW_STATES.has(review?.state)) return;
     const login = review.user?.login;
-    if (!login || review.state === 'COMMENTED' || review.state === 'PENDING') continue;
-    const prev = latest.get(login);
-    if (!prev || new Date(review.submitted_at) > new Date(prev.submitted_at)) latest.set(login, review);
-  }
-  const states = [...latest.values()].map((r) => r.state);
-  if (states.includes('CHANGES_REQUESTED')) return 'changes_requested';
-  if (states.includes('APPROVED')) return 'approved';
-  return 'commented_only';
+    const key = login ? `user:${login}` : `anonymous:${review.id ?? `index-${index}`}`;
+    const prev = latest.get(key);
+    if (!prev || laterReview(review, prev)) latest.set(key, review);
+  });
+  const reviewers = [...latest.values()]
+    .map((r) => ({
+      reviewer: r.user?.login ?? null,
+      reviewId: r.id ?? null,
+      state: r.state,
+      commitId: typeof r.commit_id === 'string' && r.commit_id !== '' ? r.commit_id : null,
+      submittedAt: r.submitted_at ?? null,
+      relation: reviewRelation(r.commit_id, headSha),
+    }))
+    .sort((a, b) => (a.reviewer ?? '\uffff').localeCompare(b.reviewer ?? '\uffff') || Number(a.reviewId) - Number(b.reviewId));
+  const approvals = reviewers.filter((r) => r.state === 'APPROVED');
+  let status;
+  if (reviewers.some((r) => r.state === 'CHANGES_REQUESTED')) status = 'changes_requested';
+  else if (approvals.some((r) => r.relation === 'current_head')) status = 'current_head_approval';
+  else if (approvals.some((r) => r.relation === 'historical')) status = 'historical_approval';
+  else if (approvals.length > 0) status = 'review_head_unknown';
+  else if (reviewers.some((r) => r.state === 'DISMISSED')) status = 'approval_dismissed';
+  else status = commented ? 'commented_only' : 'no_reviews';
+  return { status, reviewers };
 }
 
 /** Per-process memory cache keyed by exact repository; no disk persistence. */

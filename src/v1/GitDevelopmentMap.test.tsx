@@ -17,7 +17,7 @@ const DEMO_SWIPE:LiveIdentity={source:'DEMO',projectId:'demo-swipe',displayName:
 const RAIL:RailEntry[]=[{identity:LIVE_PM_DASHBOARD,label:'PM Dashboard',tag:'LIVE · GitHub 唯讀'},{identity:DEMO_PM,label:'PM Dashboard',tag:'DEMO · 未連線'},{identity:DEMO_SWIPE,label:'SwipeRight',tag:'DEMO · 未連線'}];
 function Harness(){const [identity,setIdentity]=useState<LiveIdentity>(LIVE_PM_DASHBOARD);return <GitDevelopmentMap identity={identity} rail={RAIL} selectIdentity={setIdentity}/>;}
 // ---------------- Track B B1 · live read-only PM Dashboard development map ----------------
-import {timelineSpan,timelineX,fitPxPerDay,PLOT_GUTTER_LEFT,PLOT_GUTTER_RIGHT,MIN_FIT_PX_PER_DAY,formatSgt,liveRepositoryFor,stackParent,stackChildren,relatedPulls,indexCommits,isAncestor,mergeEvidence,buildTimeline,LANES,reconcilePullDetail,ancestryClaim} from '../prototype/gitHistoryModel';
+import {timelineSpan,timelineX,fitPxPerDay,PLOT_GUTTER_LEFT,PLOT_GUTTER_RIGHT,MIN_FIT_PX_PER_DAY,formatSgt,liveRepositoryFor,stackParent,stackChildren,relatedPulls,indexCommits,isAncestor,mergeEvidence,buildTimeline,LANES,reconcilePullDetail,ancestryClaim,reviewProvenance,buildStackGraph,flattenStack,stackStatus} from '../prototype/gitHistoryModel';
 import type {DevelopmentHistory,HistoryPull,HistoryCommit} from '../prototype/gitHistoryTypes';
 
 const PM='augusliang23-web/pm-dashboard';
@@ -248,7 +248,7 @@ test('B1: graph is keyboard reachable, scrollable regions are focusable and filt
 // Written first and run against B1 commit 17a5623, where the SHA/CI, state-change,
 // refresh-invalidation, partial-review and drift tests fail.
 const SHA_A='e1';const SHA_B='e2';
-const detailWith=(number:number,over:{pull?:Partial<HistoryPull>;ci?:{status:string;total:number|null;headSha:string|null};reviews?:{status:string;count:number|null;complete:boolean;observed?:string}}={})=>{
+const detailWith=(number:number,over:{pull?:Partial<HistoryPull>;ci?:{status:string;total:number|null;headSha:string|null};reviews?:{status:string;count:number|null;complete:boolean;observed?:string;headSha?:string|null;reviewers?:unknown[]}}={})=>{
  const base=detailFor(number,'passing');
  return {...base,pull:{...base.pull,...over.pull},ci:over.ci??base.ci,reviews:over.reviews??base.reviews};
 };
@@ -334,7 +334,7 @@ test('P2-2: a legacy detail that says approved with complete=false is still rend
 });
 
 test.each([
- ['no_reviews','沒有已送出的 review'],['not_checked','Not checked'],['approved','Approved（'],['changes_requested','Changes requested（'],
+ ['no_reviews','沒有已送出的 review'],['not_checked','Not checked'],['changes_requested','Changes requested（'],
 ])('P2-2: complete review state %s keeps its own label',async(status,text)=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{reviews:{status,count:status==='no_reviews'?0:2,complete:status!=='not_checked'}}));await flush();
@@ -1146,4 +1146,324 @@ describe('B1.4 source badge: allowlisted is not fetched, a previous snapshot is 
   fireEvent.click(within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getAllByRole('button').find(b=>/DEMO/.test(b.getAttribute('aria-label')??''))!);
   expect(screen.queryByTestId('g-source-badge')).toBeNull();expect(pending).toHaveLength(1); // only the initial registered request
  });
+});
+
+// ---------------- B1.4 remediation: review provenance (P2-1) ----------------
+// Independent review finding: an approval of commit A kept being shown as an approval while the PR head was B.
+// The cases below were written first and run against a45a01d (see the PR report for the failing assertions).
+const rvw=(reviewer:string|null,state:'APPROVED'|'CHANGES_REQUESTED'|'DISMISSED',commitId:string|null,reviewId=1)=>({reviewer,reviewId,state,commitId,submittedAt:'2026-10-16T00:00:00Z',relation:'unknown'});
+const reviewDetail=(headSha:string,status:string,reviewers:unknown[]|undefined,extra:{complete?:boolean;comparedHead?:string|null;count?:number}={})=>detailWith(55,{pull:{headSha},ci:{status:'passing',total:5,headSha},reviews:{status,count:extra.count??(reviewers?.length??0),complete:extra.complete??true,...(extra.comparedHead===undefined?{headSha}:{headSha:extra.comparedHead}),...(reviewers===undefined?{}:{reviewers})}});
+const showReview=async(detail:ReturnType<typeof detailWith>,history=makeHistory())=>{const m=await openPr(55,history);detailReq(m).resolve(detail);await flush();return m;};
+
+test('B1.4 P2-1 CASE A: an approval on the current head is shown as a current-head review record, not as merge readiness',async()=>{
+ await showReview(reviewDetail(SHA_A,'current_head_approval',[rvw('bob','APPROVED',SHA_A)]));
+ const r=reviewOf();
+ expect(r).toHaveTextContent('Current-head approval');expect(r).toHaveTextContent(`目前 head ${SHA_A}`);
+ expect(r).toHaveTextContent('不代表 GitHub 允許合併或可部署');
+ expect(within(r).getByTestId('pr-review-reviewers')).toHaveTextContent(`bob · Approved · commit ${SHA_A} · ＝目前 head`);
+ expect(r).not.toHaveTextContent(/merge ready|deploy ready|可以合併/i);
+ expect(ciOf()).toHaveTextContent('CI passed');
+});
+
+test('B1.4 P2-1 CASE B (original defect): approval of an older commit is Historical, never an approval of the current head',async()=>{
+ await showReview(reviewDetail(SHA_A,'historical_approval',[rvw('bob','APPROVED','e0')]));
+ const r=reviewOf();
+ expect(r).toHaveTextContent('Historical approval');expect(r).toHaveTextContent(`不是目前 head ${SHA_A}`);
+ expect(r).not.toHaveTextContent('Current-head approval');expect(r).not.toHaveTextContent(/^Approved/);
+ expect(within(r).getByTestId('pr-review-reviewers')).toHaveTextContent('commit e0');expect(r).toHaveTextContent('較早 commit（非目前 head）');
+});
+
+test('B1.4 P2-1 CASE B2: the viewer re-checks the commit itself — a server status that says current-head is not trusted over the review commit_id',async()=>{
+ await showReview(reviewDetail(SHA_A,'current_head_approval',[rvw('bob','APPROVED','e0')]));
+ expect(reviewOf()).toHaveTextContent('Historical approval');expect(reviewOf()).not.toHaveTextContent('Current-head approval');
+});
+
+test('B1.4 P2-1 CASE B3: reviews compared with a different head than the one shown cannot be tied to it',async()=>{
+ await showReview(reviewDetail(SHA_A,'current_head_approval',[rvw('bob','APPROVED',SHA_A)],{comparedHead:'e9'}));
+ expect(reviewOf()).toHaveTextContent('Not verified');expect(reviewOf()).not.toHaveTextContent('Current-head approval');
+});
+
+test('B1.4 P2-1 CASE C: an approval with no commit_id is Not verified',async()=>{
+ await showReview(reviewDetail(SHA_A,'review_head_unknown',[rvw('bob','APPROVED',null)]));
+ const r=reviewOf();expect(r).toHaveTextContent('Not verified');expect(r).toHaveTextContent('commit_id');expect(r).not.toHaveTextContent('Current-head approval');
+ expect(r).toHaveTextContent('缺少 commit_id，無法比對');
+});
+
+test('B1.4 P2-1 CASE C2: a legacy detail with a bare "approved" and no per-review commit fails closed',async()=>{
+ await showReview(reviewDetail(SHA_A,'approved',undefined));
+ expect(reviewOf()).toHaveTextContent('Not verified');expect(reviewOf()).not.toHaveTextContent(/^Approved/);expect(reviewOf()).not.toHaveTextContent('Current-head approval');
+ // ...but a request for changes is never hidden by missing provenance.
+ cleanup();
+ await showReview(reviewDetail(SHA_A,'changes_requested',undefined,{count:1}));
+ expect(reviewOf()).toHaveTextContent('Changes requested（');
+});
+
+test('B1.4 P2-1 CASE D: incomplete pagination is Partial and never an unqualified approval',async()=>{
+ await showReview(reviewDetail(SHA_A,'partial',[rvw('bob','APPROVED',SHA_A)],{complete:false,count:300}));
+ const r=reviewOf();expect(r).toHaveTextContent('Partial / UNKNOWN');expect(r).not.toHaveTextContent('Current-head approval（');expect(r).not.toHaveTextContent(/^Current-head approval/);
+});
+
+test('B1.4 P2-1 CASE E: approval followed by changes requested leaves no hidden blocker, and the approval stays attributable',async()=>{
+ await showReview(reviewDetail(SHA_A,'changes_requested',[rvw('ann','APPROVED',SHA_A,1),rvw('bob','CHANGES_REQUESTED',SHA_A,2)]));
+ const r=reviewOf();expect(r).toHaveTextContent('Changes requested');expect(r).not.toHaveTextContent('Current-head approval');
+ expect(within(r).getByTestId('pr-review-reviewers')).toHaveTextContent('ann · Approved');expect(within(r).getByTestId('pr-review-reviewers')).toHaveTextContent('bob · Changes requested');
+});
+
+test('B1.4 P2-1 CASE F: a dismissed approval is not shown as an active approval',async()=>{
+ await showReview(reviewDetail(SHA_A,'approval_dismissed',[rvw('bob','DISMISSED',SHA_A)]));
+ const r=reviewOf();expect(r).toHaveTextContent('Approval dismissed');expect(r).not.toHaveTextContent('Current-head approval');expect(r).not.toHaveTextContent('Historical approval');
+});
+
+test('B1.4 P2-1 CASE G: reviewers who approved different commits are each attributed to their own commit',async()=>{
+ await showReview(reviewDetail(SHA_A,'current_head_approval',[rvw('ann','APPROVED','e0',1),rvw('bob','APPROVED',SHA_A,2),rvw('cy','APPROVED',null,3),rvw(null,'CHANGES_REQUESTED','e0',4)].slice(0,3)));
+ const list=within(reviewOf()).getByTestId('pr-review-reviewers');
+ expect(list).toHaveTextContent('ann · Approved · commit e0 · 較早 commit');expect(list).toHaveTextContent(`bob · Approved · commit ${SHA_A} · ＝目前 head`);expect(list).toHaveTextContent('cy · Approved · commit Not available · 缺少 commit_id');
+ expect(reviewOf()).toHaveTextContent('Current-head approval');
+});
+
+test('B1.4 P2-1 CASE G2: a review from a deleted account is shown, not dropped',async()=>{
+ await showReview(reviewDetail(SHA_A,'changes_requested',[rvw(null,'CHANGES_REQUESTED','e0',4)]));
+ expect(reviewOf()).toHaveTextContent('已刪除帳號');expect(reviewOf()).toHaveTextContent('Changes requested');
+});
+
+test('B1.4 P2-1 CASE H: a head that moved between snapshot and detail reuses no approval, and a refresh recovers it (CASE K)',async()=>{
+ const m=await showReview(reviewDetail(SHA_B,'current_head_approval',[rvw('bob','APPROVED',SHA_B)]));
+ let panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('Needs refresh');expect(reviewOf()).toHaveTextContent('Not verified');expect(reviewOf()).not.toHaveTextContent('Current-head approval');
+ expect(within(reviewOf()).queryByTestId('pr-review-reviewers')).not.toBeInTheDocument();
+ // CASE K: the next snapshot carries the new head; the re-read detail can now be tied to it.
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
+ const moved=makeHistory({fetchedAt:'2026-10-16T00:05:00.000Z',pulls:makeHistory().pulls.map(p=>p.number===55?{...p,headSha:SHA_B}:p)});
+ m.pending.at(-1)!.resolve(moved);await flush();
+ detailReq(m).resolve({...reviewDetail(SHA_B,'current_head_approval',[rvw('bob','APPROVED',SHA_B)]),fetchedAt:'2026-10-16T00:06:00.000Z'});await flush();
+ panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(reviewOf()).toHaveTextContent('Current-head approval');expect(reviewOf()).toHaveTextContent(`目前 head ${SHA_B}`);expect(panel).not.toHaveTextContent('Needs refresh');
+});
+
+test('B1.4 P2-1 CASE H2: a cached approval is never applied to a newer PR head (new snapshot starts empty)',async()=>{
+ const m=await showReview(reviewDetail(SHA_A,'current_head_approval',[rvw('bob','APPROVED',SHA_A)]));
+ expect(reviewOf()).toHaveTextContent('Current-head approval');
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
+ const moved=makeHistory({fetchedAt:'2026-10-16T00:05:00.000Z',pulls:makeHistory().pulls.map(p=>p.number===55?{...p,headSha:SHA_B}:p)});
+ m.pending.at(-1)!.resolve(moved);await flush();
+ // Until the detail is re-read for the new snapshot, nothing from the old head is shown as an approval.
+ expect(reviewOf()).not.toHaveTextContent('Current-head approval');expect(reviewOf()).toHaveTextContent('Not checked');
+});
+
+test('B1.4 P2-1 CASE I: CI and review keep independent states (CI passed on the head, approval of an older commit)',async()=>{
+ await showReview(reviewDetail(SHA_A,'historical_approval',[rvw('bob','APPROVED','e0')]));
+ expect(ciOf()).toHaveTextContent('CI passed');expect(ciOf()).not.toHaveTextContent(/review|approval/i);
+ expect(reviewOf()).toHaveTextContent('Historical approval');expect(reviewOf()).not.toHaveTextContent(/CI passed/);
+ // and the other direction: failing CI does not change the review statement
+ cleanup();
+ const base=reviewDetail(SHA_A,'current_head_approval',[rvw('bob','APPROVED',SHA_A)]);
+ await showReview({...base,ci:{status:'failing',total:5,headSha:SHA_A}});
+ expect(ciOf()).toHaveTextContent('CI failed');expect(reviewOf()).toHaveTextContent('Current-head approval');
+});
+
+test('B1.4 P2-1 CASE J: a failed review read is Not checked, never an approval',async()=>{
+ await showReview(reviewDetail(SHA_A,'not_checked',undefined,{complete:false}));
+ expect(reviewOf()).toHaveTextContent('Not checked');expect(reviewOf()).not.toHaveTextContent(/approval|Approved/);
+});
+
+test('B1.4 P2-1: no reviews and comment-only reviews are their own states',async()=>{
+ await showReview(reviewDetail(SHA_A,'no_reviews',[]));expect(reviewOf()).toHaveTextContent('沒有已送出的 review');
+ cleanup();
+ await showReview(reviewDetail(SHA_A,'commented_only',[]));expect(reviewOf()).toHaveTextContent('僅留言（無核准）');
+});
+
+test('B1.4 P2-1: missing PR head or snapshot head makes any approval Not verified',async()=>{
+ await showReview(reviewDetail(SHA_A,'current_head_approval',[rvw('bob','APPROVED',SHA_A)]),withSnapshotHead(null));
+ expect(reviewOf()).toHaveTextContent('Not verified');expect(reviewOf()).not.toHaveTextContent('Current-head approval');
+});
+
+test('B1.4 P2-1 model: reviewProvenance covers every state with fail-closed defaults',()=>{
+ const h=makeHistory();const p=h.pulls.find(x=>x.number===55)!;
+ const prov=(status:string,reviewers:unknown[]|undefined,over:{head?:string;complete?:boolean}={})=>{const d=reviewDetail(over.head??SHA_A,status,reviewers,{complete:over.complete}) as never as import('../prototype/gitHistoryTypes').PullDetail;return reviewProvenance(d,reconcilePullDetail(p,d)).state;};
+ expect(prov('current_head_approval',[rvw('a','APPROVED',SHA_A)])).toBe('CURRENT_HEAD_APPROVAL');
+ expect(prov('current_head_approval',[rvw('a','APPROVED','OLD')])).toBe('HISTORICAL_APPROVAL');
+ expect(prov('current_head_approval',[rvw('a','APPROVED',null)])).toBe('REVIEW_HEAD_UNKNOWN');
+ expect(prov('current_head_approval',[])).toBe('REVIEW_HEAD_UNKNOWN');
+ expect(prov('current_head_approval',[rvw('a','APPROVED',SHA_A.toUpperCase())])).toBe('CURRENT_HEAD_APPROVAL');
+ expect(prov('changes_requested',[rvw('a','APPROVED',SHA_A),rvw('b','CHANGES_REQUESTED','OLD')])).toBe('CHANGES_REQUESTED');
+ expect(prov('approval_dismissed',[rvw('a','DISMISSED',SHA_A)])).toBe('APPROVAL_DISMISSED');
+ expect(prov('partial',[rvw('a','APPROVED',SHA_A)],{complete:false})).toBe('PARTIAL_REVIEW_HISTORY');
+ expect(prov('not_checked',undefined)).toBe('NOT_CHECKED');
+ expect(prov('no_reviews',[])).toBe('NO_REVIEWS');
+ expect(prov('current_head_approval',[rvw('a','APPROVED',SHA_B)],{head:SHA_B})).toBe('NEEDS_REFRESH');
+});
+
+// ---------------- B1.4 remediation: cyclic / ambiguous PR stacks (P2-2) ----------------
+// Independent review finding: stack relationships come from PR metadata (base/head branch NAMES), which can be
+// cyclic, self-referencing or ambiguous. The recursive renderer assumed a tree and crashed the whole dashboard
+// ("Maximum call stack size exceeded"). Written first and run against the pre-fix source (see the PR report).
+const sp=(n:number,base:string,head:string)=>pr(n,`stack test ${n}`,'draft','2026-10-15T01:00:00Z',null,base,head,`sx${n}`);
+const historyWith=(...extra:HistoryPull[])=>makeHistory({pulls:[...makeHistory().pulls,...extra]});
+const stackArticle=()=>within(screen.getByRole('heading',{name:/OPEN PR 堆疊/}).closest('article') as HTMLElement);
+const stackButtons=()=>stackArticle().getAllByRole('button').map(b=>b.textContent??'').filter(t=>/^#\d+$/.test(t));
+const count=(list:string[],n:number)=>list.filter(t=>t===`#${n}`).length;
+const UNKNOWN_STACK='Stack relationship UNKNOWN';
+
+test('B1.4 P2-2 CASE A/B: valid linear and branched stacks keep their structure',async()=>{
+ await openPr(55,makeHistory());
+ const nums=stackButtons();
+ // #53 → #55 (linear) and #56 → #57 → #58, #59 (branched); every OPEN PR appears exactly once.
+ for(const n of [36,52,53,54,55,56,57,58,59])expect(count(nums,n),`#${n}`).toBe(1);
+ expect(nums.indexOf('#53')).toBeLessThan(nums.indexOf('#55'));
+ expect(nums.indexOf('#56')).toBeLessThan(nums.indexOf('#57'));
+ expect(nums.indexOf('#57')).toBeLessThan(nums.indexOf('#58'));expect(nums.indexOf('#57')).toBeLessThan(nums.indexOf('#59'));
+ expect(stackArticle().queryByText(UNKNOWN_STACK,{exact:false})).not.toBeInTheDocument(); // healthy data is not labelled unknown
+});
+
+test('B1.4 P2-2 CASE C/K (original reproduction): a cycle reachable from a normal root does not crash the dashboard',async()=>{
+ // X(main←x100), A(x100←y100), B(y100←x100): B reports head "x100" again, so following reported children loops forever.
+ await openPr(55,historyWith(sp(100,'main','x100'),sp(101,'x100','y100'),sp(102,'y100','x100')));
+ const nums=stackButtons();
+ for(const n of [100,101,102])expect(count(nums,n),`#${n} shown exactly once`).toBe(1);
+ expect(stackArticle().getByText(UNKNOWN_STACK,{exact:false})).toBeInTheDocument();
+ expect(screen.getByLabelText('資料來源')).toBeInTheDocument(); // the rest of the dashboard is still alive
+});
+
+test('B1.4 P2-2 CASE D: a disconnected cycle keeps every PR accessible (none silently dropped)',async()=>{
+ await openPr(55,historyWith(sp(110,'q110','p110'),sp(111,'p110','q110')));
+ const nums=stackButtons();
+ expect(count(nums,110)).toBe(1);expect(count(nums,111)).toBe(1);
+ expect(stackArticle().getByText(UNKNOWN_STACK,{exact:false})).toBeInTheDocument();
+ expect(stackArticle().getAllByText(/循環|cyclic/i,{exact:false}).length).toBeGreaterThan(0);
+});
+
+test('B1.4 P2-2 CASE E: a self-referencing PR is shown once and explained',async()=>{
+ await openPr(55,historyWith(sp(120,'s120','s120')));
+ expect(count(stackButtons(),120)).toBe(1);
+ expect(stackArticle().getAllByText(/自我參照|self/i,{exact:false}).length).toBeGreaterThan(0);
+});
+
+test('B1.4 P2-2 CASE F: duplicate head branches stay ambiguous — the child is not duplicated under both',async()=>{
+ await openPr(55,historyWith(sp(130,'main','dup'),sp(131,'main','dup'),sp(132,'dup','c132')));
+ const nums=stackButtons();
+ for(const n of [130,131,132])expect(count(nums,n),`#${n}`).toBe(1);
+ expect(stackArticle().getByText(UNKNOWN_STACK,{exact:false})).toBeInTheDocument();
+ expect(stackArticle().getAllByText(/多個|ambiguous/i,{exact:false}).length).toBeGreaterThan(0);
+});
+
+test('B1.4 P2-2 CASE G: a missing parent PR is not invented',async()=>{
+ await openPr(55,historyWith(sp(140,'feature/missing-parent','m140')));
+ const nums=stackButtons();expect(count(nums,140)).toBe(1);
+ expect(stackArticle().getByText('← base feature/missing-parent')).toBeInTheDocument();
+ expect(stackArticle().queryByText(UNKNOWN_STACK,{exact:false})).not.toBeInTheDocument();
+ const h=historyWith(sp(140,'feature/missing-parent','m140'));expect(stackParent(h.pulls.find(p=>p.number===140)!,h.pulls)).toBeNull();
+});
+
+test('B1.4 P2-2 CASE H: an unrelated valid tree stays fully usable next to a malformed cycle',async()=>{
+ await openPr(55,historyWith(sp(110,'q110','p110'),sp(111,'p110','q110')));
+ const nums=stackButtons();
+ for(const n of [56,57,58,59,53,55])expect(count(nums,n),`#${n}`).toBe(1);
+ expect(nums.indexOf('#56')).toBeLessThan(nums.indexOf('#57'));expect(nums.indexOf('#57')).toBeLessThan(nums.indexOf('#58'));
+ fireEvent.click(stackArticle().getByRole('button',{name:'#58'}));
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('base = PR #57 的 head');
+});
+
+test('B1.4 P2-2 CASE L: a PR inside an invalid stack stays selectable by keyboard and its details open',async()=>{
+ const user=(await import('@testing-library/user-event')).default.setup();
+ await openPr(55,historyWith(sp(110,'q110','p110'),sp(111,'p110','q110')));
+ const button=stackArticle().getByRole('button',{name:'#110'});
+ button.focus();expect(button).toHaveFocus();
+ await user.keyboard('{Enter}');
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('#110');expect(panel).toHaveTextContent(UNKNOWN_STACK);
+ expect(panel).toHaveTextContent('#111'); // the other member of the cycle is named, so the relationship can be inspected
+});
+
+test('B1.4 P2-2 CASE J (UI): several hundred PRs, including cycles, render without a stack overflow',async()=>{
+ const chain=Array.from({length:300},(_,i)=>sp(1000+i,i===0?'main':`c${1000+i-1}`,`c${1000+i}`));
+ const cycles=Array.from({length:60},(_,i)=>[sp(2000+2*i,`d${2001+2*i}`,`d${2000+2*i}`),sp(2001+2*i,`d${2000+2*i}`,`d${2001+2*i}`)]).flat();
+ const started=Date.now();
+ await openPr(55,historyWith(...chain,...cycles));
+ const nums=stackButtons();
+ expect(nums.length).toBeGreaterThanOrEqual(300+120);
+ for(const n of [1000,1299,2000,2119])expect(count(nums,n)).toBe(1);
+ expect(Date.now()-started).toBeLessThan(15000);
+},30000);
+
+test('B1.4 P2-2 model: the stack graph is deterministic, accounts for every OPEN PR once, and marks every unverified relationship',()=>{
+ const pulls=historyWith(sp(100,'main','x100'),sp(101,'x100','y100'),sp(102,'y100','x100'),sp(110,'q110','p110'),sp(111,'p110','q110'),sp(120,'s120','s120'),sp(130,'main','dup'),sp(131,'main','dup'),sp(132,'dup','c132')).pulls;
+ const g=buildStackGraph(pulls);
+ const open=pulls.filter(p=>p.state==='open').map(p=>p.number).sort((a,b)=>a-b);
+ const rendered=flattenStack(g).map(r=>r.pr.number);
+ expect([...rendered].sort((a,b)=>a-b)).toEqual(open); // each OPEN PR exactly once
+ const shuffled=[...pulls].sort((a,b)=>((a.number*7919)%101)-((b.number*7919)%101));
+ expect(JSON.stringify(flattenStack(buildStackGraph(shuffled)))).toBe(JSON.stringify(flattenStack(g))); // input order never matters
+ const issue=(n:number)=>g.nodes.get(n)!.issue;
+ expect(issue(110)).toBe('cycle');expect(issue(111)).toBe('cycle');expect(issue(120)).toBe('self_reference');
+ expect(issue(132)).toBe('ambiguous_parent');expect(issue(56)).toBeNull();expect(issue(57)).toBeNull();
+ expect(g.nodes.get(110)!.peers).toEqual([110,111]);
+ expect(g.nodes.get(132)!.peers).toEqual([130,131]);
+});
+
+test('B1.4 P2-2 model: scale — a thousand PRs build quickly and never recurse deeply',()=>{
+ const chain=Array.from({length:800},(_,i)=>sp(1000+i,i===0?'main':`c${1000+i-1}`,`c${1000+i}`));
+ const cycles=Array.from({length:100},(_,i)=>[sp(3000+2*i,`d${3001+2*i}`,`d${3000+2*i}`),sp(3001+2*i,`d${3000+2*i}`,`d${3001+2*i}`)]).flat();
+ const pulls=[...chain,...cycles];
+ const t=Date.now();const g=buildStackGraph(pulls);const rows=flattenStack(g);
+ expect(rows).toHaveLength(1000);expect(Date.now()-t).toBeLessThan(1000);
+ expect(rows.find(r=>r.pr.number===1799)!.depth).toBe(799);
+ for(let i=0;i<50;i++){stackParent(chain[799]!,pulls);stackChildren(chain[400]!,pulls);} // cached: repeated queries stay cheap
+});
+
+test('B1.4 P2-2 model: stackParent/stackChildren keep their original meaning for valid stacks and never return unverified links',()=>{
+ const h=makeHistory();const get=(n:number)=>h.pulls.find(p=>p.number===n)!;
+ expect(stackParent(get(55),h.pulls)?.number).toBe(53);expect(stackChildren(get(57),h.pulls).map(p=>p.number)).toEqual([58,59]);
+ const bad=historyWith(sp(110,'q110','p110'),sp(111,'p110','q110'),sp(130,'main','dup'),sp(131,'main','dup'),sp(132,'dup','c132')).pulls;
+ expect(stackParent(bad.find(p=>p.number===110)!,bad)).toBeNull(); // a cycle is not a verified parent
+ expect(stackParent(bad.find(p=>p.number===132)!,bad)).toBeNull(); // two candidate parents: none is invented
+ expect(stackChildren(bad.find(p=>p.number===130)!,bad)).toEqual([]);
+ expect(stackStatus(bad.find(p=>p.number===132)!,bad)).toMatchObject({state:'ambiguous_parent',peers:[130,131]});
+ expect(stackStatus(get(55),h.pulls)).toMatchObject({state:'ok'});
+ expect(relatedPulls(bad.find(p=>p.number===110)!,bad).has(110)).toBe(true); // related-highlighting survives a cycle
+});
+
+// ---------------- B1.4 remediation: focused trust-boundary regressions (identity, separation, late responses) ----------------
+test('B1.4 identity: only the exact allowlisted repository qualifies — look-alikes never do, and accepted spellings resolve to the exact slug',()=>{
+ const id=(repository:string|undefined,over:Partial<LiveIdentity>={}):LiveIdentity=>({source:'REGISTERED',projectId:'p1',repository,displayName:'PM Dashboard',...over});
+ expect(liveRepositoryFor(id(PM))).toBe(PM); // positive control: the exact string still works
+ // The viewer's existing normalisation (whitespace, github.com URL prefix, one trailing slash) still resolves to the EXACT slug, and that slug is what is requested.
+ for(const same of [`${PM}/`,`https://github.com/${PM}`,` ${PM} `,`github.com/${PM}`])expect(liveRepositoryFor(id(same)),JSON.stringify(same)).toBe(PM);
+ for(const variant of ['AugusLiang23-Web/PM-Dashboard',`/${PM}`,`${PM}.git`,`${PM}-fork`,`other/${PM}`,`${PM}//`,`${PM}/..`,`${PM}?x=1`,'pm-dashboard','augusliang23-web','',`http://evil.example/${PM}`])expect(liveRepositoryFor(id(variant)),JSON.stringify(variant)).toBeNull();
+ expect(liveRepositoryFor(id(undefined))).toBeNull();
+ expect(liveRepositoryFor(id(PM,{projectId:undefined}))).toBeNull(); // no stable id: never inferred from the name
+ expect(liveRepositoryFor(id(PM,{projectId:'  '}))).toBeNull();
+ expect(liveRepositoryFor(id(PM,{source:'DEMO'}))).toBeNull();
+ expect(liveRepositoryFor(id(PM,{displayName:PM,projectId:undefined}))).toBeNull(); // a display name equal to the repository confers nothing
+});
+
+test('B1.4 late responses: a slow PR detail that resolves after another PR was selected never lands in the new panel',async()=>{
+ const m=await openPr(55);
+ const late=detailReq(m,55);
+ fireEvent.click(screen.getByRole('button',{name:/^PR #56 ·/}));
+ const next=detailReq(m,56);expect(next).toBeDefined();
+ late.resolve(reviewDetail(SHA_A,'current_head_approval',[rvw('bob','APPROVED',SHA_A)]));await flush();
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('#56');expect(reviewOf()).toHaveTextContent('Not checked');expect(reviewOf()).not.toHaveTextContent('Current-head approval');expect(ciOf()).toHaveTextContent('Not checked');
+ // the right response still lands in the right panel (positive control)
+ next.resolve(detailWith(56,{reviews:{status:'no_reviews',count:0,complete:true}}));await flush();
+ expect(reviewOf()).toHaveTextContent('沒有已送出的 review');
+});
+
+test('B1.4 separation: a MERGED PR is not DEPLOYED, review and CI are separate, stack is metadata and ancestry is separate evidence',async()=>{
+ const m=await openPr(13);
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('部署 / 本機 Worktree');expect(panel).toHaveTextContent('Not checked · MERGED ≠ DEPLOYED');
+ expect(panel).toHaveTextContent('Stacked 關係（PR metadata）');expect(panel).toHaveTextContent('Git ancestry（commit parents）');
+ expect((panel.textContent??'').replace('MERGED ≠ DEPLOYED','')).not.toMatch(/deployed|已部署|live in production|merge ready/i);
+ // CI passing says nothing about review, and a merged PR with no reviews is still not "approved"
+ detailReq(m,13).resolve({...detailFor(13,'passing'),number:13});await flush();
+ expect(ciOf()).toHaveTextContent('CI passed');expect(reviewOf()).toHaveTextContent('沒有已送出的 review');
+ expect(reviewOf()).not.toHaveTextContent(/approval|Approved/);expect(ciOf()).not.toHaveTextContent(/review|approv/i);
+ expect(panel).toHaveTextContent('合併證據');expect(panel).not.toHaveTextContent('Needs refresh');
+});
+
+test('B1.4 separation: an OPEN PR is not described as actively developed, and draft/open status is its own field',async()=>{
+ await openPr(55);
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('OPEN ≠ 正在開發');expect(panel).not.toHaveTextContent(/進行中|actively|正在開發中/i);
 });
