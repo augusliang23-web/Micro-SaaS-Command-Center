@@ -203,7 +203,7 @@ test('mode toggle explicitly selects DEMO even when the display name is unchange
 });
 
 // ---------------- Track B B1 · live read-only PM Dashboard development map ----------------
-import {formatSgt,liveRepositoryFor,stackParent,stackChildren,relatedPulls,indexCommits,isAncestor,mergeEvidence,buildTimeline,LANES,reconcilePullDetail,ancestryClaim} from './prototype/gitHistoryModel';
+import {timelineSpan,timelineX,fitPxPerDay,PLOT_GUTTER_LEFT,PLOT_GUTTER_RIGHT,MIN_FIT_PX_PER_DAY,formatSgt,liveRepositoryFor,stackParent,stackChildren,relatedPulls,indexCommits,isAncestor,mergeEvidence,buildTimeline,LANES,reconcilePullDetail,ancestryClaim} from './prototype/gitHistoryModel';
 import type {DevelopmentHistory,HistoryPull,HistoryCommit} from './prototype/gitHistoryTypes';
 import {LIVE_PM_DASHBOARD} from './prototype/data';
 
@@ -316,7 +316,7 @@ test('B1: live view reads only the allowlisted repo and shows provenance, counts
 test('B1 G/R: selecting a stacked PR shows metadata, verified ancestry and CI only after it is fetched',async()=>{
  const {pending}=mockFetch();render(<App/>);openLive();pending[0].resolve(makeHistory());await flush();
  fireEvent.click(screen.getByRole('button',{name:/^PR #55 ·/}));
- const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(panel).toHaveTextContent('claude/v23-browser-e2e-hardening');expect(panel).toHaveTextContent('claude/v23-product-integration');
  expect(panel).toHaveTextContent('base = PR #53 的 head');expect(panel).toHaveTextContent('Not merged');expect(panel).toHaveTextContent('2026-10-14 22:39 SGT');
  expect(panel).toHaveTextContent('已驗證：claude/v23-product-integration 目前 head p1 是 PR head 的祖先');
@@ -328,15 +328,15 @@ test('B1 G/R: selecting a stacked PR shows metadata, verified ancestry and CI on
  expect(screen.getByLabelText(/PR #55 回報的 base：claude\/v23-product-integration（PR #53 的 head）/)).toHaveAttribute('data-kind','reported-base');
  fireEvent.click(screen.getByRole('button',{name:/^PR #56 ·/}));
  pending.filter(p=>p.url.includes('number=56')).forEach(p=>p.resolve(detailFor(56,'none')));await flush();
- expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('No CI checks');
- expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).not.toHaveTextContent('CI passed');
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('No CI checks');
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).not.toHaveTextContent('CI passed');
 });
 
 test('B1 E/H: merged PR detail uses merged_at and draws a solid edge only for a verified merge commit',async()=>{
  const {pending}=mockFetch();render(<App/>);openLive();pending[0].resolve(makeHistory());await flush();
  expect(screen.getByLabelText(/PR #13 合併到 main：已驗證/)).toHaveAttribute('data-kind','verified-merge');
  fireEvent.click(screen.getByRole('button',{name:/^PR #13 ·/}));
- const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(panel).toHaveTextContent('2026-09-24 09:26 SGT');expect(panel).toHaveTextContent('合併（merged_at）2026-09-24 09:43 SGT');
  expect(panel).toHaveTextContent('已驗證：merge commit 的 parent 包含 PR head');
  expect(panel).toHaveTextContent('（上次檢查時不在遠端分支清單；不推測是否曾刪除）');
@@ -409,7 +409,7 @@ test('B1: Git topology draws only verified parent edges and reports heads outsid
  expect(within(graph).getByLabelText(/orphan 的 parent missing 不在目前視窗/)).toHaveAttribute('data-kind','outside-window');
  expect(graph).toHaveTextContent('1 個 branch head 不在已取得的 commit 圖中 → ancestry UNKNOWN');
  fireEvent.click(within(graph).getByRole('button',{name:/^commit M13 ·/}));
- const panel=screen.getByRole('complementary',{name:'Commit 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'Commit 詳細資訊'});
  expect(panel).toHaveTextContent('#13（merge commit）');expect(panel).toHaveTextContent('2026-09-24 09:43 SGT');expect(panel).toHaveTextContent(`在已取得的 main 歷史中`);
  fireEvent.click(screen.getByRole('tab',{name:/清單/}));
  expect(screen.getByRole('region',{name:'可捲動 PR 清單'})).toHaveAttribute('tabindex','0');
@@ -426,7 +426,7 @@ test('B1: graph is keyboard reachable, scrollable regions are focusable and filt
  fireEvent.click(within(screen.getByRole('group',{name:'分支群組篩選'})).getByRole('button',{name:/V2.3 feature/}));
  expect(screen.queryByRole('button',{name:/^PR #55 ·/})).not.toBeInTheDocument();
  fireEvent.click(screen.getByRole('button',{name:/^PR #56 ·/}));fireEvent.keyDown(window,{key:'Escape'});
- expect(screen.queryByRole('complementary',{name:'PR 詳細資訊'})).not.toBeInTheDocument();
+ expect(screen.queryByRole('dialog',{name:'PR 詳細資訊'})).not.toBeInTheDocument();
 });
 
 test('B1: the DEMO PM Dashboard card offers the live map explicitly without upgrading the DEMO workspace',async()=>{
@@ -452,7 +452,7 @@ const detailReq=(m:{pending:Pending[]},n=55)=>m.pending.filter(p=>p.url.includes
 test('P2-1 negative control: snapshot head SHA A + fresh head SHA B with CI PASS never shows PASS against SHA A',async()=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_B},ci:{status:'passing',total:5,headSha:SHA_B}}));await flush();
- const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(panel).toHaveTextContent('Needs refresh');expect(panel).toHaveTextContent('Stale data');
  expect(panel).toHaveTextContent(`快照 head ${SHA_A}`);expect(panel).toHaveTextContent(`目前 head ${SHA_B}`);
  expect(within(panel).getByTestId('pr-ci')).toHaveTextContent(`針對 ${SHA_B}`);
@@ -464,14 +464,14 @@ test('P2-1 negative control: snapshot head SHA A + fresh head SHA B with CI PASS
 test('P2-1: CI on a head that is not the displayed head is rejected even if the detail head looks right',async()=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_A},ci:{status:'passing',total:5,headSha:SHA_B}}));await flush();
- const ci=within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-ci');
+ const ci=within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-ci');
  expect(ci).toHaveTextContent('Not verified');expect(ci).not.toHaveTextContent(/^CI passed/);
 });
 
 test('P2-1: matching SHAs show CI normally with the SHA it was read for and no false stale warning',async()=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55));await flush();
- const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(within(panel).getByTestId('pr-ci')).toHaveTextContent(`CI passed（5 個 check run） · head ${SHA_A}`);
  expect(panel).not.toHaveTextContent('Needs refresh');expect(panel).not.toHaveTextContent('Stale data');
 });
@@ -479,12 +479,12 @@ test('P2-1: matching SHAs show CI normally with the SHA it was read for and no f
 test('P2-1: refreshing the snapshot keeps the selected PR and re-reads its detail instead of reusing the old one',async()=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55));await flush();
- expect(within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-ci')).toHaveTextContent('CI passed');
+ expect(within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-ci')).toHaveTextContent('CI passed');
  const before=m.pending.length;
  fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
  const snapshot=m.pending.at(-1)!;expect(snapshot.url).toContain('refresh=1');
  snapshot.resolve(makeHistory({fetchedAt:'2026-10-16T03:00:00.000Z',pulls:makeHistory().pulls.map(p=>p.number===55?{...p,headSha:SHA_B}:p)}));await flush();
- const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(panel).toHaveTextContent('#55'); // selection preserved
  expect(m.pending.length).toBeGreaterThan(before+1); // a new detail request followed the new snapshot
  expect(within(panel).getByTestId('pr-ci')).toHaveTextContent('Not checked'); // old CI is not carried over
@@ -500,7 +500,7 @@ test.each([
 ])('P2-1 state change %s is shown as Needs refresh with both states',async(_name,change,label)=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{pull:change}));await flush();
- const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(panel).toHaveTextContent('狀態已變更');expect(panel).toHaveTextContent(label);expect(panel).toHaveTextContent('Needs refresh');
 });
 
@@ -509,13 +509,13 @@ test('P2-1: a refreshed snapshot that no longer contains the selected PR is repo
  detailReq(m).resolve(detailWith(55));await flush();
  fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
  m.pending.at(-1)!.resolve(makeHistory({pulls:makeHistory().pulls.filter(p=>p.number!==55)}));await flush();
- expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('PR #55 不在最新快照中');
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('PR #55 不在最新快照中');
 });
 
 test('P2-2 negative control: incomplete review pagination shows Partial / UNKNOWN, never Approved',async()=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{reviews:{status:'partial',count:300,complete:false,observed:'approved'}}));await flush();
- const review=within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-review');
+ const review=within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-review');
  expect(review).toHaveTextContent('Partial');expect(review).toHaveTextContent('UNKNOWN');expect(review).toHaveTextContent('300');
  expect(review).not.toHaveTextContent(/^Approved/);expect(review).not.toHaveTextContent('undefined');
 });
@@ -523,7 +523,7 @@ test('P2-2 negative control: incomplete review pagination shows Partial / UNKNOW
 test('P2-2: a legacy detail that says approved with complete=false is still rendered Partial',async()=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{reviews:{status:'approved',count:300,complete:false}}));await flush();
- const review=within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-review');
+ const review=within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-review');
  expect(review).toHaveTextContent('Partial');expect(review).not.toHaveTextContent(/^Approved/);
 });
 
@@ -532,7 +532,7 @@ test.each([
 ])('P2-2: complete review state %s keeps its own label',async(status,text)=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{reviews:{status,count:status==='no_reviews'?0:2,complete:status!=='not_checked'}}));await flush();
- const review=within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-review');
+ const review=within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-review');
  expect(review).toHaveTextContent(text);expect(review).not.toHaveTextContent('Partial');
 });
 
@@ -540,7 +540,7 @@ test('Snapshot: drifted refs and PR/branch head mismatches downgrade status and 
  const drifted=makeHistory({status:'partial',warnings:['Branch heads moved during the read: claude/v23-product-integration.'],
   consistency:{atomic:false,status:'inconsistent',rereadAt:'2026-10-15T23:57:30.000Z',driftedRefs:[{ref:'claude/v23-product-integration',observed:'p1',reread:'p9',relevant:true}],prHeadMismatches:[{number:55,headRef:'claude/v23-browser-e2e-hardening',prHeadSha:'e1',branchHeadSha:'e9'}]}});
  const m=await openPr(55,drifted);
- const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(screen.getByLabelText('資料來源')).toHaveTextContent('Partial history');
  expect(panel).toHaveTextContent('UNKNOWN（快照期間 base 分支 claude/v23-product-integration 的 head 已移動）');
  expect(panel).not.toHaveTextContent('已驗證：claude/v23-product-integration');
@@ -556,14 +556,14 @@ test('Snapshot: a consistent read still labels itself non-atomic',async()=>{
 
 // ---------------- Final provenance hardening: P2-3 CI SHA fail-closed ----------------
 const withSnapshotHead=(head:string|null)=>makeHistory({pulls:makeHistory().pulls.map(p=>p.number===55?{...p,headSha:head}:p)});
-const ciOf=()=>within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-ci');
-const reviewOf=()=>within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-review');
+const ciOf=()=>within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-ci');
+const reviewOf=()=>within(screen.getByRole('dialog',{name:'PR 詳細資訊'})).getByTestId('pr-review');
 
 test('P2-3 negative control: missing snapshot SHA + current head B + CI PASS on B never shows an unqualified PASS',async()=>{
  const m=await openPr(55,withSnapshotHead(null));
  detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_B},ci:{status:'passing',total:5,headSha:SHA_B}}));await flush();
  expect(ciOf()).toHaveTextContent('Not verified');expect(ciOf()).not.toHaveTextContent(/^CI passed/);expect(ciOf()).not.toHaveTextContent('CI passed（5 個 check run） · head');
- expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
  expect(reviewOf()).toHaveTextContent('Not verified');
 });
 
@@ -571,20 +571,20 @@ test('P2-3: missing current PR SHA is Not verified and Needs refresh',async()=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{pull:{headSha:null},ci:{status:'passing',total:5,headSha:SHA_A}}));await flush();
  expect(ciOf()).toHaveTextContent('Not verified');expect(ciOf()).not.toHaveTextContent(/^CI passed/);
- expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
 });
 
 test('P2-3: missing CI SHA is Not verified and Needs refresh',async()=>{
  const m=await openPr();
  detailReq(m).resolve(detailWith(55,{ci:{status:'passing',total:5,headSha:null}}));await flush();
  expect(ciOf()).toHaveTextContent('Not verified');expect(ciOf()).not.toHaveTextContent(/^CI passed/);
- expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
 });
 
 test('P2-3: every SHA missing at once still fails closed',async()=>{
  const m=await openPr(55,withSnapshotHead(null));
  detailReq(m).resolve(detailWith(55,{pull:{headSha:null},ci:{status:'passing',total:5,headSha:null}}));await flush();
- expect(ciOf()).toHaveTextContent('Not verified');expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
+ expect(ciOf()).toHaveTextContent('Not verified');expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('Needs refresh');
 });
 
 test('P2-3: mismatched SHAs stay Not verified / Stale; matching SHAs are the only path to an unqualified result',async()=>{
@@ -594,7 +594,7 @@ test('P2-3: mismatched SHAs stay Not verified / Stale; matching SHAs are the onl
  cleanup();vi.restoreAllMocks();
  const ok=await openPr();
  detailReq(ok).resolve(detailWith(55));await flush();
- expect(ciOf()).toHaveTextContent(`CI passed（5 個 check run） · head ${SHA_A}`);expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).not.toHaveTextContent('Needs refresh');
+ expect(ciOf()).toHaveTextContent(`CI passed（5 個 check run） · head ${SHA_A}`);expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).not.toHaveTextContent('Needs refresh');
 });
 
 test.each([
@@ -618,7 +618,7 @@ test('P2-4: unrelated drift makes the snapshot Partial but keeps an unaffected v
  const unrelated=makeHistory({status:'partial',warnings:['Branch heads moved during the read: codex/stale-experiment.'],
   consistency:{atomic:false,status:'inconsistent',rereadAt:'2026-10-15T23:57:30.000Z',driftedRefs:[{ref:'codex/stale-experiment',observed:'not-fetched',reread:'later',relevant:false}],prHeadMismatches:[]}});
  await openPr(55,unrelated);
- const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(screen.getByLabelText('資料來源')).toHaveTextContent('Partial history');
  expect(panel).toHaveTextContent('已驗證：claude/v23-product-integration 目前 head p1 是 PR head 的祖先'); // its own refs did not move
  expect(screen.getByText(/非原子快照/)).toHaveTextContent('整體快照標為 Partial');
@@ -632,4 +632,305 @@ test('P2-4: a moved base or a moved PR head branch turns that edge UNKNOWN',()=>
  expect(ancestryClaim(drifted('codex/stale-experiment'),pr55,idx).state).toBe('yes'); // unrelated ref
  expect(ancestryClaim(drifted('claude/v23-product-integration'),pr55,idx)).toMatchObject({state:'unknown',reason:'base_moved'});
  expect(ancestryClaim(drifted('claude/v23-browser-e2e-hardening'),pr55,idx)).toMatchObject({state:'unknown',reason:'pr_head_moved'});
+});
+
+// ---------------- Track B B1.1 · timeline focus UX ----------------
+// Geometry is deterministic: jsdom has no layout, so clientWidth emulates what the
+// CSS would do (rail width via --g-rail-w; the OLD has-detail grid column shrinks the chart).
+let WINDOW_W=1366;const CONTENT_PAD=56;const OLD_DETAIL_COLUMN=354;
+let roCallbacks=new Set<()=>void>();
+class MockResizeObserver{cb:()=>void;constructor(cb:()=>void){this.cb=cb;roCallbacks.add(cb);}observe(){}unobserve(){}disconnect(){roCallbacks.delete(this.cb);}}
+const railWidth=(el:Element)=>parseFloat((el.closest('.g-shell') as HTMLElement|null)?.style.getPropertyValue('--g-rail-w')||'220');
+const frameClient=()=>(document.querySelector('.g-frame') as HTMLElement).clientWidth;
+function mockGeometry(){
+ roCallbacks=new Set();vi.stubGlobal('ResizeObserver',MockResizeObserver);
+ vi.spyOn(Element.prototype,'clientWidth','get').mockImplementation(function(this:Element){
+  if(!this.classList.contains('g-frame'))return 0;
+  const grid=this.closest('.g-layout');
+  return WINDOW_W-railWidth(this)-CONTENT_PAD-2-(grid?.classList.contains('has-detail')?OLD_DETAIL_COLUMN:0);
+ });
+ vi.spyOn(HTMLElement.prototype,'offsetWidth','get').mockImplementation(function(this:HTMLElement){return this.classList.contains('g-lane-labels')?(this.classList.contains('is-compact')?76:168):0;});
+}
+const fireResize=()=>act(async()=>{roCallbacks.forEach(cb=>cb());await Promise.resolve();});
+const setRange=(label:'1 個月'|'3 個月'|'6 個月'|'全部歷史')=>fireEvent.click(within(screen.getByRole('group',{name:'時間範圍'})).getByRole('button',{name:label}));
+const drawable=()=>frameClient()-(document.querySelector('.g-lane-labels') as HTMLElement).offsetWidth;
+const lastCheckedLeft=()=>parseFloat((document.querySelector('.g-now') as HTMLElement).style.left);
+const loadLive=async(history=makeHistory())=>{const m=mockFetch();render(<App/>);openLive();m.pending[0].resolve(history);await flush();return m;};
+afterEach(()=>{vi.unstubAllGlobals();roCallbacks=new Set();WINDOW_W=1366;window.innerWidth=1024;});
+
+test('B1.1 negative control A: choosing 1 month must stretch the date axis across the drawable plot width',async()=>{
+ mockGeometry();await loadLive();setRange('1 個月');await fireResize();
+ expect(lastCheckedLeft()/drawable()).toBeGreaterThanOrEqual(0.9); // old fixed 10 px/day leaves ~65% of the plot blank
+});
+
+test('B1.1 negative control B: collapsing the project rail must actually narrow it and release width to the graph',async()=>{
+ mockGeometry();await loadLive();
+ const before=frameClient();
+ fireEvent.click(screen.getByRole('button',{name:'收折側邊欄'}));await fireResize();
+ expect(document.querySelector('.g-shell')).toHaveStyle('--g-rail-w: 64px');
+ expect(frameClient()-before).toBeGreaterThanOrEqual(150);
+});
+
+test('B1.1 negative control C: selecting PR #55 must not shrink the graph container (details float over it)',async()=>{
+ mockGeometry();await loadLive();
+ const before=frameClient();
+ fireEvent.click(screen.getByRole('button',{name:/^PR #55 ·/}));await fireResize();
+ expect(frameClient()).toBe(before); // old has-detail grid column removes 354px
+ expect(document.querySelector('.g-layout')).not.toHaveClass('has-detail');
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'}).closest('.g-layout')).toBeNull();
+});
+
+const DAY=86_400_000;
+const canvas=()=>document.querySelector('.g-canvas') as HTMLElement;
+const ppd=()=>parseFloat(canvas().dataset.pxPerDay!);
+const canvasWidth=()=>parseFloat(canvas().style.width);
+const expectedFit=(range:'1m'|'3m'|'6m'|'all')=>{const {start,end}=timelineSpan(makeHistory(),range);return fitPxPerDay({start,end,plotWidth:drawable()});};
+const cardEls=()=>[...document.querySelectorAll<HTMLElement>('.g-pr-card')];
+const dialogOpen=()=>screen.queryByRole('dialog',{name:/詳細資訊/});
+const clickPr=(n:number)=>fireEvent.click(screen.getByRole('button',{name:new RegExp(`^PR #${n} ·`)}));
+
+test.each([['1 個月','1m'],['3 個月','3m'],['6 個月','6m'],['全部歷史','all']] as const)('B1.1 auto fit %s: the real date span fills the drawable plot, no card minimum extends the axis',async(label,range)=>{
+ mockGeometry();await loadLive();setRange(label);await fireResize();
+ expect(canvas().dataset.fit).toBe('auto');
+ expect(ppd()).toBeCloseTo(expectedFit(range),5);
+ expect(lastCheckedLeft()/drawable()).toBeGreaterThanOrEqual(0.9);
+ expect(lastCheckedLeft()).toBeLessThanOrEqual(drawable()-PLOT_GUTTER_RIGHT+1); // Last checked sits at the right boundary, not beyond it
+ expect(canvasWidth()).toBeLessThanOrEqual(drawable()+1); // no unexplained blank tail
+ for(const card of cardEls())expect(parseFloat(card.style.left)+parseFloat(card.style.width)).toBeLessThanOrEqual(canvasWidth()); // right-edge cards slide left, the axis does not grow
+});
+
+test('B1.1 auto fit on initial load (default 6 months) already fills the plot',async()=>{
+ mockGeometry();await loadLive();
+ expect(canvas().dataset.fit).toBe('auto');expect(lastCheckedLeft()/drawable()).toBeGreaterThanOrEqual(0.9);
+ expect(screen.getByRole('button',{name:'Auto Fit'})).toHaveAttribute('aria-pressed','true');
+});
+
+test('B1.1 shorter ranges use a larger px/day than longer ones, with dates unchanged',async()=>{
+ mockGeometry();await loadLive();
+ const scales:Record<string,number>={};
+ for(const [label,r] of [['1 個月','1m'],['3 個月','3m'],['6 個月','6m']] as const){setRange(label);await fireResize();scales[r]=ppd();}
+ expect(scales['1m']).toBeGreaterThan(scales['3m']);expect(scales['3m']).toBeGreaterThanOrEqual(scales['6m']);
+});
+
+test('B1.1 all history with a long history and a narrow plot stops at the readable floor and scrolls internally',async()=>{
+ mockGeometry();WINDOW_W=700;
+ const long=makeHistory({pulls:makeHistory().pulls.map(p=>p.number===13?{...p,createdAt:'2026-04-27T01:00:00Z'}:p)});
+ await loadLive(long);setRange('全部歷史');await fireResize();
+ expect(ppd()).toBe(MIN_FIT_PX_PER_DAY);expect(canvasWidth()).toBeGreaterThan(drawable()); // controlled horizontal scrolling, cards stay readable
+ expect(document.querySelector('.g-frame')).toHaveAttribute('tabindex','0');
+});
+
+test('B1.1 a span shorter than one day and an empty filter result still render without distortion',async()=>{
+ mockGeometry();
+ const hourly=makeHistory({fetchedAt:'2026-10-15T23:57:20.883Z',pulls:makeHistory().pulls.map(p=>({...p,createdAt:'2026-10-15T21:00:00Z',updatedAt:'2026-10-15T21:00:00Z',mergedAt:p.merged?'2026-10-15T22:00:00Z':null,closedAt:p.merged?'2026-10-15T22:00:00Z':null}))});
+ await loadLive(hourly);setRange('全部歷史');await fireResize();
+ expect(lastCheckedLeft()).toBeLessThanOrEqual(drawable());expect(Number.isFinite(ppd())).toBe(true);
+ fireEvent.change(screen.getByLabelText('搜尋 PR 或分支'),{target:{value:'zzzz-no-match'}});
+ expect(cardEls()).toHaveLength(0);expect(document.querySelectorAll('.g-tick-label').length).toBeGreaterThan(0);
+});
+
+test('B1.1 window resize recalculates the scale and keeps the plot full',async()=>{
+ mockGeometry();await loadLive();setRange('1 個月');await fireResize();
+ const wide=ppd();
+ WINDOW_W=1000;await fireResize();
+ expect(ppd()).toBeLessThan(wide);expect(ppd()).toBeCloseTo(expectedFit('1m'),5);expect(lastCheckedLeft()/drawable()).toBeGreaterThanOrEqual(0.9);
+});
+
+test('B1.1 project rail collapse then expand: width changes, graph gains space and refits, no refetch, project kept',async()=>{
+ mockGeometry();const m=await loadLive();setRange('1 個月');await fireResize();
+ const rail=screen.getByRole('navigation',{name:'專案（開發地圖）'});
+ const toggle=within(rail).getByRole('button',{name:'收折側邊欄'});
+ expect(toggle).toHaveAttribute('aria-expanded','true');expect(document.querySelector('.g-shell')).toHaveStyle('--g-rail-w: 220px');
+ const wideFrame=frameClient();const scaleBefore=ppd();
+ fireEvent.click(toggle);await fireResize();
+ const open=within(rail).getByRole('button',{name:'展開側邊欄'});
+ expect(open).toHaveAttribute('aria-expanded','false');expect(document.querySelector('.g-shell')).toHaveStyle('--g-rail-w: 64px');
+ expect(frameClient()).toBeGreaterThan(wideFrame);expect(ppd()).toBeGreaterThan(scaleBefore);expect(lastCheckedLeft()/drawable()).toBeGreaterThanOrEqual(0.9);
+ expect(within(rail).getByRole('button',{name:/PM Dashboard · LIVE/})).toHaveAttribute('aria-current','page'); // selected project still marked, with an accessible name
+ expect(screen.getByRole('heading',{name:'PM Dashboard'})).toBeVisible();
+ fireEvent.click(open);await fireResize();
+ expect(document.querySelector('.g-shell')).toHaveStyle('--g-rail-w: 220px');expect(frameClient()).toBe(wideFrame);expect(ppd()).toBeCloseTo(scaleBefore,5);
+ expect(m.pending.filter(p=>p.url.includes('development-history?'))).toHaveLength(1); // collapsing/expanding never refetched GitHub
+});
+
+test('B1.1 rail is keyboard operable and does not switch project',async()=>{
+ mockGeometry();await loadLive();
+ const toggle=screen.getByRole('button',{name:'收折側邊欄'});toggle.focus();expect(toggle).toHaveFocus();
+ fireEvent.click(toggle);expect(screen.getByRole('button',{name:'展開側邊欄'})).toHaveAttribute('aria-expanded','false');
+ expect(screen.getByRole('heading',{name:'PM Dashboard'})).toBeVisible();expect(screen.getByText('REGISTERED · LIVE GITHUB READ-ONLY')).toBeVisible();
+});
+
+test('B1.1 compact branch labels narrow the label column, keep main and production-pages identifiable, and refit',async()=>{
+ mockGeometry();await loadLive();setRange('1 個月');await fireResize();
+ const labels=document.querySelector('.g-lane-labels') as HTMLElement;const before=drawable();const scaleBefore=ppd();
+ fireEvent.click(screen.getByRole('button',{name:'收合分支標籤'}));await fireResize();
+ expect(labels).toHaveClass('is-compact');expect(labels.offsetWidth).toBe(76);
+ expect(drawable()).toBeGreaterThan(before);expect(ppd()).toBeGreaterThan(scaleBefore);expect(lastCheckedLeft()/drawable()).toBeGreaterThanOrEqual(0.9);
+ expect(within(labels).getByText('main')).toHaveAttribute('title','main');
+ expect(within(labels).getByText('prod')).toHaveAttribute('title','production-pages');
+ fireEvent.click(screen.getByRole('button',{name:'展開分支標籤'}));await fireResize();expect(labels).not.toHaveClass('is-compact');expect(labels.offsetWidth).toBe(168);
+});
+
+test('B1.1 zoom in and zoom out switch to manual; Auto Fit restores the responsive scale; a new range resets to Auto Fit',async()=>{
+ mockGeometry();await loadLive();setRange('1 個月');await fireResize();
+ const fitScale=ppd();
+ fireEvent.click(screen.getByRole('button',{name:'放大'}));
+ expect(canvas().dataset.fit).toBe('manual');expect(screen.getByRole('button',{name:'Auto Fit'})).toHaveAttribute('aria-pressed','false');expect(ppd()).toBeGreaterThan(fitScale);
+ fireEvent.click(screen.getByRole('button',{name:'Auto Fit'}));await fireResize();
+ expect(canvas().dataset.fit).toBe('auto');expect(ppd()).toBeCloseTo(fitScale,5);
+ fireEvent.click(screen.getByRole('button',{name:'縮小'}));
+ expect(canvas().dataset.fit).toBe('manual');expect(ppd()).toBeLessThan(fitScale);
+ setRange('3 個月');await fireResize();expect(canvas().dataset.fit).toBe('auto');
+ fireEvent.click(screen.getByRole('button',{name:'放大'}));fireEvent.click(screen.getByRole('button',{name:'放大'}));
+ setRange('6 個月');await fireResize();expect(canvas().dataset.fit).toBe('auto'); // changing the range always restarts at Auto Fit
+});
+
+test('B1.1 real date alignment: ticks, Last checked and commit dots sit at their true SGT positions',async()=>{
+ mockGeometry();await loadLive();setRange('1 個月');await fireResize();
+ const {start,end}=timelineSpan(makeHistory(),'1m');const scale=ppd();
+ const x=(ms:number)=>PLOT_GUTTER_LEFT+((ms-start)/DAY)*scale;
+ const ticks=[...document.querySelectorAll<HTMLElement>('.g-tick-label')];expect(ticks.length).toBeGreaterThan(2);
+ for(const t of ticks){const day=t.textContent!;expect(day).toMatch(/^2026-\d\d-\d\d$/);expect(parseFloat(t.style.left)).toBeCloseTo(x(Date.parse(`${day}T00:00:00+08:00`)),1);}
+ expect(lastCheckedLeft()).toBeCloseTo(x(end),1);
+ const dot=screen.getByRole('button',{name:/^main commit M13 ·/});
+ expect(parseFloat(dot.style.left)).toBeCloseTo(x(Date.parse('2026-09-24T01:43:01Z')),1);
+ expect(formatSgt('2026-09-24T01:43:01Z')).toBe('2026-09-24 09:43 SGT');
+});
+
+test('B1.1 Git relationships are unchanged by auto-fit: verified, record-only and reported-base edges keep their kinds',async()=>{
+ mockGeometry();await loadLive();setRange('1 個月');await fireResize();
+ expect(screen.getByLabelText(/PR #13 合併到 main：已驗證/)).toHaveAttribute('data-kind','verified-merge');
+ expect(screen.getByLabelText(/PR #55 回報的 base：claude\/v23-product-integration（PR #53 的 head）/)).toHaveAttribute('data-kind','reported-base');
+ cleanup();vi.restoreAllMocks();mockGeometry();
+ await loadLive(makeHistory({commits:makeHistory().commits.filter(c=>c.sha!=='M13')}));setRange('1 個月');await fireResize();
+ expect(screen.getByLabelText(/PR #13 合併到 main：UNKNOWN/)).toHaveAttribute('data-kind','pr-record'); // UNKNOWN never becomes a solid edge
+});
+
+// ---- floating detail ----
+test('B1.1 default state has no detail panel; selecting a PR opens a non-modal floating dialog that does not shrink the graph',async()=>{
+ mockGeometry();await loadLive();
+ expect(dialogOpen()).toBeNull();expect(document.querySelector('.g-detail')).toBeNull();
+ const before=frameClient();const scaleBefore=ppd();
+ clickPr(55);await fireResize();
+ const dialog=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(dialog).toHaveAttribute('aria-modal','false');expect(dialog).toHaveClass('g-floating');expect(dialog.closest('.g-layout')).toBeNull();
+ expect(within(dialog).getByRole('heading',{name:/#55/})).toBeVisible();expect(within(dialog).getByRole('link',{name:/在 GitHub 開啟 PR #55/})).toHaveAttribute('href',expect.stringContaining('/pull/55'));
+ expect(frameClient()).toBe(before);expect(ppd()).toBe(scaleBefore);
+ clickPr(57);expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('#57'); // another node updates the same dialog
+ expect(screen.getAllByRole('dialog')).toHaveLength(1);
+});
+
+test('B1.1 selecting a commit opens the floating dialog too',async()=>{
+ mockGeometry();await loadLive();
+ fireEvent.click(screen.getByRole('button',{name:/^main commit M13 ·/}));
+ const dialog=screen.getByRole('dialog',{name:'Commit 詳細資訊'});expect(dialog).toHaveTextContent('2026-09-24 09:43 SGT');expect(dialog).toHaveTextContent('#13（merge commit）');
+ expect(document.querySelector('.g-layout')).not.toHaveClass('has-detail');
+});
+
+test('B1.1 topology and list selections also use the floating dialog',async()=>{
+ mockGeometry();await loadLive();
+ fireEvent.click(screen.getByRole('tab',{name:/清單/}));fireEvent.click(screen.getByRole('button',{name:/^PR #55 ·/}));
+ expect(screen.getByRole('dialog',{name:'PR 詳細資訊'}).closest('.g-layout')).toBeNull();fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));
+ fireEvent.click(screen.getByRole('tab',{name:/Git 拓樸/}));fireEvent.click(within(screen.getByRole('region',{name:'Git 拓樸圖'})).getByRole('button',{name:/^commit M13 ·/}));
+ expect(screen.getByRole('dialog',{name:'Commit 詳細資訊'})).toBeVisible();expect(document.querySelector('.g-layout')).not.toHaveClass('has-detail');
+});
+
+test('B1.1 close button, Escape and outside click each close the dialog; node clicks and in-dialog clicks do not',async()=>{
+ mockGeometry();await loadLive();
+ clickPr(55);fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));expect(dialogOpen()).toBeNull();
+ clickPr(55);fireEvent.keyDown(window,{key:'Escape'});expect(dialogOpen()).toBeNull();
+ clickPr(55);fireEvent.pointerDown(document.body);expect(dialogOpen()).toBeNull();
+ clickPr(55);fireEvent.pointerDown(screen.getByRole('dialog',{name:'PR 詳細資訊'}));expect(dialogOpen()).not.toBeNull(); // inside the panel
+ fireEvent.pointerDown(screen.getByRole('button',{name:/^PR #57 ·/}));expect(dialogOpen()).not.toBeNull(); // a node click switches nodes instead of closing
+});
+
+test('B1.1 focus moves into the dialog on open and returns to the originating node on close',async()=>{
+ mockGeometry();await loadLive();
+ const card=screen.getByRole('button',{name:/^PR #55 ·/});card.focus();fireEvent.click(card);
+ const dialog=screen.getByRole('dialog',{name:'PR 詳細資訊'});expect(dialog).toHaveFocus();
+ fireEvent.keyDown(window,{key:'Escape'});expect(dialogOpen()).toBeNull();expect(screen.getByRole('button',{name:/^PR #55 ·/})).toHaveFocus();
+});
+
+test('B1.1 when the originating node no longer exists, focus falls back to the scrollable timeline',async()=>{
+ mockGeometry();await loadLive();
+ clickPr(55);
+ fireEvent.change(screen.getByLabelText('PR 狀態篩選'),{target:{value:'merged'}}); // #55 (draft) disappears while its dialog is open
+ expect(screen.queryByRole('button',{name:/^PR #55 ·/})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));
+ expect(document.activeElement).toBe(document.querySelector('.g-frame'));
+});
+
+test('B1.1 mobile: details open as a modal bottom sheet with backdrop, focus trap and a close button',async()=>{
+ mockGeometry();window.innerWidth=390;WINDOW_W=390;await loadLive();
+ clickPr(55);
+ const sheet=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(sheet).toHaveClass('is-sheet');expect(sheet).toHaveAttribute('aria-modal','true');expect(screen.getByTestId('g-backdrop')).toBeInTheDocument();
+ expect(within(sheet).getByRole('button',{name:'關閉詳細資訊'})).toBeVisible();expect(sheet).toHaveTextContent('Repository');expect(sheet).toHaveTextContent('Git ancestry');
+ const focusables=sheet.querySelectorAll<HTMLElement>('a[href], button:not([disabled])');const last=focusables[focusables.length-1];const first=focusables[0];
+ last.focus();fireEvent.keyDown(sheet,{key:'Tab'});expect(first).toHaveFocus(); // focus cannot escape behind the sheet
+ first.focus();fireEvent.keyDown(sheet,{key:'Tab',shiftKey:true});expect(last).toHaveFocus();
+ fireEvent.click(screen.getByTestId('g-backdrop'));expect(dialogOpen()).toBeNull();expect(screen.queryByTestId('g-backdrop')).toBeNull();
+ clickPr(55);fireEvent.click(screen.getByRole('button',{name:'關閉詳細資訊'}));expect(dialogOpen()).toBeNull();
+ expect(document.querySelector('.g-frame')).toHaveAttribute('tabindex','0'); // the timeline keeps its own scrolling
+});
+
+test('B1.1 closing the dialog preserves scroll position, scale, range, filters, search and the history snapshot',async()=>{
+ mockGeometry();const m=await loadLive();
+ setRange('3 個月');await fireResize();fireEvent.click(screen.getByRole('button',{name:'放大'}));
+ fireEvent.change(screen.getByLabelText('PR 狀態篩選'),{target:{value:'active'}});
+ fireEvent.change(screen.getByLabelText('搜尋 PR 或分支'),{target:{value:'v23'}});
+ fireEvent.click(within(screen.getByRole('group',{name:'分支群組篩選'})).getByRole('button',{name:/Permissions/}));
+ const frame=document.querySelector('.g-frame') as HTMLElement;frame.scrollLeft=120;frame.scrollTop=40;fireEvent.scroll(frame);
+ const scale=ppd();const fetched=screen.getByLabelText('資料來源').textContent;
+ clickPr(55);await fireResize();fireEvent.keyDown(window,{key:'Escape'});await fireResize();
+ expect(frame.scrollLeft).toBe(120);expect(frame.scrollTop).toBe(40);
+ expect(ppd()).toBe(scale);expect(canvas().dataset.fit).toBe('manual');
+ expect(screen.getByLabelText('PR 狀態篩選')).toHaveValue('active');expect(screen.getByLabelText('搜尋 PR 或分支')).toHaveValue('v23');
+ expect(within(screen.getByRole('group',{name:'時間範圍'})).getByRole('button',{name:'3 個月'})).toHaveAttribute('aria-pressed','true');
+ expect(within(screen.getByRole('group',{name:'分支群組篩選'})).getByRole('button',{name:/Permissions/})).toHaveAttribute('aria-pressed','false');
+ expect(screen.getByLabelText('資料來源').textContent).toBe(fetched);
+ expect(m.pending.filter(p=>p.url.includes('development-history?'))).toHaveLength(1);
+});
+
+test('B1.1 manual zoom keeps the same moment centred instead of jumping',async()=>{
+ mockGeometry();await loadLive();setRange('6 個月');await fireResize();
+ fireEvent.click(screen.getByRole('button',{name:'放大'}));fireEvent.click(screen.getByRole('button',{name:'放大'}));
+ const frame=document.querySelector('.g-frame') as HTMLElement;frame.scrollLeft=300;fireEvent.scroll(frame);
+ const {start}=timelineSpan(makeHistory(),'6m');const view=drawable();
+ const centre=(scroll:number,scale:number)=>start+((scroll+view/2-PLOT_GUTTER_LEFT)/scale)*DAY;
+ const before=centre(300,ppd());
+ fireEvent.click(screen.getByRole('button',{name:'放大'}));
+ expect(centre(frame.scrollLeft,ppd())).toBeCloseTo(before,-4); // within ~10s of the same centre time
+});
+
+test('B1.1 opening, closing and collapsing only issue GET reads on the allowlisted history endpoints',async()=>{
+ mockGeometry();const m=await loadLive();
+ clickPr(55);m.pending.filter(p=>p.url.includes('/pull?')).forEach(p=>p.resolve(detailFor(55,'passing')));await flush();
+ fireEvent.keyDown(window,{key:'Escape'});fireEvent.click(screen.getByRole('button',{name:'收折側邊欄'}));
+ const calls=(globalThis.fetch as unknown as {mock:{calls:[RequestInfo,RequestInit?][]}}).mock.calls;
+ for(const [u,init] of calls){expect(String(u)).toMatch(/^\/api\/github\/development-history/);expect(init?.method??'GET').toBe('GET');}
+ expect(calls.filter(([u])=>!String(u).includes('/pull?'))).toHaveLength(1);
+});
+
+test('B1.1 switching project while the dialog is open closes it and leaks nothing from PM Dashboard',async()=>{
+ mockGeometry();const m=await loadLive();clickPr(55);
+ expect(dialogOpen()).not.toBeNull();
+ fireEvent.click(within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getByRole('button',{name:/SwipeRight/}));
+ expect(dialogOpen()).toBeNull();expect(screen.getByLabelText('開發地圖不可用')).toHaveTextContent('SwipeRight');
+ m.pending.filter(p=>p.url.includes('/pull?')).forEach(p=>p.resolve(detailFor(55,'passing')));await flush();
+ expect(dialogOpen()).toBeNull();expect(document.body.textContent).not.toContain('claude/v23-browser-e2e-hardening');
+});
+
+test('B1.1 CI and review provenance are unchanged inside the floating dialog',async()=>{
+ mockGeometry();const m=await loadLive();clickPr(55);
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_B},ci:{status:'passing',total:5,headSha:SHA_B},reviews:{status:'partial',count:300,complete:false,observed:'approved'}}));await flush();
+ const dialog=screen.getByRole('dialog',{name:'PR 詳細資訊'});
+ expect(within(dialog).getByTestId('pr-ci')).toHaveTextContent('Stale data');expect(within(dialog).getByTestId('pr-ci')).not.toHaveTextContent(/^CI passed/);
+ expect(within(dialog).getByTestId('pr-review')).toHaveTextContent('Not verified');expect(dialog).toHaveTextContent('Needs refresh');
+});
+
+test('B1.1 no agent, prompt or model controls exist in the focus UX',async()=>{
+ mockGeometry();await loadLive();clickPr(55);
+ for(const b of screen.getAllByRole('button'))expect(b.textContent+(b.getAttribute('aria-label')??'')).not.toMatch(/執行|Execute|Generate|Dispatch|AI Command|Prompt|\bMerge\b|Approve|\bDeploy\b/i);
+ expect(screen.queryByRole('textbox',{name:/指令|Prompt/})).toBeNull();
 });

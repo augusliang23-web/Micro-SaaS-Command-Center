@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from 'react';
 import {
   AlertTriangle, CalendarRange, ChevronDown, ChevronRight, Database, ExternalLink, GitBranch, GitMerge,
-  GitPullRequest, List, Network, RefreshCw, X, ZoomIn, ZoomOut,
+  GitPullRequest, List, MoveHorizontal, Network, PanelLeftClose, PanelLeftOpen, RefreshCw, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import type { DevelopmentHistory, HistoryCommit, HistoryErrorKind, HistoryPull, LiveIdentity, PullDetail } from './gitHistoryTypes';
 import {
   LANES, LaneId, RANGE_LABEL, RangeId, STATE_LABEL, STATUS_LABEL, StateFilter, MERGE_EVIDENCE_LABEL,
-  ancestryClaim, branchKind, buildTimeline, buildTopology, commitAssociations, driftedRefNames, formatSgt, identityKey, indexCommits, prHeadMismatch, reconcilePullDetail, reviewIsPartial,
+  PLOT_GUTTER_LEFT, ancestryClaim, branchKind, buildTimeline, buildTopology, commitAssociations, driftedRefNames, formatSgt, identityKey, indexCommits, prHeadMismatch, reconcilePullDetail, reviewIsPartial,
   laneById, laneForBranch, liveRepositoryFor, matchesState, mergeEvidence, rangeStart, relatedPulls, shortSha,
   stackChildren, stackParent, timelineX,
 } from './gitHistoryModel';
@@ -81,6 +81,19 @@ const CI_LABEL = { not_checked: 'Not checked', none: 'No CI checks', passing: 'C
 const REVIEW_LABEL = { not_checked: 'Not checked', no_reviews: '沒有已送出的 review', partial: 'Partial / UNKNOWN', approved: 'Approved', changes_requested: 'Changes requested', commented_only: '僅留言（無核准）' } as const;
 const ZOOMS = [3, 6, 10, 16, 26, 40];
 const AXIS = 34;
+const SHEET_MAX_WIDTH = 760; // at or below this viewport width, details open as a bottom sheet
+const SHORT_LANE: Record<LaneId, string> = { main: 'main', 'production-pages': 'prod', 'v23-integration': 'V2.3 int', 'v23-feature': 'V2.3 feat', permissions: 'Perm', 'pdf-delivery': 'PDF', other: 'Other' };
+const nearestZoom = (pxPerDay: number) => ZOOMS.reduce((best, z, i) => (Math.abs(z - pxPerDay) < Math.abs(ZOOMS[best] - pxPerDay) ? i : best), 0);
+const nodeId = (s: NonNullable<Selection>) => (s.kind === 'pr' ? `pr-${s.number}` : `commit-${s.sha}`);
+function useIsSheet() {
+  const [sheet, setSheet] = useState(() => typeof window !== 'undefined' && window.innerWidth <= SHEET_MAX_WIDTH);
+  useEffect(() => {
+    const onResize = () => setSheet(window.innerWidth <= SHEET_MAX_WIDTH);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return sheet;
+}
 const TOPO_COL_W = 30;
 const TOPO_ROW_H = 30;
 type View = 'timeline' | 'topology' | 'list';
@@ -90,15 +103,24 @@ export type RailEntry = { identity: LiveIdentity; label: string; tag: string };
 export function GitDevelopmentMap({ identity, rail, selectIdentity }: { identity: LiveIdentity; rail: RailEntry[]; selectIdentity: (identity: LiveIdentity) => void }) {
   const key = identityKey(identity);
   const repo = liveRepositoryFor(identity);
-  return <div className="g-shell">
+  // The rail state lives above LiveHistory: collapsing never remounts it, so no GitHub refetch and no identity change.
+  const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth <= SHEET_MAX_WIDTH);
+  return <div className={`g-shell ${railCollapsed ? 'is-rail-collapsed' : ''}`} style={{ ['--g-rail-w' as string]: railCollapsed ? '64px' : '220px' }}>
     <nav className="g-rail" aria-label="專案（開發地圖）">
-      <p className="g-rail-title">PROJECTS</p>
-      {rail.map((entry) => {
-        const active = identityKey(entry.identity) === key;
-        return <button key={identityKey(entry.identity)} aria-current={active ? 'page' : undefined} onClick={() => selectIdentity(entry.identity)}>
-          <span className="g-rail-mark">{entry.label.slice(0, 1)}</span><span><strong>{entry.label}</strong><small>{entry.tag}</small></span>
-        </button>;
-      })}
+      <div className="g-rail-head">
+        <p className="g-rail-title">PROJECTS</p>
+        <button type="button" className="g-rail-toggle" aria-expanded={!railCollapsed} aria-controls="g-rail-list" aria-label={railCollapsed ? '展開側邊欄' : '收折側邊欄'} title={railCollapsed ? '展開側邊欄' : '收折側邊欄'} onClick={() => setRailCollapsed((c) => !c)}>
+          {railCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
+      </div>
+      <div className="g-rail-list" id="g-rail-list">
+        {rail.map((entry) => {
+          const active = identityKey(entry.identity) === key;
+          return <button key={identityKey(entry.identity)} type="button" aria-current={active ? 'page' : undefined} aria-label={`${entry.label} · ${entry.tag}`} title={`${entry.label} · ${entry.tag}`} onClick={() => selectIdentity(entry.identity)}>
+            <span className="g-rail-mark">{entry.label.slice(0, 1)}</span><span className="g-rail-text"><strong>{entry.label}</strong><small>{entry.tag}</small></span>
+          </button>;
+        })}
+      </div>
       <p className="g-rail-foot">唯讀 · 無 AI 對話 · 無 agent 執行</p>
     </nav>
     <div className="g-content">
@@ -125,10 +147,30 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [lanes, setLanes] = useState<Set<LaneId>>(() => new Set(LANES.map((l) => l.id)));
   const [collapsed, setCollapsed] = useState<Set<LaneId>>(() => new Set());
-  const [zoom, setZoom] = useState(2);
+  const [zoom, setZoom] = useState(2); // manual zoom step; only used when fit === 'manual'
+  const [fit, setFit] = useState<'auto' | 'manual'>('auto');
+  const [compactLabels, setCompactLabels] = useState(false);
+  const scaleRef = useRef(0); // px/day currently drawn, reported by the timeline
+  const restoreFocus = useRef<Selection>(null);
   const [query, setQuery] = useState('');
   const [selection, setSelection] = useState<Selection>(null);
   const dataStatus = state.status === 'loading' && !data ? 'Loading' : state.status === 'error' ? (data ? 'Needs refresh' : 'Unavailable') : data?.status === 'complete' ? 'Complete' : 'Partial history';
+  const chooseRange = (r: RangeId) => { setRange(r); setFit('auto'); }; // a new range always restarts at Auto Fit
+  const zoomBy = (dir: 1 | -1) => {
+    const base = fit === 'auto' ? nearestZoom(scaleRef.current || ZOOMS[2]) : zoom;
+    setZoom(Math.max(0, Math.min(ZOOMS.length - 1, base + dir)));
+    setFit('manual');
+  };
+  const closeDetail = useCallback(() => { restoreFocus.current = selectionRef.current; setSelection(null); }, []);
+  const selectionRef = useRef<Selection>(null);
+  selectionRef.current = selection;
+  useEffect(() => { // after the overlay unmounts, return focus to the node that was selected (or a safe fallback)
+    if (selection || !restoreFocus.current) return;
+    const target = restoreFocus.current;
+    restoreFocus.current = null;
+    const node = document.querySelector<HTMLElement>(`[data-node="${nodeId(target!)}"]`) ?? document.querySelector<HTMLElement>('.g-frame, .g-table-wrap');
+    node?.focus({ preventScroll: true });
+  }, [selection]);
   const toggle = (set: Set<LaneId>, id: LaneId) => { const next = new Set(set); next.has(id) ? next.delete(id) : next.add(id); return next; };
 
   return <>
@@ -158,28 +200,32 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
             <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}><Icon size={14} />{label}</button>)}
         </div>
         <div className="g-seg" role="group" aria-label="時間範圍">
-          {(Object.keys(RANGE_LABEL) as RangeId[]).map((r) => <button key={r} aria-pressed={range === r} onClick={() => setRange(r)}>{RANGE_LABEL[r]}</button>)}
+          {(Object.keys(RANGE_LABEL) as RangeId[]).map((r) => <button key={r} aria-pressed={range === r} onClick={() => chooseRange(r)}>{RANGE_LABEL[r]}</button>)}
         </div>
         {view !== 'topology' && <label className="g-select">狀態<select aria-label="PR 狀態篩選" value={stateFilter} onChange={(e) => setStateFilter(e.target.value as StateFilter)}>
           {(Object.keys(STATE_LABEL) as StateFilter[]).map((s) => <option key={s} value={s}>{STATE_LABEL[s]}</option>)}
         </select></label>}
         {view !== 'topology' && <label className="g-select">搜尋<input aria-label="搜尋 PR 或分支" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="#55、v23…" /></label>}
         {view === 'timeline' && <div className="g-seg" role="group" aria-label="縮放">
-          <button aria-label="縮小" disabled={zoom === 0} onClick={() => setZoom((z) => Math.max(0, z - 1))}><ZoomOut size={14} /></button>
-          <button aria-label="放大" disabled={zoom === ZOOMS.length - 1} onClick={() => setZoom((z) => Math.min(ZOOMS.length - 1, z + 1))}><ZoomIn size={14} /></button>
+          <button aria-pressed={fit === 'auto'} onClick={() => setFit('auto')} title="依可用寬度自動貼合所選日期範圍"><MoveHorizontal size={14} />Auto Fit</button>
+          <button aria-label="縮小" disabled={fit === 'manual' && zoom === 0} onClick={() => zoomBy(-1)}><ZoomOut size={14} /></button>
+          <button aria-label="放大" disabled={fit === 'manual' && zoom === ZOOMS.length - 1} onClick={() => zoomBy(1)}><ZoomIn size={14} /></button>
+        </div>}
+        {view === 'timeline' && <div className="g-seg" role="group" aria-label="分支標籤">
+          <button aria-pressed={compactLabels} onClick={() => setCompactLabels((c) => !c)} title={compactLabels ? '展開分支標籤欄' : '收合分支標籤欄'}>{compactLabels ? '展開分支標籤' : '收合分支標籤'}</button>
         </div>}
       </div>
       {view !== 'topology' && <div className="g-lane-filter" role="group" aria-label="分支群組篩選">
         {LANES.map((l) => <button key={l.id} aria-pressed={lanes.has(l.id)} onClick={() => setLanes((s) => toggle(s, l.id))} style={{ ['--lane' as string]: l.color }}><i />{l.title}</button>)}
       </div>}
-      <div className={`g-layout ${selection ? 'has-detail' : ''}`}>
+      <div className="g-layout">
         <section className="g-graph-panel" aria-label={view === 'topology' ? 'Git 拓樸圖' : view === 'list' ? 'PR 清單' : '開發時間軸'}>
-          {view === 'timeline' && <Timeline data={data} range={range} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} pxPerDay={ZOOMS[zoom]} query={query} selection={selection} select={setSelection} />}
+          {view === 'timeline' && <Timeline data={data} range={range} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualPxPerDay={ZOOMS[zoom]} compactLabels={compactLabels} scaleRef={scaleRef} query={query} selection={selection} select={setSelection} />}
           {view === 'topology' && <Topology data={data} range={range} selection={selection} select={setSelection} />}
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={setSelection} />}
         </section>
-        {selection && <DetailPanel data={data} repo={repo} scopeKey={key} selection={selection} select={setSelection} close={() => setSelection(null)} refresh={refresh} />}
       </div>
+      {selection && <DetailOverlay data={data} repo={repo} scopeKey={key} selection={selection} select={setSelection} close={closeDetail} refresh={refresh} />}
       <BottomCards data={data} select={setSelection} />
     </>}
   </>;
@@ -204,26 +250,49 @@ function prLabel(pr: HistoryPull) {
   return `PR #${pr.number} · ${pr.title} · ${STATUS_LABEL[pr.status]} · ${pr.headRef ?? '?'} → ${pr.baseRef ?? '?'} · 建立 ${formatSgt(pr.createdAt)}${pr.mergedAt ? ` · 合併 ${formatSgt(pr.mergedAt)}` : ''}`;
 }
 
-function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed, pxPerDay, query, selection, select }: {
+function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualPxPerDay, compactLabels, scaleRef, query, selection, select }: {
   data: DevelopmentHistory; range: RangeId; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
-  pxPerDay: number; query: string; selection: Selection; select: (s: Selection) => void;
+  fit: 'auto' | 'manual'; manualPxPerDay: number; compactLabels: boolean; scaleRef: MutableRefObject<number>; query: string; selection: Selection; select: (s: Selection) => void;
 }) {
-  const layout = useMemo(() => buildTimeline(data, { range, state: stateFilter, lanes, collapsed, pxPerDay, query }), [data, range, stateFilter, lanes, collapsed, pxPerDay, query]);
-  const index = useMemo(() => indexCommits(data.commits), [data]);
   const scroller = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => { if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth; }, [range, pxPerDay]);
+  const labelsRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ frame: 0, labels: 0 });
+  // Auto Fit measures the real container: frame width minus the sticky branch-label column.
+  // ResizeObserver covers window resizes, rail collapse/expand and label-column changes.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const labels = labelsRef.current;
+    if (!el) return;
+    const measure = () => setBox((b) => { const f = el.clientWidth; const l = labels?.offsetWidth ?? 0; return b.frame === f && b.labels === l ? b : { frame: f, labels: l }; });
+    measure();
+    if (typeof ResizeObserver === 'undefined') { window.addEventListener('resize', measure); return () => window.removeEventListener('resize', measure); }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (labels) ro.observe(labels);
+    return () => ro.disconnect();
+  }, [compactLabels]);
+  const plotWidth = box.frame > 0 ? Math.max(0, box.frame - box.labels) : 0;
+  const layout = useMemo(() => buildTimeline(data, { range, state: stateFilter, lanes, collapsed, pxPerDay: fit === 'manual' ? manualPxPerDay : undefined, plotWidth, query }), [data, range, stateFilter, lanes, collapsed, fit, manualPxPerDay, plotWidth, query]);
+  useLayoutEffect(() => { scaleRef.current = layout.pxPerDay; }, [layout.pxPerDay, scaleRef]);
+  const index = useMemo(() => indexCommits(data.commits), [data]);
+  const lastScroll = useRef(0);
+  const prevScale = useRef<{ ppd: number; start: number } | null>(null);
+  useLayoutEffect(() => { if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth; }, [range]);
+  // Keep the same moment centred when the scale changes (zoom, resize, rail collapse) instead of jumping.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const prev = prevScale.current;
+    prevScale.current = { ppd: layout.pxPerDay, start: layout.start };
+    if (!el || !prev || prev.start !== layout.start || prev.ppd === layout.pxPerDay) return;
+    const view = Math.max(0, el.clientWidth - (labelsRef.current?.offsetWidth ?? 0));
+    const centreMs = prev.start + ((lastScroll.current + view / 2 - PLOT_GUTTER_LEFT) / prev.ppd) * 86_400_000;
+    const next = PLOT_GUTTER_LEFT + ((centreMs - layout.start) / 86_400_000) * layout.pxPerDay - view / 2;
+    el.scrollLeft = Math.max(0, next);
+    lastScroll.current = el.scrollLeft;
+  }, [layout.pxPerDay, layout.start]);
   const selectedPr = selection?.kind === 'pr' ? data.pulls.find((p) => p.number === selection.number) ?? null : null;
   const related = selectedPr ? relatedPulls(selectedPr, data.pulls) : null;
   const byNumber = new Map(layout.items.map((i) => [i.pr.number, i]));
-  const selectedItem = selectedPr ? byNumber.get(selectedPr.number) : undefined;
-  // Opening the detail panel narrows the graph; keep the selected card in view.
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (!el || !selectedItem) return;
-    const labels = (el.firstElementChild as HTMLElement | null)?.offsetWidth ?? 0;
-    const left = labels + selectedItem.x - (el.clientWidth + labels) / 2 + Math.min(selectedItem.width, el.clientWidth - labels) / 2;
-    el.scrollLeft = Math.max(0, Math.min(left, el.scrollWidth - el.clientWidth));
-  }, [selectedItem?.pr.number, selectedItem?.x]);
   // Only main and production-pages are drawn as branch lines; other lanes are name groups.
   const laneLineY = (id: LaneId) => { if (id !== 'main' && id !== 'production-pages') return null; const lane = layout.lanes.find((l) => l.id === id); return lane ? AXIS + lane.y + 30 : null; };
   const xOf = (iso: string) => timelineX(layout, iso);
@@ -252,23 +321,23 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
       const parentItem = parent ? byNumber.get(parent.number) : undefined;
       const ty = parentItem ? AXIS + parentItem.y + 44 : laneLineY(laneForBranch(pr.baseRef, data.defaultBranch)) ?? sy - 22;
       {
-        const tx = parentItem ? parentItem.x + 24 : item.x - 18;
-        connectors.push({ d: `M ${item.x} ${sy} C ${item.x - 30} ${sy}, ${tx} ${(sy + ty) / 2}, ${tx} ${ty}`, kind: 'reported-base', label: `PR #${pr.number} 回報的 base：${pr.baseRef}${parent ? `（PR #${parent.number} 的 head）` : ''} · PR metadata，非 fork point 證據`, color, dim, focus });
+        const tx = parentItem ? parentItem.cardX + 24 : item.cardX - 18;
+        connectors.push({ d: `M ${item.cardX} ${sy} C ${item.cardX - 30} ${sy}, ${tx} ${(sy + ty) / 2}, ${tx} ${ty}`, kind: 'reported-base', label: `PR #${pr.number} 回報的 base：${pr.baseRef}${parent ? `（PR #${parent.number} 的 head）` : ''} · PR metadata，非 fork point 證據`, color, dim, focus });
       }
     }
   }
   const fetchedX = xOf(data.fetchedAt);
   return <>
-    <div className="g-graph-top"><strong>開發時間軸 · {RANGE_LABEL[range]}</strong><span>橫軸：實際日期（Asia/Singapore，UTC+8）· 顯示 {layout.items.length} / {layout.total} 個 PR{layout.hiddenByRange ? ` · ${layout.hiddenByRange} 個在範圍外` : ''}</span></div>
-    <div className="g-frame" ref={scroller} tabIndex={0} role="region" aria-label="可捲動的開發時間軸（水平：日期；垂直：分支群組）">
-      <div className="g-lane-labels" style={{ height: layout.height + AXIS }}>
+    <div className="g-graph-top"><strong>開發時間軸 · {RANGE_LABEL[range]}</strong><span>橫軸：實際日期（Asia/Singapore，UTC+8）· {layout.fit ? 'Auto Fit' : `手動縮放 ${layout.pxPerDay} px/天`}（{layout.pxPerDay.toFixed(1)} px/天）· 顯示 {layout.items.length} / {layout.total} 個 PR{layout.hiddenByRange ? ` · ${layout.hiddenByRange} 個在範圍外` : ''}</span></div>
+    <div className="g-frame" ref={scroller} tabIndex={0} role="region" aria-label="可捲動的開發時間軸（水平：日期；垂直：分支群組）" onScroll={(e) => { lastScroll.current = e.currentTarget.scrollLeft; }}>
+      <div className={`g-lane-labels ${compactLabels ? 'is-compact' : ''}`} ref={labelsRef} style={{ height: layout.height + AXIS }}>
         {layout.lanes.map((lane) => { const meta = laneById(lane.id); const fixed = lane.id === 'main' || lane.id === 'production-pages';
           return <div key={lane.id} className={`g-lane-label ${fixed ? 'is-fixed' : ''}`} style={{ top: AXIS + lane.y, height: lane.height, ['--lane' as string]: meta.color }}>
-            {fixed ? <strong>{meta.title}</strong> : <button aria-expanded={!lane.collapsed} onClick={() => toggleCollapsed(lane.id)}>{lane.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}<strong>{meta.title}</strong></button>}
+            {fixed ? <strong title={meta.title}>{compactLabels ? SHORT_LANE[lane.id] : meta.title}</strong> : <button aria-expanded={!lane.collapsed} aria-label={meta.title} title={meta.title} onClick={() => toggleCollapsed(lane.id)}>{lane.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}<strong>{compactLabels ? SHORT_LANE[lane.id] : meta.title}</strong></button>}
             <small>{fixed ? meta.note : `${lane.count} PR · ${meta.note}`}</small>
           </div>; })}
       </div>
-      <div className="g-canvas" style={{ width: layout.width, height: layout.height + AXIS }}>
+      <div className="g-canvas" data-fit={layout.fit ? 'auto' : 'manual'} data-px-per-day={layout.pxPerDay} style={{ width: layout.width, height: layout.height + AXIS }}>
           <div className="g-axis" style={{ width: layout.width }}>{layout.ticks.map((t) => <span key={t.x} className="g-tick-label" style={{ left: t.x }}>{t.label}</span>)}<span className="g-now" style={{ left: timelineX(layout, data.fetchedAt) }}>Last checked {formatSgt(data.fetchedAt, false)}</span></div>
           {layout.ticks.map((t) => <i key={t.x} className="g-tick" style={{ left: t.x }} />)}
           {layout.lanes.map((lane, i) => <div key={lane.id} className={`g-band ${i % 2 ? 'is-alt' : ''}`} style={{ top: AXIS + lane.y, height: lane.height }} />)}
@@ -280,14 +349,14 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
           {(['main', 'production-pages'] as const).map((id) => { const y = laneLineY(id); if (y === null) return null;
             return laneCommits(id).map((c) => { const merge = c.parents.length > 1; const x = xOf(c.committerDate!);
               return merge || c.sha === data.branches.find((b) => b.name === id)?.headSha
-                ? <button key={`${id}-${c.sha}`} className={`g-commit-dot ${merge ? 'is-merge' : 'is-head'} ${selection?.kind === 'commit' && selection.sha === c.sha ? 'is-selected' : ''}`} style={{ left: x, top: y, ['--lane' as string]: laneById(id).color }} aria-label={`${id} commit ${shortSha(c.sha)} · ${c.message} · commit 時間 ${formatSgt(c.committerDate)}`} title={`${shortSha(c.sha)} ${c.message}`} onClick={() => select({ kind: 'commit', sha: c.sha })} />
+                ? <button key={`${id}-${c.sha}`} className={`g-commit-dot ${merge ? 'is-merge' : 'is-head'} ${selection?.kind === 'commit' && selection.sha === c.sha ? 'is-selected' : ''}`} style={{ left: x, top: y, ['--lane' as string]: laneById(id).color }} data-node={`commit-${c.sha}`} data-select aria-label={`${id} commit ${shortSha(c.sha)} · ${c.message} · commit 時間 ${formatSgt(c.committerDate)}`} title={`${shortSha(c.sha)} ${c.message}`} onClick={() => select({ kind: 'commit', sha: c.sha })} />
                 : <i key={`${id}-${c.sha}`} className="g-commit-tick" style={{ left: x, top: y, background: laneById(id).color }} />; }); })}
           {layout.items.map((item) => { const pr = item.pr; const dim = related && !related.has(pr.number);
             return <button key={pr.number} className={`g-pr-card is-${pr.status} kind-${branchKind(pr.headRef, data.defaultBranch)} ${selection?.kind === 'pr' && selection.number === pr.number ? 'is-selected' : ''} ${dim ? 'is-dim' : ''} ${related?.has(pr.number) && selection?.kind === 'pr' && selection.number !== pr.number ? 'is-related' : ''}`}
-              style={{ left: item.x, top: AXIS + item.y, width: item.width, ['--lane' as string]: laneById(item.lane).color }} aria-pressed={selection?.kind === 'pr' && selection.number === pr.number} aria-label={prLabel(pr)} title={pr.title} onClick={() => select({ kind: 'pr', number: pr.number })}>
+              style={{ left: item.cardX, top: AXIS + item.y, width: item.width, ['--lane' as string]: laneById(item.lane).color }} data-node={`pr-${pr.number}`} data-select aria-pressed={selection?.kind === 'pr' && selection.number === pr.number} aria-label={prLabel(pr)} title={pr.title} onClick={() => select({ kind: 'pr', number: pr.number })}>
               <span className="g-pr-top"><b>#{pr.number}</b><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span><span className="g-pr-branch">{pr.headRef}</span></span>
               <span className="g-pr-title">{pr.title}</span>
-              <span className="g-pr-track" aria-hidden="true"><i style={{ width: item.barWidth }} className={pr.state === 'open' ? 'is-open' : ''} /></span>
+              <span className="g-pr-track" aria-hidden="true"><i style={{ marginLeft: item.x - item.cardX, width: Math.max(2, Math.min(item.barWidth, item.width - (item.x - item.cardX))) }} className={pr.state === 'open' ? 'is-open' : ''} /></span>
             </button>; })}
       </div>
     </div>
@@ -335,7 +404,7 @@ function Topology({ data, range, selection, select }: { data: DevelopmentHistory
         {shown.map((n) => { const p = pos.get(n.commit.sha)!; const merge = n.commit.parents.length > 1; const names = heads.get(n.commit.sha);
           return <span key={n.commit.sha}>
             <button className={`g-topo-node ${merge ? 'is-merge' : ''} ${selectedSha === n.commit.sha ? 'is-selected' : ''} ${selectedSha && !ancestry.has(n.commit.sha) ? 'is-dim' : ''}`} style={{ left: p.x, top: p.y, ['--lane' as string]: colColor(n.col) }}
-              aria-label={`commit ${shortSha(n.commit.sha)} · ${n.commit.message} · commit 時間 ${formatSgt(n.commit.committerDate)}${merge ? ' · merge commit' : ''}`} title={`${shortSha(n.commit.sha)} ${n.commit.message}`} onClick={() => select({ kind: 'commit', sha: n.commit.sha })} />
+              data-node={`commit-${n.commit.sha}`} data-select aria-label={`commit ${shortSha(n.commit.sha)} · ${n.commit.message} · commit 時間 ${formatSgt(n.commit.committerDate)}${merge ? ' · merge commit' : ''}`} title={`${shortSha(n.commit.sha)} ${n.commit.message}`} onClick={() => select({ kind: 'commit', sha: n.commit.sha })} />
             {names && <span className="g-head-label" style={{ left: p.x + 10, top: p.y - 24 }} title={names.join(', ')}>{names[0]}{names.length > 1 ? ` +${names.length - 1}` : ''}</span>}
           </span>; })}
       </div>
@@ -358,7 +427,7 @@ function PullList({ data, stateFilter, query, range, selection, select }: { data
     <div className="g-table-wrap" tabIndex={0} role="region" aria-label="可捲動 PR 清單">
       <table className="g-table"><thead><tr><th>PR</th><th>狀態</th><th>head → base</th><th>建立</th><th>合併 / 關閉</th></tr></thead>
         <tbody>{rows.map((p) => <tr key={p.number} className={selection?.kind === 'pr' && selection.number === p.number ? 'is-selected' : ''}>
-          <td><button className="g-link" onClick={() => select({ kind: 'pr', number: p.number })} aria-label={prLabel(p)}>#{p.number} {p.title}</button></td>
+          <td><button className="g-link" data-node={`pr-${p.number}`} data-select onClick={() => select({ kind: 'pr', number: p.number })} aria-label={prLabel(p)}>#{p.number} {p.title}</button></td>
           <td><span className={`g-chip is-${p.status}`}>{STATUS_LABEL[p.status]}</span></td>
           <td className="g-mono">{p.headRef} → {p.baseRef}</td><td>{formatSgt(p.createdAt)}</td>
           <td>{p.mergedAt ? `合併 ${formatSgt(p.mergedAt)}` : p.closedAt ? `關閉 ${formatSgt(p.closedAt)}` : '—（OPEN，無合併日期）'}</td>
@@ -371,19 +440,58 @@ function Field({ label, children, testId }: { label: string; children: ReactNode
   return <div><dt>{label}</dt><dd data-testid={testId}>{children}</dd></div>;
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])';
+/**
+ * Floating detail dialog. It is rendered outside the graph grid, so opening or closing it never changes the
+ * chart width. Desktop: non-modal panel on the right (clicking another node updates it). Mobile: modal bottom sheet.
+ */
+function DetailOverlay({ data, repo, scopeKey, selection, select, close, refresh }: { data: DevelopmentHistory; repo: string; scopeKey: string; selection: NonNullable<Selection>; select: (s: Selection) => void; close: () => void; refresh: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const sheet = useIsSheet();
+  useEffect(() => { ref.current?.focus({ preventScroll: true }); }, []); // focus moves into the dialog when it opens
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    // Outside click closes, except clicks on a selectable node: those just switch the dialog to that node.
+    const onPointerDown = (e: Event) => {
+      const target = e.target as Element | null;
+      if (!target || ref.current?.contains(target) || target.closest('[data-select]')) return;
+      if (sheet) return; // the sheet's backdrop handles its own outside click
+      close();
+    };
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => { window.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onPointerDown); };
+  }, [close, sheet]);
+  const trap = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!sheet || e.key !== 'Tab' || !ref.current) return; // only the modal variant traps focus
+    const items = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (!items.length) { e.preventDefault(); return; }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === ref.current)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+  };
+  return <>
+    {sheet && <div className="g-backdrop" data-testid="g-backdrop" onClick={close} />}
+    <div ref={ref} className={`g-floating ${sheet ? 'is-sheet' : ''}`} role="dialog" aria-modal={sheet} aria-label={selection.kind === 'pr' ? 'PR 詳細資訊' : 'Commit 詳細資訊'} tabIndex={-1} onKeyDown={trap}>
+      <DetailPanel data={data} repo={repo} scopeKey={scopeKey} selection={selection} select={select} close={close} refresh={refresh} />
+    </div>
+  </>;
+}
+
 function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }: { data: DevelopmentHistory; repo: string; scopeKey: string; selection: NonNullable<Selection>; select: (s: Selection) => void; close: () => void; refresh: () => void }) {
   const index = useMemo(() => indexCommits(data.commits), [data]);
   const pr = selection.kind === 'pr' ? data.pulls.find((p) => p.number === selection.number) ?? null : null;
   const detail = usePullDetail(pr ? repo : null, scopeKey, pr?.number ?? null, data.fetchedAt);
-  useEffect(() => { const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, [close]);
   const branchNames = new Set(data.branches.map((b) => b.name));
   const branchHead = (name: string | null) => data.branches.find((b) => b.name === name)?.headSha ?? null;
   if (selection.kind === 'pr' && !pr) {
-    return <aside className="g-detail" aria-label="PR 詳細資訊">
+    return <div className="g-detail">
       <div className="g-detail-head"><p className="p-eyebrow"><GitPullRequest size={13} /> PULL REQUEST</p><button aria-label="關閉詳細資訊" onClick={close}><X size={16} /></button></div>
       <h2>PR #{selection.number}</h2>
       <p className="g-banner is-warn" role="status"><AlertTriangle size={15} />PR #{selection.number} 不在最新快照中（Last checked {formatSgt(data.fetchedAt)}）。它可能已被移除或超出讀取範圍；不推測原因。</p>
-    </aside>;
+    </div>;
   }
   if (pr) {
     const parent = stackParent(pr, data.pulls);
@@ -418,7 +526,7 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }
       : ancestry.reason === 'pr_head_moved' ? `UNKNOWN（快照期間 PR head 分支 ${pr.headRef} 已移動）`
       : ancestry.reason === 'pr_head_mismatch' ? 'UNKNOWN（PR 清單與分支清單的 head 不一致）'
       : 'UNKNOWN（相關 commit 未全部取得）';
-    return <aside className="g-detail" aria-label="PR 詳細資訊">
+    return <div className="g-detail">
       <div className="g-detail-head"><p className="p-eyebrow"><GitPullRequest size={13} /> PULL REQUEST</p><button aria-label="關閉詳細資訊" onClick={close}><X size={16} /></button></div>
       <h2>#{pr.number} {pr.title}</h2>
       <p><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span>{pr.isDraft && pr.state === 'open' ? ' Draft' : ''}</p>
@@ -451,12 +559,12 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }
         <Field label="Data completeness">{data.status === 'complete' ? 'Complete（清單與比較皆完整）' : 'Partial history'}</Field>
       </dl>
       <a className="p-primary g-open" href={pr.url} target="_blank" rel="noreferrer"><ExternalLink size={14} />在 GitHub 開啟 PR #{pr.number}</a>
-    </aside>;
+    </div>;
   }
   const sha = selection.kind === 'commit' ? selection.sha : '';
   const commit = index.get(sha);
   const assoc = commitAssociations(sha, data, new Set(data.defaultBranchShas));
-  return <aside className="g-detail" aria-label="Commit 詳細資訊">
+  return <div className="g-detail">
     <div className="g-detail-head"><p className="p-eyebrow"><GitMerge size={13} /> COMMIT</p><button aria-label="關閉詳細資訊" onClick={close}><X size={16} /></button></div>
     <h2 className="g-mono">{shortSha(sha)}</h2>
     {commit ? <dl className="g-fields">
@@ -469,7 +577,7 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }
       <Field label="Branch context">{assoc.branchHeads.length ? `目前為 ${assoc.branchHeads.join(', ')} 的 head` : '不是任何遠端分支目前的 head'} · {assoc.onDefaultBranch ? `在已取得的 ${data.defaultBranch} 歷史中` : `不在已取得的 ${data.defaultBranch} 歷史中`}</Field>
     </dl> : <p className="g-banner is-warn">Not available：此 commit 不在已取得的歷史中。</p>}
     {commit?.url && <a className="p-primary g-open" href={commit.url} target="_blank" rel="noreferrer"><ExternalLink size={14} />在 GitHub 開啟 commit</a>}
-  </aside>;
+  </div>;
 }
 
 const MILESTONES = [13, 23, 33, 34, 35, 40, 47, 48];
@@ -477,7 +585,7 @@ function BottomCards({ data, select }: { data: DevelopmentHistory; select: (s: S
   const open = data.pulls.filter((p) => p.state === 'open');
   const roots = open.filter((p) => !stackParent(p, data.pulls)).sort((a, b) => (a.baseRef ?? '').localeCompare(b.baseRef ?? '') || a.number - b.number);
   const renderTree = (pr: HistoryPull, depth: number): ReactNode => <li key={pr.number} style={{ paddingLeft: depth * 14 }}>
-    <button className="g-link" onClick={() => select({ kind: 'pr', number: pr.number })}>#{pr.number}</button> <span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span> {pr.title}
+    <button className="g-link" data-select onClick={() => select({ kind: 'pr', number: pr.number })}>#{pr.number}</button> <span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span> {pr.title}
     {depth === 0 && <small className="g-mono"> ← base {pr.baseRef}</small>}
     {stackChildren(pr, data.pulls).length > 0 && <ul>{stackChildren(pr, data.pulls).map((c) => renderTree(c, depth + 1))}</ul>}
   </li>;
@@ -486,8 +594,8 @@ function BottomCards({ data, select }: { data: DevelopmentHistory; select: (s: S
   const unknownHeads = data.branches.filter((b) => !b.headSha || !index.has(b.headSha));
   return <section className="g-cards" aria-label="資訊卡">
     <article><h3><GitBranch size={15} />OPEN PR 堆疊（{open.length}）</h3><p className="g-muted">依 PR 回報的 base/head 分組；OPEN ≠ 正在開發，CI／review 需點選 PR 才查詢。</p><ul className="g-tree">{roots.map((r) => renderTree(r, 0))}</ul></article>
-    <article><h3><GitMerge size={15} />最近合併</h3><ul className="g-plain">{merges.map((p) => <li key={p.number}><button className="g-link" onClick={() => select({ kind: 'pr', number: p.number })}>#{p.number}</button> → {p.baseRef} · {formatSgt(p.mergedAt)}</li>)}</ul>
-      <h3 className="g-sub">指定里程碑 PR（日期取自 GitHub）</h3><ul className="g-plain">{MILESTONES.map((n) => { const p = data.pulls.find((x) => x.number === n); return <li key={n}>{p ? <><button className="g-link" onClick={() => select({ kind: 'pr', number: n })}>#{n}</button> {STATUS_LABEL[p.status]} · {p.mergedAt ? `合併 ${formatSgt(p.mergedAt, false)}` : `建立 ${formatSgt(p.createdAt, false)}`}</> : `#${n} · Not available`}</li>; })}</ul></article>
+    <article><h3><GitMerge size={15} />最近合併</h3><ul className="g-plain">{merges.map((p) => <li key={p.number}><button className="g-link" data-select onClick={() => select({ kind: 'pr', number: p.number })}>#{p.number}</button> → {p.baseRef} · {formatSgt(p.mergedAt)}</li>)}</ul>
+      <h3 className="g-sub">指定里程碑 PR（日期取自 GitHub）</h3><ul className="g-plain">{MILESTONES.map((n) => { const p = data.pulls.find((x) => x.number === n); return <li key={n}>{p ? <><button className="g-link" data-select onClick={() => select({ kind: 'pr', number: n })}>#{n}</button> {STATUS_LABEL[p.status]} · {p.mergedAt ? `合併 ${formatSgt(p.mergedAt, false)}` : `建立 ${formatSgt(p.createdAt, false)}`}</> : `#${n} · Not available`}</li>; })}</ul></article>
     <article><h3><Database size={15} />資料覆蓋</h3><ul className="g-plain">
       <li>分支 {data.coverage.branches.count}（{data.coverage.branches.complete ? '完整' : 'Partial'}）· PR {data.coverage.pulls.count}（{data.coverage.pulls.complete ? '完整' : 'Partial'}）</li>
       <li>{data.defaultBranch} commit {data.coverage.commits.defaultBranchCommits}（{data.coverage.commits.defaultBranchComplete ? '至 root 完整' : 'Partial'}）· 圖中 commit 共 {data.coverage.commits.count}</li>

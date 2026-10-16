@@ -150,24 +150,63 @@ export const MERGE_EVIDENCE_LABEL: Record<MergeEvidence, string> = {
 };
 
 // ---------- Timeline (View A) ----------
-export type TimelineItem = { pr: HistoryPull; lane: LaneId; x: number; barWidth: number; width: number; row: number; y: number; endIso: string };
+export type TimelineItem = { pr: HistoryPull; lane: LaneId; /** true date position of the PR's creation */ x: number; /** card left edge; shifted left only to keep the card inside the plot */ cardX: number; barWidth: number; width: number; row: number; y: number; endIso: string };
 export type TimelineLane = { id: LaneId; y: number; height: number; rows: number; count: number; collapsed: boolean };
 export type TimelineLayout = {
-  start: number; end: number; pxPerDay: number; width: number; height: number;
+  start: number; end: number; pxPerDay: number; fit: boolean; width: number; height: number;
   lanes: TimelineLane[]; items: TimelineItem[]; ticks: { x: number; label: string }[];
   hiddenByRange: number; total: number;
 };
 export const LANE_BASE_HEIGHT = 56;
 export const ROW_HEIGHT = 58;
 export const CARD_MIN_WIDTH = 196;
-export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeId; state: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; pxPerDay: number; query?: string }): TimelineLayout {
-  const fetchedAt = history.fetchedAt;
+export const PLOT_GUTTER_LEFT = 12;
+export const PLOT_GUTTER_RIGHT = 20;
+export const MIN_FIT_PX_PER_DAY = 4; // below this, Auto Fit stops compressing and the plot scrolls internally
+export const MAX_FIT_PX_PER_DAY = 60;
+export const FALLBACK_PLOT_WIDTH = 960; // used only before the container has been measured
+const MIN_TICK_SPACING = 84;
+
+/** px/day that spreads the real date span [start, end] across the drawable plot width. Dates are never distorted. */
+export function fitPxPerDay(opts: { start: number; end: number; plotWidth: number }): number {
+  const plotWidth = opts.plotWidth > 0 && Number.isFinite(opts.plotWidth) ? opts.plotWidth : FALLBACK_PLOT_WIDTH;
+  const spanDays = Math.max(1, (opts.end - opts.start) / DAY_MS);
+  return Math.min(MAX_FIT_PX_PER_DAY, Math.max(MIN_FIT_PX_PER_DAY, (plotWidth - PLOT_GUTTER_LEFT - PLOT_GUTTER_RIGHT) / spanDays));
+}
+export const timelineSpan = (history: DevelopmentHistory, range: RangeId) => {
   const earliest = history.pulls.reduce<string | null>((min, p) => (p.createdAt && (!min || p.createdAt < min) ? p.createdAt : min), null);
-  const start = rangeStart(opts.range, fetchedAt, earliest);
-  const end = sgtDayStart(Date.parse(fetchedAt)) + 2 * DAY_MS;
-  const pxPerDay = opts.pxPerDay;
-  const x = (ms: number) => 16 + ((ms - start) / DAY_MS) * pxPerDay;
-  const width = Math.ceil(x(end) + CARD_MIN_WIDTH);
+  return { start: rangeStart(range, history.fetchedAt, earliest), end: Date.parse(history.fetchedAt) };
+};
+/** Day ticks (1/2/7/14) while they stay legible, otherwise SGT calendar-month starts. */
+export function timelineTicks(start: number, end: number, pxPerDay: number, x: (ms: number) => number) {
+  const ticks: { x: number; label: string }[] = [];
+  const iso = (t: number) => new Date(t).toISOString();
+  const step = [1, 2, 7, 14].find((d) => d * pxPerDay >= MIN_TICK_SPACING);
+  if (step) {
+    for (let t = start; t <= end; t += step * DAY_MS) ticks.push({ x: x(t), label: formatSgt(iso(t), false) });
+    return ticks;
+  }
+  ticks.push({ x: x(start), label: formatSgt(iso(start), false) });
+  const first = new Date(start + SGT_OFFSET_MS);
+  let year = first.getUTCFullYear();
+  let month = first.getUTCMonth() + 1;
+  for (;;) {
+    if (month > 11) { month = 0; year += 1; }
+    const t = Date.UTC(year, month, 1) - SGT_OFFSET_MS;
+    if (t > end) break;
+    if (t > start && x(t) - ticks[ticks.length - 1].x >= MIN_TICK_SPACING) ticks.push({ x: x(t), label: formatSgt(iso(t), false) });
+    month += 1;
+  }
+  return ticks;
+}
+export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeId; state: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; /** manual zoom; omit for Auto Fit */ pxPerDay?: number; /** drawable plot width used by Auto Fit */ plotWidth?: number; query?: string }): TimelineLayout {
+  const fetchedAt = history.fetchedAt;
+  const { start, end } = timelineSpan(history, opts.range);
+  const fit = opts.pxPerDay === undefined;
+  const pxPerDay = opts.pxPerDay ?? fitPxPerDay({ start, end, plotWidth: opts.plotWidth ?? 0 });
+  const x = (ms: number) => PLOT_GUTTER_LEFT + ((ms - start) / DAY_MS) * pxPerDay;
+  // The plot ends at Last checked (plus a small gutter): no card minimum or tail extends the date axis.
+  const width = Math.ceil(Math.max(fit && opts.plotWidth && opts.plotWidth > 0 ? opts.plotWidth : 0, x(end) + PLOT_GUTTER_RIGHT));
   const q = (opts.query ?? '').trim().toLowerCase();
   const stateMatches = history.pulls.filter((p) => matchesState(p, opts.state) && (!q || `${p.number} ${p.title} ${p.headRef} ${p.baseRef}`.toLowerCase().includes(q)));
   const inRange = stateMatches.filter((p) => p.createdAt && Date.parse(pullEnd(p, fetchedAt)) >= start);
@@ -185,10 +224,12 @@ export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeI
       const endIso = pullEnd(pr, fetchedAt);
       const barWidth = Math.max(6, x(Date.parse(endIso)) - left);
       const w = Math.max(CARD_MIN_WIDTH, barWidth);
-      let row = rowEnds.findIndex((e) => e + 10 <= left);
+      // A card near the right edge slides left to stay inside the plot; its duration bar keeps the true date position.
+      const cardX = Math.max(0, Math.min(left, width - w - 2));
+      let row = rowEnds.findIndex((e) => e + 10 <= cardX);
       if (row < 0) { row = rowEnds.length; rowEnds.push(0); }
-      rowEnds[row] = left + w;
-      laneItems.push({ pr, lane: lane.id, x: left, barWidth, width: w, row, y: 0, endIso });
+      rowEnds[row] = cardX + w;
+      laneItems.push({ pr, lane: lane.id, x: left, cardX, barWidth, width: w, row, y: 0, endIso });
     }
     const rows = collapsed ? 0 : rowEnds.length;
     const height = LANE_BASE_HEIGHT + rows * ROW_HEIGHT;
@@ -197,13 +238,10 @@ export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeI
     lanes.push({ id: lane.id, y, height, rows, count: lanePulls.length, collapsed });
     y += height;
   }
-  const ticks: { x: number; label: string }[] = [];
-  const stepDays = pxPerDay >= 10 ? 7 : pxPerDay >= 5 ? 14 : 30;
-  for (let t = start; t <= end; t += stepDays * DAY_MS) ticks.push({ x: x(t), label: formatSgt(new Date(t).toISOString(), false) });
-  return { start, end, pxPerDay, width, height: y, lanes, items, ticks, hiddenByRange: stateMatches.length - inRange.length, total: history.pulls.length };
+  return { start, end, pxPerDay, fit, width, height: y, lanes, items, ticks: timelineTicks(start, end, pxPerDay, x), hiddenByRange: stateMatches.length - inRange.length, total: history.pulls.length };
 }
 export function timelineX(layout: Pick<TimelineLayout, 'start' | 'pxPerDay'>, iso: string) {
-  return 16 + ((Date.parse(iso) - layout.start) / DAY_MS) * layout.pxPerDay;
+  return PLOT_GUTTER_LEFT + ((Date.parse(iso) - layout.start) / DAY_MS) * layout.pxPerDay;
 }
 
 // ---------- Git topology (View B) ----------
