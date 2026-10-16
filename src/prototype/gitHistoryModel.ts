@@ -199,10 +199,28 @@ export function zoomStep(current: number, direction: 1 | -1, spanDays: number): 
   if (direction > 0) return next * spanDays + PLOT_GUTTER_LEFT + PLOT_GUTTER_RIGHT > MAX_CANVAS_WIDTH ? null : next;
   return next < MIN_MANUAL_PX_PER_DAY || next * spanDays < MIN_AXIS_WIDTH ? null : next;
 }
-export const timelineSpan = (history: DevelopmentHistory, range: RangeId) => {
-  const earliest = history.pulls.reduce<string | null>((min, p) => (p.createdAt && (!min || p.createdAt < min) ? p.createdAt : min), null);
-  return { start: rangeStart(range, history.fetchedAt, earliest), end: Date.parse(history.fetchedAt) };
-};
+/**
+ * Earliest valid timestamp among the FETCHED pull request creations and commit dates (ISO string), or null when there is none.
+ * Invalid or missing timestamps are ignored. This is a bound on what was fetched, never proof of the repository's first activity.
+ */
+export function earliestFetchedTimestamp(history: Pick<DevelopmentHistory, 'pulls' | 'commits'>): string | null {
+  let best: { iso: string; ms: number } | null = null;
+  const consider = (iso: string | null | undefined) => {
+    if (typeof iso !== 'string') return;
+    const ms = Date.parse(iso);
+    if (Number.isFinite(ms) && (!best || ms < best.ms)) best = { iso, ms };
+  };
+  for (const p of history.pulls) consider(p.createdAt);
+  for (const commit of history.commits) consider(commit.committerDate);
+  return (best as { iso: string } | null)?.iso ?? null;
+}
+export const timelineSpan = (history: DevelopmentHistory, range: RangeId) => ({
+  start: rangeStart(range, history.fetchedAt, earliestFetchedTimestamp(history)),
+  end: Date.parse(history.fetchedAt),
+});
+/** A month may be called PR-free only when the PR list was read to its end AND the whole snapshot is Complete. */
+export const prAbsenceVerifiable = (history: Pick<DevelopmentHistory, 'status' | 'coverage'>): boolean =>
+  history.status === 'complete' && history.coverage?.pulls?.complete === true;
 /**
  * Time-of-day ticks for sub-day spans, then day ticks (1/2/7/14) while they stay legible, otherwise SGT calendar-month
  * starts. Sub-day ticks sit on SGT wall-clock multiples of their step.
