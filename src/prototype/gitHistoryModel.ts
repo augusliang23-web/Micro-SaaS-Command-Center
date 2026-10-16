@@ -1,7 +1,7 @@
 // Pure presentation model for the read-only GitHub development history.
 // Nothing here invents Git facts: verified edges come only from commit
 // parents; PR base/head refs stay labelled as reported PR metadata.
-import type { DevelopmentHistory, HistoryCommit, HistoryPull, LiveIdentity } from './gitHistoryTypes';
+import type { DevelopmentHistory, HistoryCommit, HistoryPull, LiveIdentity, PullDetail } from './gitHistoryTypes';
 
 export const LIVE_HISTORY_REPOS = ['augusliang23-web/pm-dashboard'] as const;
 const SGT_OFFSET_MS = 8 * 3600_000;
@@ -268,3 +268,45 @@ export function commitAssociations(sha: string, history: DevelopmentHistory, def
   };
 }
 export const shortSha = (sha: string | null | undefined) => (sha ? sha.slice(0, 7) : 'Not available');
+
+// ---------- Snapshot vs fresh detail (P2 provenance) ----------
+export type Reconciliation = {
+  snapshotHead: string | null; currentHead: string | null;
+  headMismatch: boolean; stateChange: { from: string; to: string } | null;
+  /** CI belongs to exactly the head the detail reported AND the head the list displays. */
+  ciApplies: boolean; ciHeadConsistent: boolean; needsRefresh: boolean;
+};
+/**
+ * The list snapshot and the on-demand PR detail are separate reads. CI/review
+ * data may only be attached to the displayed head SHA when every SHA agrees;
+ * otherwise the panel must say the data is stale or unverified.
+ */
+export function reconcilePullDetail(pr: HistoryPull, detail: PullDetail): Reconciliation {
+  const snapshotHead = pr.headSha;
+  const currentHead = detail.pull.headSha;
+  const headMismatch = Boolean(snapshotHead && currentHead && snapshotHead !== currentHead);
+  const ciHeadConsistent = Boolean(detail.ci.headSha && currentHead && detail.ci.headSha === currentHead);
+  const ciApplies = ciHeadConsistent && Boolean(snapshotHead) && snapshotHead === detail.ci.headSha;
+  const stateChange = pr.status !== detail.pull.status ? { from: STATUS_LABEL[pr.status], to: STATUS_LABEL[detail.pull.status] } : null;
+  return { snapshotHead, currentHead, headMismatch, stateChange, ciApplies, ciHeadConsistent, needsRefresh: headMismatch || Boolean(stateChange) };
+}
+/** Partial wins over any decision: a truncated list cannot prove Approved. */
+export function reviewIsPartial(reviews: PullDetail['reviews']): boolean {
+  return reviews.status !== 'not_checked' && (reviews.status === 'partial' || reviews.complete === false);
+}
+
+export const driftedRefNames = (history: DevelopmentHistory) => new Set(history.consistency?.driftedRefs.map((r) => r.ref) ?? []);
+export const prHeadMismatch = (history: DevelopmentHistory, number: number) => history.consistency?.prHeadMismatches.find((m) => m.number === number) ?? null;
+/**
+ * Ancestry of a PR head vs its base branch head. Any ref that moved while the
+ * snapshot was read, or an open PR whose list head disagrees with its branch,
+ * makes the claim UNKNOWN instead of VERIFIED.
+ */
+export type AncestryClaim = { state: 'yes' | 'no' | 'unknown'; baseHead: string | null; reason?: 'base_moved' | 'pr_head_mismatch' | 'missing_commits' };
+export function ancestryClaim(history: DevelopmentHistory, pr: HistoryPull, index: CommitIndex): AncestryClaim {
+  const baseHead = history.branches.find((b) => b.name === pr.baseRef)?.headSha ?? null;
+  if (pr.baseRef && driftedRefNames(history).has(pr.baseRef)) return { state: 'unknown', reason: 'base_moved', baseHead };
+  if (prHeadMismatch(history, pr.number)) return { state: 'unknown', reason: 'pr_head_mismatch', baseHead };
+  const result = isAncestor(index, baseHead, pr.headSha);
+  return result === 'unknown' ? { state: 'unknown', reason: 'missing_commits', baseHead } : { state: result ? 'yes' : 'no', baseHead };
+}

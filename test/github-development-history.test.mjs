@@ -68,7 +68,12 @@ const commit = (sha, parents, date) => ({ sha, parents: parents.map((p) => ({ sh
 // (migration/consolidated-source-ci) is deliberately kept to also test a
 // head ref that IS present, while PR #23's head is absent here.
 const BRANCHES = ['main', 'production-pages', 'integration/v23-foundation', 'claude/v23-product-integration', 'claude/v23-browser-e2e-hardening', 'integration/v23-e2e-candidate', 'claude/v23-gate2-closeout', 'claude/v23-uat-backend-activation', 'claude/v23-uat-frontend-activation', 'migration/consolidated-source-ci']
-  .map((name, i) => ({ name, commit: { sha: name === 'main' ? 'm3' : `sha-${i}` }, protected: name === 'main' }));
+  .map((name, i) => ({
+    name,
+    // Heads match the PR list (as in a quiet repository); main and production-pages use fixed SHAs.
+    commit: { sha: name === 'main' ? 'm3' : name === 'production-pages' ? 'pp1' : PULLS.find((p) => p.state === 'open' && p.head.ref === name)?.head.sha ?? `sha-${i}` },
+    protected: name === 'main',
+  }));
 
 function ghOutput(body, { status = 200, headers = {} } = {}) {
   const lines = [`HTTP/2.0 ${status} OK`, ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`)];
@@ -100,7 +105,7 @@ function standardRoutes(overrides = []) {
     [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput({ default_branch: 'main', html_url: `https://github.com/${REPO}` })],
     [/\/branches\?/, () => ghOutput(BRANCHES)],
     [/\/pulls\?state=all/, () => ghOutput(PULLS)],
-    [/\/commits\?sha=main/, () => ghOutput([commit('m3', ['m2'], '2026-10-14T05:13:33Z'), commit('m2', ['m1'], '2026-10-10T00:37:33Z'), MERGE_13, commit('m1', [], '2026-04-26T21:42:44Z')].map((c, i) => (i === 2 ? c : c)))],
+    [/\/commits\?sha=/, () => ghOutput([commit('m3', ['m2'], '2026-10-14T05:13:33Z'), commit('m2', ['m1'], '2026-10-10T00:37:33Z'), MERGE_13, commit('m1', [], '2026-04-26T21:42:44Z')].map((c, i) => (i === 2 ? c : c)))],
     [/\/compare\//, (path) => ghOutput({ status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1, merge_base_commit: { sha: 'm3' }, commits: [commit(`c-${decodeURIComponent(path.split('...')[1].split('?')[0])}`, ['m3'], '2026-10-15T00:00:00Z')] })],
   ];
 }
@@ -203,8 +208,8 @@ test('full snapshot read: provenance, counts derived from data, verified DAG inp
   assert.ok(merge13.parents.includes(history.pulls.find((p) => p.number === 13).headSha), 'PR #13 merge commit has the PR head as a parent');
   // Compare reads only for focus refs that exist as branches.
   const compared = calls.map((c) => c.args.at(-1)).filter((p) => p.includes('/compare/'));
-  assert.ok(compared.some((p) => p.includes('main...production-pages')));
-  assert.ok(compared.some((p) => p.includes(encodeURIComponent('claude/v23-gate2-closeout'))));
+  assert.ok(compared.some((p) => p.includes('m3...pp1')), 'production-pages is compared by its observed SHA');
+  assert.ok(compared.some((p) => p.includes(PULLS.find((x) => x.number === 57).head.sha)), 'open PR head compared by SHA');
   assert.ok(history.comparisons.every((c) => c.base === 'main' && c.mergeBaseSha === 'm3'));
   assert.ok(!('baseRepo' in history.pulls[0]), 'internal fields are not exposed');
 });
@@ -351,4 +356,118 @@ test('V: the history module exposes no write or execution capability', async () 
   const mod = await import('../server/githubDevelopmentHistory.mjs');
   const names = Object.keys(mod).join(' ');
   assert.doesNotMatch(names, /merge|approve|dispatch|execute|run|write|post|create(?!HistoryCache)/i);
+});
+
+// ---------------- P2 provenance remediation: negative controls ----------------
+// These were written first and run against B1 commit 17a5623, where they fail.
+
+const review = (login, state, at) => ({ user: { login }, state, submitted_at: at });
+const reviewPage = (n) => Array.from({ length: 100 }, (_, i) => review(`u${n}-${i}`, 'APPROVED', `2026-10-${String(10 + n).padStart(2, '0')}T00:00:00Z`));
+
+function detailRoutes({ reviews }) {
+  return [
+    [/\/pulls\/55$/, () => ghOutput({ ...PULLS.find((p) => p.number === 55), changed_files: 1, additions: 1, deletions: 0, commits: 1 })],
+    [/\/check-runs/, () => ghOutput({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] })],
+    [/\/reviews/, reviews],
+  ];
+}
+
+test('P2-2 negative control: a truncated review history is Partial, never a verified Approved', async () => {
+  // Pages 1-3 are all APPROVED; a CHANGES_REQUESTED review exists on an unread page 4.
+  const reviews = (path) => {
+    const page = Number((path.match(/page=(\d+)/) || [0, 1])[1]);
+    return ghOutput(reviewPage(page), { headers: { Link: `<https://api.github.com/repositories/1/pulls/55/reviews?per_page=100&page=${page + 1}>; rel="next"` } });
+  };
+  const detail = await fetchPullDetail(REPO, 55, { execFileFn: fakeGh(detailRoutes({ reviews })).execFileFn, aggregateCi: aggregateCiResponse });
+  assert.equal(detail.reviews.complete, false);
+  assert.equal(detail.reviews.status, 'partial');
+  assert.equal(detail.reviews.count, 300);
+});
+
+test('P2-2: review states stay distinct — none, partial, approved, changes requested', async () => {
+  const run = async (items, link) => (await fetchPullDetail(REPO, 55, {
+    execFileFn: fakeGh(detailRoutes({ reviews: () => ghOutput(items, link ? { headers: { Link: '<https://api.github.com/repositories/1/pulls/55/reviews?page=2>; rel="next"' } } : {}) })).execFileFn,
+    aggregateCi: aggregateCiResponse,
+  })).reviews;
+  assert.equal((await run([])).status, 'no_reviews');
+  assert.equal((await run([review('a', 'APPROVED', '2026-10-01T00:00:00Z')])).status, 'approved');
+  assert.equal((await run([review('a', 'CHANGES_REQUESTED', '2026-10-01T00:00:00Z')])).status, 'changes_requested');
+  assert.equal((await run([review('a', 'APPROVED', '2026-10-01T00:00:00Z')], true)).status, 'partial');
+  const failed = (await fetchPullDetail(REPO, 55, { execFileFn: fakeGh(detailRoutes({ reviews: () => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' }) })).execFileFn, aggregateCi: aggregateCiResponse })).reviews;
+  assert.equal(failed.status, 'not_checked');
+});
+
+test('P2-2: an observed CHANGES_REQUESTED stays visible even when the list is incomplete', async () => {
+  const items = [review('a', 'CHANGES_REQUESTED', '2026-10-01T00:00:00Z')];
+  const reviews = (await fetchPullDetail(REPO, 55, {
+    execFileFn: fakeGh(detailRoutes({ reviews: () => ghOutput(items, { headers: { Link: '<https://api.github.com/repositories/1/pulls/55/reviews?page=2>; rel="next"' } }) })).execFileFn,
+    aggregateCi: aggregateCiResponse,
+  })).reviews;
+  assert.equal(reviews.status, 'partial');
+  assert.equal(reviews.observed, 'changes_requested'); // a blocker seen in the read pages is not hidden
+});
+
+test('P2-1: CI is reported with the exact head SHA it was read for', async () => {
+  const detail = await fetchPullDetail(REPO, 55, { execFileFn: fakeGh(detailRoutes({ reviews: () => ghOutput([]) })).execFileFn, aggregateCi: aggregateCiResponse });
+  assert.equal(detail.ci.headSha, detail.pull.headSha);
+  assert.equal(detail.pull.headSha, PULLS.find((p) => p.number === 55).head.sha);
+});
+
+// Moving-ref fixtures: branch heads that match their open PR heads.
+const SHA = (name) => `sha-${name.replace(/\//g, '_')}`;
+function movingRoutes({ branchReads, compareLog, mainCommits }) {
+  const headFor = (name) => (name === 'main' ? 'm3' : name === 'production-pages' ? 'pp1' : PULLS.find((p) => p.state === 'open' && p.head.ref === name)?.head.sha ?? SHA(name));
+  const names = ['main', 'production-pages', 'integration/v23-foundation', 'claude/v23-product-integration', 'claude/v23-browser-e2e-hardening', 'integration/v23-e2e-candidate', 'claude/v23-gate2-closeout', 'claude/v23-uat-backend-activation', 'claude/v23-uat-frontend-activation'];
+  let reads = 0;
+  return [
+    [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput({ default_branch: 'main', html_url: `https://github.com/${REPO}` })],
+    [/\/branches\?/, () => { const moved = branchReads(reads++); return ghOutput(names.map((name) => ({ name, commit: { sha: moved[name] ?? headFor(name) }, protected: false }))); }],
+    [/\/pulls\?state=all/, () => ghOutput(PULLS)],
+    [/\/commits\?sha=/, (path) => { mainCommits?.push(path); return ghOutput([commit('m3', ['m2'], '2026-10-14T05:13:33Z'), commit('m2', [], '2026-10-10T00:37:33Z')]); }],
+    [/\/compare\//, (path) => { compareLog.push(path); return ghOutput({ status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1, merge_base_commit: { sha: 'm3' }, commits: [commit(`c-${path.split('...')[1].split('?')[0]}`, ['m3'], '2026-10-15T00:00:00Z')] }); }],
+  ];
+}
+
+test('Snapshot: compare and main history are pinned to the exact SHAs observed in the branch list', async () => {
+  const compareLog = [];
+  const mainLog = [];
+  const { execFileFn } = fakeGh(movingRoutes({ branchReads: () => ({}), compareLog, mainCommits: mainLog }));
+  await fetchDevelopmentHistory(REPO, { execFileFn });
+  assert.ok(compareLog.length > 0);
+  for (const path of compareLog) { assert.match(path, /compare\/m3\.\.\.[\w.-]+\?/, `unpinned compare: ${path}`); assert.doesNotMatch(path, /%2F/, `compare uses a branch name: ${path}`); }
+  assert.ok(compareLog.some((p) => p.includes('m3...pp1')));
+  assert.ok(mainLog.every((p) => p.includes('sha=m3')), `main history not pinned: ${mainLog}`);
+});
+
+test('Snapshot: a branch that moves during the read makes the snapshot Partial / inconsistent, never Complete', async () => {
+  const compareLog = [];
+  // First branch read sees the observed heads; the re-read sees production-pages and a V2.3 branch moved.
+  const { execFileFn } = fakeGh(movingRoutes({ compareLog, branchReads: (n) => (n === 0 ? {} : { 'production-pages': 'pp2', 'claude/v23-product-integration': 'moved-head' }) }));
+  const history = await fetchDevelopmentHistory(REPO, { execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
+  assert.equal(history.status, 'partial');
+  assert.equal(history.consistency.atomic, false);
+  assert.equal(history.consistency.status, 'inconsistent');
+  assert.deepEqual(history.consistency.driftedRefs.map((r) => r.ref).sort(), ['claude/v23-product-integration', 'production-pages']);
+  assert.deepEqual(history.consistency.driftedRefs.find((r) => r.ref === 'production-pages'), { ref: 'production-pages', observed: 'pp1', reread: 'pp2', relevant: true });
+  assert.match(history.warnings.join(' '), /moved during the read/i);
+  assert.ok(history.consistency.rereadAt);
+});
+
+test('Snapshot: a stable read reports consistent but still never claims to be atomic', async () => {
+  const { execFileFn } = fakeGh(movingRoutes({ compareLog: [], branchReads: () => ({}) }));
+  const history = await fetchDevelopmentHistory(REPO, { execFileFn });
+  assert.equal(history.status, 'complete');
+  assert.equal(history.consistency.status, 'consistent');
+  assert.equal(history.consistency.atomic, false);
+  assert.deepEqual(history.consistency.driftedRefs, []);
+  assert.deepEqual(history.consistency.prHeadMismatches, []);
+});
+
+test('Snapshot: an OPEN PR whose head differs from its branch head is flagged and the snapshot is Partial', async () => {
+  // PR list says #55 head = 669ab…; branch list already shows a newer head.
+  const { execFileFn } = fakeGh(movingRoutes({ compareLog: [], branchReads: () => ({ 'claude/v23-browser-e2e-hardening': 'newer-head' }) }));
+  const history = await fetchDevelopmentHistory(REPO, { execFileFn });
+  assert.equal(history.status, 'partial');
+  const mismatch = history.consistency.prHeadMismatches.find((m) => m.number === 55);
+  assert.deepEqual(mismatch, { number: 55, headRef: 'claude/v23-browser-e2e-hardening', prHeadSha: PULLS.find((p) => p.number === 55).head.sha, branchHeadSha: 'newer-head' });
 });

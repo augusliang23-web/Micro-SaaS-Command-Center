@@ -228,19 +228,22 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
   const repoInfo = (await ghApiPage(`repos/${repo}`, opts)).data;
   const defaultBranch = repoInfo?.default_branch || 'main';
 
-  const [branchPage, pullPage, mainPage] = await Promise.all([
+  // Branches and PRs are read first; every later read is pinned to the exact
+  // SHAs observed here so commits/compares describe one fixed set of heads.
+  const [branchPage, pullPage] = await Promise.all([
     fetchPaginated(`repos/${repo}/branches`, { ...opts, maxPages: HISTORY_LIMITS.maxBranchPages }),
     fetchPaginated(`repos/${repo}/pulls?state=all&sort=created&direction=desc`, { ...opts, maxPages: HISTORY_LIMITS.maxPullPages }),
-    fetchPaginated(`repos/${repo}/commits?sha=${encodeURIComponent(defaultBranch)}`, {
-      ...opts,
-      maxPages: HISTORY_LIMITS.maxDefaultBranchCommitPages,
-    }),
   ]);
-
   const branches = branchPage.items.map(normalizeBranch).sort((a, b) => a.name.localeCompare(b.name));
   const pulls = pullPage.items
     .map((item) => ({ ...normalizePull(item), baseRepo: item.base?.repo?.full_name ?? repo }))
     .sort((a, b) => a.number - b.number);
+  const defaultHeadSha = branches.find((b) => b.name === defaultBranch)?.headSha ?? null;
+  if (!defaultHeadSha) warnings.push(`${defaultBranch} head was not observed in the branch list; history is read by name and cannot be pinned.`);
+  const mainPage = await fetchPaginated(`repos/${repo}/commits?sha=${encodeURIComponent(defaultHeadSha ?? defaultBranch)}`, {
+    ...opts,
+    maxPages: HISTORY_LIMITS.maxDefaultBranchCommitPages,
+  });
   if (!branchPage.complete) warnings.push(`Branch list truncated after ${branchPage.pages} pages.`);
   if (!pullPage.complete) warnings.push(`Pull request list truncated after ${pullPage.pages} pages.`);
   if (!mainPage.complete) warnings.push(`${defaultBranch} history truncated after ${mainPage.items.length} commits.`);
@@ -248,10 +251,17 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
   const focus = selectFocusRefs({ defaultBranch, branches, pulls });
   if (focus.truncated) warnings.push(`Only ${focus.refs.length} of ${focus.requested} focus refs were compared.`);
 
+  const headOf = (name) => branches.find((b) => b.name === name)?.headSha ?? null;
   const comparisons = await mapLimit(focus.refs, HISTORY_LIMITS.concurrency, async (ref) => {
+    const refSha = headOf(ref);
+    const baseSpec = defaultHeadSha ?? defaultBranch;
+    if (!refSha) {
+      warnings.push(`Compare ${defaultBranch}...${ref} skipped: head SHA not observed.`);
+      return { base: defaultBranch, head: ref, status: null, aheadBy: null, behindBy: null, totalCommits: null, mergeBaseSha: null, commits: [], complete: false, error: 'missing' };
+    }
     try {
       const { data } = await ghApiPage(
-        `repos/${repo}/compare/${encodeURIComponent(defaultBranch)}...${encodeURIComponent(ref)}?per_page=${HISTORY_LIMITS.maxCompareCommits}`,
+        `repos/${repo}/compare/${encodeURIComponent(baseSpec)}...${encodeURIComponent(refSha)}?per_page=${HISTORY_LIMITS.maxCompareCommits}`,
         opts,
       );
       const commits = Array.isArray(data.commits) ? data.commits.map(normalizeCommit) : [];
@@ -261,6 +271,8 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
       return {
         base: defaultBranch,
         head: ref,
+        baseSha: defaultHeadSha,
+        headSha: refSha,
         status: data.status ?? null,
         aheadBy: data.ahead_by ?? null,
         behindBy: data.behind_by ?? null,
@@ -276,6 +288,11 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
       return { base: defaultBranch, head: ref, status: null, aheadBy: null, behindBy: null, totalCommits: null, mergeBaseSha: null, commits: [], complete: false, error: error.kind ?? 'failed' };
     }
   });
+
+  // Moving-ref check. GitHub offers no transaction across these GETs, so the
+  // branch list is read again: any ref whose head changed, appeared or vanished
+  // is reported. The result is never described as an atomic snapshot.
+  const consistency = await assessConsistency({ repo, opts, branches, pulls, defaultBranch, focusRefs: focus.refs, now, warnings });
 
   const commitMap = new Map();
   for (const commit of mainPage.items.map(normalizeCommit)) commitMap.set(commit.sha, commit);
@@ -298,7 +315,7 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
     };
   }
 
-  const complete = branchPage.complete && pullPage.complete && mainPage.complete && !focus.truncated && comparisons.every((c) => c.complete);
+  const complete = branchPage.complete && pullPage.complete && mainPage.complete && !focus.truncated && comparisons.every((c) => c.complete) && consistency.status === 'consistent' && Boolean(defaultHeadSha);
   return {
     source: 'GitHub',
     repository: repo,
@@ -326,6 +343,7 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
       ci: 'not_checked',
     },
     warnings,
+    consistency,
     branches,
     pulls: pulls.map(({ baseRepo, ...pr }) => pr),
     commits: [...commitMap.values()],
@@ -333,6 +351,47 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
     refs,
     comparisons: comparisons.map(({ commits, ...c }) => ({ ...c, commitShas: commits.map((x) => x.sha) })),
   };
+}
+
+
+/**
+ * Re-reads the branch list after the dependent reads and reports drift.
+ * `relevant` marks refs that edges or ancestry claims depend on (the default
+ * branch and every compared focus ref). Open PRs whose head SHA differs from
+ * their head branch's observed head are listed too: the PR list and branch
+ * list were read at different instants, so any claim that joins them is UNKNOWN.
+ */
+export async function assessConsistency({ repo, opts, branches, pulls, defaultBranch, focusRefs, now, warnings }) {
+  const relevantRefs = new Set([defaultBranch, ...focusRefs]);
+  const observed = new Map(branches.map((b) => [b.name, b.headSha]));
+  let reread;
+  try {
+    reread = new Map((await fetchPaginated(`repos/${repo}/branches`, { ...opts, maxPages: HISTORY_LIMITS.maxBranchPages })).items.map((i) => [i.name, i.commit?.sha ?? null]));
+  } catch (error) {
+    if (error instanceof GithubCliError && ['aborted', 'not_authenticated', 'rate_limited'].includes(error.kind)) throw error;
+    warnings.push('Branch heads could not be re-read; snapshot consistency is not verified.');
+    return { atomic: false, status: 'unverified', rereadAt: null, driftedRefs: [], prHeadMismatches: [] };
+  }
+  const driftedRefs = [];
+  for (const name of new Set([...observed.keys(), ...reread.keys()])) {
+    const before = observed.get(name) ?? null;
+    const after = reread.get(name) ?? null;
+    if (before !== after) driftedRefs.push({ ref: name, observed: before, reread: after, relevant: relevantRefs.has(name) });
+  }
+  driftedRefs.sort((a, b) => a.ref.localeCompare(b.ref));
+  const prHeadMismatches = [];
+  for (const pr of pulls) {
+    if (pr.state !== 'open' || !pr.headRef) continue;
+    if (pr.headRepo && pr.headRepo !== pr.baseRepo) continue; // fork heads are not branches here
+    const branchHead = observed.get(pr.headRef);
+    if (branchHead && pr.headSha && branchHead !== pr.headSha) {
+      prHeadMismatches.push({ number: pr.number, headRef: pr.headRef, prHeadSha: pr.headSha, branchHeadSha: branchHead });
+    }
+  }
+  const inconsistent = driftedRefs.some((r) => r.relevant) || prHeadMismatches.length > 0;
+  if (driftedRefs.length) warnings.push(`Branch heads moved during the read: ${driftedRefs.map((r) => r.ref).join(', ')}.`);
+  if (prHeadMismatches.length) warnings.push(`PR head differs from branch head for: ${prHeadMismatches.map((m) => `#${m.number}`).join(', ')}.`);
+  return { atomic: false, status: inconsistent ? 'inconsistent' : 'consistent', rereadAt: now().toISOString(), driftedRefs, prHeadMismatches };
 }
 
 /**
@@ -361,6 +420,8 @@ export async function fetchPullDetail(repo, number, { execFileFn = execFile, sig
     }),
   ]);
   const reviewItems = reviews?.items ?? null;
+  const reviewsComplete = reviews?.complete === true;
+  const observedReview = reviewItems === null ? null : summarizeReviews(reviewItems);
   return {
     source: 'GitHub',
     repository: repo,
@@ -369,14 +430,20 @@ export async function fetchPullDetail(repo, number, { execFileFn = execFile, sig
     pull: { ...normalizePull(pr), changedFiles: pr?.changed_files ?? null, additions: pr?.additions ?? null, deletions: pr?.deletions ?? null, commits: pr?.commits ?? null },
     // 'not_checked' only when the request itself failed; 'none' means GitHub
     // reported zero check runs for this SHA — the two are never merged.
+    // ci.headSha is the SHA the check runs were read for, always the same
+    // head the pull record above reported.
     ci: checks === null ? { status: 'not_checked', total: null, headSha: headSha ?? null } : { status: aggregateCi ? aggregateCi(checks) : 'unknown', total: checks.total_count ?? null, headSha },
     reviews:
       reviewItems === null
         ? { status: 'not_checked', count: null, complete: false }
         : {
-            status: summarizeReviews(reviewItems),
+            // A decision derived from a truncated list is not a verdict: later
+            // pages may hold newer or conflicting reviews. `observed` keeps
+            // what the read pages showed (a blocker stays visible).
+            status: reviewsComplete ? observedReview : 'partial',
             count: reviewItems.length,
-            complete: reviews.complete,
+            complete: reviewsComplete,
+            ...(reviewsComplete ? {} : { observed: observedReview }),
           },
   };
 }

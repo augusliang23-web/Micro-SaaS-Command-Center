@@ -85,11 +85,27 @@ Mobile 390×844: page `scrollWidth` 390 (no page-wide overflow); graph frame 356
 
 Browser note: port 3000 was occupied by the user's long-running `command-center-v1-trust` server, and `server.ts` (hardcoded port) is outside this task's allowlist, so the UI was served by a scratch harness (not committed) that mounted only Vite plus the read-only `/api/github` router on `127.0.0.1:3100`. `/api/state` was intentionally not mounted (404 in console), and Vite HMR could not bind its websocket port (also held by the other server).
 
-## Validation
+## Validation (updated after P2 remediation)
 
-- `npm run test:ui` — 7 files, 78 tests passed (16 new B1 tests).
-- `node --test` focused: `github-development-history` (18 new), `github-pull-status`, `github-repos`, `local-git-status`, `status-provenance`, `verdict`, `local-state` — 101 passed.
+- `npm run test:ui` — 7 files, 94 tests passed.
+- `node --test` focused: `github-development-history` (26), `github-pull-status`, `github-repos`, `local-git-status`, `status-provenance`, `verdict`, `local-state` — 109 passed.
 - `npm run lint` (tsc) — pass. `npm run build` — exit 0 (pre-existing `import.meta`/chunk-size warnings only).
 - `git diff --check` — clean.
 - npm safety: no repo `.npmrc`; no `npm_config_*`/`NPM_TOKEN`/`NODE_AUTH_TOKEN` env names; no install, no registry access.
 - Not run: agent-console / Docker suites (Track A, unrelated to this change; avoids any sandbox/agent runtime).
+
+## P2 provenance remediation (Issue #34 independent-review addendum)
+
+Starting HEAD `17a56232f114cf3d222cf99566ccedf76000ad48`. Negative controls were written first and run against that commit in a throwaway worktree: 8 backend and 16 UI tests failed there, and all pass after the fix.
+
+**P2-1 PR/CI version consistency.** Reproduced on the original: snapshot head `e1`, fresh detail head `e2` with CI PASS on `e2` rendered "CI passed (5 check runs)" next to `e1` with no warning. Now the panel compares the snapshot head, the detail head and the head the CI was read for. A mismatch shows "Needs refresh · Stale data", labels the CI "針對 <B> 的 CI … 不適用於快照 head <A>", and marks review and changed files "Not verified". CI whose head differs from the detail's own head is "Not verified". State changes (DRAFT→OPEN, →MERGED, →CLOSED) are shown as "狀態已變更" with both states. The detail request is keyed by the snapshot version, so a refreshed snapshot discards and re-reads the detail while the selection is kept; a PR missing from the new snapshot is reported, not cleared.
+
+**P2-2 incomplete review history.** Reproduced on the original: a truncated list of 300 reviews rendered "Approved (300)". The backend now returns `status: partial` with `observed` (what the read pages showed, so a visible CHANGES_REQUESTED is not hidden) whenever pagination is incomplete, and the UI renders "Partial / UNKNOWN" even if a legacy response claims approved with `complete=false`. No reviews, Not checked, Partial, Approved and Changes requested stay distinct.
+
+**Snapshot consistency.** The reads are separate GETs and are not atomic; the UI says so ("非原子快照") and the API reports `consistency.atomic: false` on every response. Reads are now pinned to observed SHAs: `main` history uses `commits?sha=<main head>` and each focus ref is compared as `compare/<main head>...<ref head>`. After the dependent reads the branch list is read again; any ref that moved, appeared or vanished is listed (`relevant` marks refs that edges depend on). Open PRs whose list head differs from their branch head are listed too. Any relevant drift or mismatch makes the snapshot `partial / inconsistent`, and ancestry claims touching a moved base or a mismatched PR become UNKNOWN instead of verified. A failed re-read is `unverified`, never consistent.
+
+Residual: the PR detail's CI and review reads are two requests after the PR record, so a push in that window is not detectable by the server; the displayed SHA for CI is always the SHA it was read for.
+
+Existing B1 tests changed for the new behavior: backend fixtures now give branches heads equal to their open PR heads, read main history by SHA and assert SHA-based compares; the UI `detailFor` fixture now uses each PR's own head SHA instead of a hard-coded `e1` (the old fixture served CI for the wrong SHA, which the new gate correctly rejects).
+
+Final live revalidation (2026-10-16 08:32 SGT): 68 branches, 58 PRs, 13 OPEN, status `complete`, consistency `consistent` (re-read found no drift), 15 compares all pinned, 20/20 spot-check PRs match `gh api`. Real PR detail for #55, #57, #36: CI head equals PR head, reviews `no_reviews` complete. Browser 1366×768 and 390×844: page `scrollWidth` equals viewport, graph frame scrolls internally. The stale banner was also viewed in the real UI with an injected (simulated, not live) detail response for PR #57 (head changed); that screenshot is not committed because the Issue allowlist names only three PNGs.

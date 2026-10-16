@@ -6,7 +6,7 @@ import {
 import type { DevelopmentHistory, HistoryCommit, HistoryErrorKind, HistoryPull, LiveIdentity, PullDetail } from './gitHistoryTypes';
 import {
   LANES, LaneId, RANGE_LABEL, RangeId, STATE_LABEL, STATUS_LABEL, StateFilter, MERGE_EVIDENCE_LABEL,
-  branchKind, buildTimeline, buildTopology, commitAssociations, formatSgt, identityKey, indexCommits, isAncestor,
+  ancestryClaim, branchKind, buildTimeline, buildTopology, commitAssociations, driftedRefNames, formatSgt, identityKey, indexCommits, prHeadMismatch, reconcilePullDetail, reviewIsPartial,
   laneById, laneForBranch, liveRepositoryFor, matchesState, mergeEvidence, rangeStart, relatedPulls, shortSha,
   stackChildren, stackParent, timelineX,
 } from './gitHistoryModel';
@@ -54,8 +54,11 @@ export function useDevelopmentHistory(repo: string | null, key: string) {
   return { state: state.key === key ? state : ({ key, status: 'loading', refreshing: true } as LoadState), refresh: () => load(true) };
 }
 
-function usePullDetail(repo: string | null, scopeKey: string, number: number | null) {
-  const key = JSON.stringify([scopeKey, number]);
+// The key includes the parent snapshot version (its fetch time): when the list
+// snapshot is replaced, the old detail is discarded and re-read, so CI/review
+// data can never outlive the snapshot it was shown beside.
+function usePullDetail(repo: string | null, scopeKey: string, number: number | null, snapshotVersion: string) {
+  const key = JSON.stringify([scopeKey, number, snapshotVersion]);
   const [state, setState] = useState<{ key: string; detail?: PullDetail; error?: string }>({ key });
   useEffect(() => {
     if (!repo || !number) return;
@@ -75,7 +78,7 @@ function usePullDetail(repo: string | null, scopeKey: string, number: number | n
 }
 
 const CI_LABEL = { not_checked: 'Not checked', none: 'No CI checks', passing: 'CI passed', failing: 'CI failed', running: 'CI running', pending: 'CI pending', unknown: 'CI unknown（不完整或無法判定）' } as const;
-const REVIEW_LABEL = { not_checked: 'Not checked', no_reviews: '沒有已送出的 review', approved: 'Approved', changes_requested: 'Changes requested', commented_only: '僅留言（無核准）' } as const;
+const REVIEW_LABEL = { not_checked: 'Not checked', no_reviews: '沒有已送出的 review', partial: 'Partial / UNKNOWN', approved: 'Approved', changes_requested: 'Changes requested', commented_only: '僅留言（無核准）' } as const;
 const ZOOMS = [3, 6, 10, 16, 26, 40];
 const AXIS = 34;
 const TOPO_COL_W = 30;
@@ -143,6 +146,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
       <div><dt>Last checked</dt><dd>{data ? formatSgt(data.fetchedAt) : 'Not checked'}{data?.cache === 'hit' ? '（伺服器快取 ≤5 分鐘）' : ''}</dd></div>
       <div><dt>Data status</dt><dd><span className={`g-status is-${dataStatus.split(' ')[0].toLowerCase()}`}>{dataStatus}</span></dd></div>
     </dl>
+    {data && <p className="g-muted g-note">非原子快照：分支、PR、commit 為多次獨立的 GET 讀取{data.consistency ? (data.consistency.status === 'consistent' ? `；結束前重讀分支 head（${formatSgt(data.consistency.rereadAt)}）：未發現移動` : data.consistency.status === 'inconsistent' ? '；結束前重讀發現 head 已移動，相關關係標為 UNKNOWN' : '；未能重讀分支 head，一致性未驗證') : ''}。</p>}
     {state.status === 'error' && <p className="g-banner is-error" role="alert"><AlertTriangle size={15} />{ERROR_TEXT[state.error!.kind] ?? ERROR_TEXT.failed}{state.error?.resetAt ? ` 重置時間：${formatSgt(state.error.resetAt)}` : ''}{data ? ' 目前顯示上一次成功讀取的資料（Needs refresh）。' : ''}</p>}
     {state.status === 'loading' && !data && <p className="g-banner" role="status">正在從 GitHub 讀取 {repo} 的分支、PR 與 commit 歷史…</p>}
     {data && data.warnings.length > 0 && <p className="g-banner is-warn"><AlertTriangle size={15} />Partial history：{data.warnings.join(' ')}</p>}
@@ -174,7 +178,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
           {view === 'topology' && <Topology data={data} range={range} selection={selection} select={setSelection} />}
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={setSelection} />}
         </section>
-        {selection && <DetailPanel data={data} repo={repo} scopeKey={key} selection={selection} select={setSelection} close={() => setSelection(null)} />}
+        {selection && <DetailPanel data={data} repo={repo} scopeKey={key} selection={selection} select={setSelection} close={() => setSelection(null)} refresh={refresh} />}
       </div>
       <BottomCards data={data} select={setSelection} />
     </>}
@@ -340,6 +344,7 @@ function Topology({ data, range, selection, select }: { data: DevelopmentHistory
       <span><i className="is-solid" />實線＝commit 的實際 parent（GitHub commits / compare API）</span><span><i className="is-dotted" />短虛線＝parent 在目前視窗之外</span>
       {inRange.length > shown.length && <button className="p-secondary" onClick={() => setLimit((l) => l + 120)}>載入較舊 120 個 commit</button>}
       <span>{missingHeads.length} 個 branch head 不在已取得的 commit 圖中 → ancestry UNKNOWN</span>
+      {driftedRefNames(data).size > 0 && <span>{driftedRefNames(data).size} 個 ref 在讀取期間移動：其 head 標籤為首次觀察值</span>}
     </div>
   </>;
 }
@@ -362,29 +367,63 @@ function PullList({ data, stateFilter, query, range, selection, select }: { data
   </>;
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <div><dt>{label}</dt><dd>{children}</dd></div>;
+function Field({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
+  return <div><dt>{label}</dt><dd data-testid={testId}>{children}</dd></div>;
 }
 
-function DetailPanel({ data, repo, scopeKey, selection, select, close }: { data: DevelopmentHistory; repo: string; scopeKey: string; selection: NonNullable<Selection>; select: (s: Selection) => void; close: () => void }) {
+function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh }: { data: DevelopmentHistory; repo: string; scopeKey: string; selection: NonNullable<Selection>; select: (s: Selection) => void; close: () => void; refresh: () => void }) {
   const index = useMemo(() => indexCommits(data.commits), [data]);
   const pr = selection.kind === 'pr' ? data.pulls.find((p) => p.number === selection.number) ?? null : null;
-  const detail = usePullDetail(pr ? repo : null, scopeKey, pr?.number ?? null);
+  const detail = usePullDetail(pr ? repo : null, scopeKey, pr?.number ?? null, data.fetchedAt);
   useEffect(() => { const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, [close]);
   const branchNames = new Set(data.branches.map((b) => b.name));
   const branchHead = (name: string | null) => data.branches.find((b) => b.name === name)?.headSha ?? null;
+  if (selection.kind === 'pr' && !pr) {
+    return <aside className="g-detail" aria-label="PR 詳細資訊">
+      <div className="g-detail-head"><p className="p-eyebrow"><GitPullRequest size={13} /> PULL REQUEST</p><button aria-label="關閉詳細資訊" onClick={close}><X size={16} /></button></div>
+      <h2>PR #{selection.number}</h2>
+      <p className="g-banner is-warn" role="status"><AlertTriangle size={15} />PR #{selection.number} 不在最新快照中（Last checked {formatSgt(data.fetchedAt)}）。它可能已被移除或超出讀取範圍；不推測原因。</p>
+    </aside>;
+  }
   if (pr) {
     const parent = stackParent(pr, data.pulls);
     const children = stackChildren(pr, data.pulls);
-    const baseHead = branchHead(pr.baseRef);
-    const ancestry = isAncestor(index, baseHead, pr.headSha);
+    const ancestry = ancestryClaim(data, pr, index);
     const evidence = mergeEvidence(pr, index);
+    const mismatch = prHeadMismatch(data, pr.number);
     const d = detail.detail;
-    const ci = d ? CI_LABEL[d.ci.status] : detail.error ? 'Not checked（讀取失敗）' : 'Not checked（讀取中…）';
+    const rec = d ? reconcilePullDetail(pr, d) : null;
+    const loading = detail.error ? 'Not checked（讀取失敗）' : 'Not checked（讀取中…）';
+    let ciText: string = loading;
+    if (d && rec) {
+      const total = d.ci.total !== null && d.ci.total !== undefined ? `（${d.ci.total} 個 check run）` : '';
+      if (d.ci.status === 'not_checked') ciText = 'Not checked（CI 讀取失敗）';
+      else if (!rec.ciHeadConsistent) ciText = `Not verified · CI 讀取的 head ${shortSha(d.ci.headSha)} 與 PR 目前 head ${shortSha(d.pull.headSha)} 不一致`;
+      else if (rec.headMismatch) ciText = `Stale data · 針對 ${shortSha(d.ci.headSha)} 的 CI：${CI_LABEL[d.ci.status]}${total} · 不適用於快照 head ${shortSha(pr.headSha)}`;
+      else ciText = `${CI_LABEL[d.ci.status]}${total} · head ${shortSha(d.ci.headSha)}`;
+    }
+    let reviewText: string = loading;
+    if (d && rec) {
+      if (rec.headMismatch) reviewText = 'Not verified · 快照已過期，請先重新整理';
+      else if (d.reviews.status === 'not_checked') reviewText = 'Not checked（review 讀取失敗）';
+      else if (reviewIsPartial(d.reviews)) reviewText = `Partial / UNKNOWN（僅讀到 ${d.reviews.count ?? '?'} 筆，review 歷史不完整，不是已驗證的決定${d.reviews.observed && d.reviews.observed !== 'no_reviews' && d.reviews.observed !== 'partial' ? `；已讀部分：${REVIEW_LABEL[d.reviews.observed]}` : ''}）`;
+      else reviewText = `${REVIEW_LABEL[d.reviews.status]}${d.reviews.count ? `（${d.reviews.count} 筆）` : ''}`;
+    }
+    const ancestryText = ancestry.state === 'yes' ? `已驗證：${pr.baseRef} 目前 head ${shortSha(ancestry.baseHead)} 是 PR head 的祖先`
+      : ancestry.state === 'no' ? `已驗證：${pr.baseRef} 目前 head ${shortSha(ancestry.baseHead)} 不是 PR head 的祖先（base 已前進或分歧）`
+      : ancestry.reason === 'base_moved' ? `UNKNOWN（快照期間 base 分支 ${pr.baseRef} 的 head 已移動）`
+      : ancestry.reason === 'pr_head_mismatch' ? 'UNKNOWN（PR 清單與分支清單的 head 不一致）'
+      : 'UNKNOWN（相關 commit 未全部取得）';
     return <aside className="g-detail" aria-label="PR 詳細資訊">
       <div className="g-detail-head"><p className="p-eyebrow"><GitPullRequest size={13} /> PULL REQUEST</p><button aria-label="關閉詳細資訊" onClick={close}><X size={16} /></button></div>
       <h2>#{pr.number} {pr.title}</h2>
       <p><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span>{pr.isDraft && pr.state === 'open' ? ' Draft' : ''}</p>
+      {rec?.needsRefresh && d && <div className="g-banner is-warn" role="status"><AlertTriangle size={15} /><div>
+        <strong>Needs refresh · Stale data</strong>
+        {rec.headMismatch && <p>快照 head {shortSha(rec.snapshotHead)}，目前 head {shortSha(rec.currentHead)}：PR 在快取期間有新 commit。下方 CI／review 屬於較新的 head，不能套用到快照顯示的 head。</p>}
+        {rec.stateChange && <p>狀態已變更：{rec.stateChange.from} → {rec.stateChange.to}（快照 {formatSgt(data.fetchedAt)}；即時 {formatSgt(d.fetchedAt)}）。</p>}
+        <button className="g-link" onClick={refresh}>重新讀取快照</button>
+      </div></div>}
       <dl className="g-fields">
         <Field label="Repository">{repo}</Field>
         <Field label="Source branch（head）"><span className="g-mono">{pr.headRef}</span>{pr.headRef && !branchNames.has(pr.headRef) ? '（上次檢查時不在遠端分支清單；不推測是否曾刪除）' : ''}</Field>
@@ -393,12 +432,13 @@ function DetailPanel({ data, repo, scopeKey, selection, select, close }: { data:
         <Field label="最後更新（updated_at）">{formatSgt(pr.updatedAt)}</Field>
         <Field label="合併（merged_at）">{pr.mergedAt ? formatSgt(pr.mergedAt) : 'Not merged'}</Field>
         {pr.closedAt && !pr.merged && <Field label="關閉（closed_at）">{formatSgt(pr.closedAt)}</Field>}
-        <Field label="Latest head SHA"><span className="g-mono">{pr.headSha ?? 'Not available'}</span></Field>
-        <Field label="Review">{d ? `${REVIEW_LABEL[d.reviews.status]}${d.reviews.count !== null ? `（${d.reviews.count} 筆）` : ''}` : detail.error ? 'Not checked（讀取失敗）' : 'Not checked（讀取中…）'}</Field>
-        <Field label="CI">{ci}{d?.ci.total !== null && d?.ci.total !== undefined ? `（${d.ci.total} 個 check run）` : ''}</Field>
-        <Field label="Changed files">{d?.pull.changedFiles != null ? `${d.pull.changedFiles} 個檔案 · +${d.pull.additions} / −${d.pull.deletions} · ${d.pull.commits} commits` : 'Not available'}</Field>
+        <Field label="Latest head SHA（快照）"><span className="g-mono">{pr.headSha ?? 'Not available'}</span></Field>
+        <Field label="Review" testId="pr-review">{reviewText}</Field>
+        <Field label="CI" testId="pr-ci">{ciText}</Field>
+        <Field label="Changed files">{d?.pull.changedFiles != null && rec && !rec.headMismatch ? `${d.pull.changedFiles} 個檔案 · +${d.pull.additions} / −${d.pull.deletions} · ${d.pull.commits} commits` : rec?.headMismatch ? 'Not verified（快照已過期）' : 'Not available'}</Field>
         <Field label="Stacked 關係（PR metadata）">{parent ? <button className="g-link" onClick={() => select({ kind: 'pr', number: parent.number })}>base = PR #{parent.number} 的 head</button> : `base = ${pr.baseRef}`}{children.length ? <> · 上層：{children.map((c) => <button key={c.number} className="g-link" onClick={() => select({ kind: 'pr', number: c.number })}>#{c.number}</button>)}</> : null}</Field>
-        <Field label="Git ancestry（commit parents）">{ancestry === true ? `已驗證：${pr.baseRef} 目前 head ${shortSha(baseHead)} 是 PR head 的祖先` : ancestry === false ? `已驗證：${pr.baseRef} 目前 head ${shortSha(baseHead)} 不是 PR head 的祖先（base 已前進或分歧）` : 'UNKNOWN（相關 commit 未全部取得）'}</Field>
+        <Field label="Git ancestry（commit parents）">{ancestryText}</Field>
+        {mismatch && <Field label="Snapshot 一致性">PR 清單與分支清單的 head 不一致（PR {shortSha(mismatch.prHeadSha)} vs 分支 {shortSha(mismatch.branchHeadSha)}）：此 PR 的 ancestry 視為 UNKNOWN。</Field>}
         {pr.merged && <Field label="合併證據">{MERGE_EVIDENCE_LABEL[evidence]}{pr.mergeCommitSha ? <> · <button className="g-link g-mono" onClick={() => select({ kind: 'commit', sha: pr.mergeCommitSha! })}>{shortSha(pr.mergeCommitSha)}</button></> : null}</Field>}
         <Field label="部署 / 本機 Worktree">Not checked · MERGED ≠ DEPLOYED · OPEN ≠ 正在開發</Field>
         <Field label="Last checked">{formatSgt(data.fetchedAt)}{d ? ` · 詳細資料 ${formatSgt(d.fetchedAt)}` : ''}</Field>

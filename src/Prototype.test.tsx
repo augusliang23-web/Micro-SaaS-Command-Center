@@ -234,7 +234,7 @@ function makeHistory(over:Partial<DevelopmentHistory>={}):DevelopmentHistory{
   coverage:{branches:{count:branches.length,pages:1,complete:true},pulls:{count:pulls.length,open:pulls.filter(p=>p.state==='open').length,draft:pulls.filter(p=>p.isDraft).length,merged:2,closedUnmerged:0,pages:1,complete:true},commits:{count:commits.length,defaultBranchCommits:4,defaultBranchComplete:true},focusRefs:{compared:4,requested:4,truncated:false},localWorktrees:'not_checked',deployments:'not_checked',ci:'not_checked'},
   warnings:[],branches,pulls,commits,defaultBranchShas:['m3','M13','m2','m1'],refs:{},comparisons:[{base:'main',head:'production-pages',status:'diverged',aheadBy:2,behindBy:2,totalCommits:2,mergeBaseSha:'m2',commitShas:['pp1','h48'],complete:true,error:null}],...over};
 }
-const detailFor=(number:number,ci:'none'|'passing'|'not_checked')=>({source:'GitHub',repository:PM,number,fetchedAt:'2026-10-16T00:01:00.000Z',pull:{...makeHistory().pulls.find(p=>p.number===number)!,changedFiles:12,additions:889,deletions:8,commits:2},ci:{status:ci,total:ci==='passing'?5:ci==='none'?0:null,headSha:'e1'},reviews:{status:'no_reviews',count:0,complete:true}});
+const detailFor=(number:number,ci:'none'|'passing'|'not_checked')=>({source:'GitHub',repository:PM,number,fetchedAt:'2026-10-16T00:01:00.000Z',pull:{...makeHistory().pulls.find(p=>p.number===number)!,changedFiles:12,additions:889,deletions:8,commits:2},ci:{status:ci,total:ci==='passing'?5:ci==='none'?0:null,headSha:makeHistory().pulls.find(p=>p.number===number)!.headSha},reviews:{status:'no_reviews',count:0,complete:true}});
 type Pending={url:string;resolve:(body:unknown,status?:number)=>void};
 function mockFetch(){const pending:Pending[]=[];const spy=vi.spyOn(globalThis,'fetch').mockImplementation((input:RequestInfo|URL,init?:RequestInit)=>new Promise((resolveFetch,reject)=>{const url=String(input);init?.signal?.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')));pending.push({url,resolve:(body,status=200)=>resolveFetch(new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}}))});}));return {spy,pending};}
 const openLive=()=>nav('開發地圖');
@@ -436,4 +436,120 @@ test('B1: the DEMO PM Dashboard card offers the live map explicitly without upgr
  cleanup();render(<App/>);
  expect(within(screen.getByRole('article',{name:'SwipeRight 示範專案'})).queryByRole('button',{name:/LIVE|真實 GitHub/})).toBeNull();
  workspace('PM Dashboard');expect(screen.getByText('DEMO PROJECT')).toBeVisible();expect(screen.queryByText('REGISTERED · LIVE GITHUB READ-ONLY')).toBeNull();
+});
+
+// ---------------- P2 provenance remediation: negative controls ----------------
+// Written first and run against B1 commit 17a5623, where the SHA/CI, state-change,
+// refresh-invalidation, partial-review and drift tests fail.
+const SHA_A='e1';const SHA_B='e2';
+const detailWith=(number:number,over:{pull?:Partial<HistoryPull>;ci?:{status:string;total:number|null;headSha:string|null};reviews?:{status:string;count:number|null;complete:boolean;observed?:string}}={})=>{
+ const base=detailFor(number,'passing');
+ return {...base,pull:{...base.pull,...over.pull},ci:over.ci??base.ci,reviews:over.reviews??base.reviews};
+};
+const openPr=async(n=55,history=makeHistory())=>{const m=mockFetch();render(<App/>);openLive();m.pending[0].resolve(history);await flush();fireEvent.click(screen.getByRole('button',{name:new RegExp(`^PR #${n} ·`)}));return m;};
+const detailReq=(m:{pending:Pending[]},n=55)=>m.pending.filter(p=>p.url.includes('/development-history/pull')&&p.url.includes(`number=${n}`)).at(-1)!;
+
+test('P2-1 negative control: snapshot head SHA A + fresh head SHA B with CI PASS never shows PASS against SHA A',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_B},ci:{status:'passing',total:5,headSha:SHA_B}}));await flush();
+ const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('Needs refresh');expect(panel).toHaveTextContent('Stale data');
+ expect(panel).toHaveTextContent(`快照 head ${SHA_A}`);expect(panel).toHaveTextContent(`目前 head ${SHA_B}`);
+ expect(within(panel).getByTestId('pr-ci')).toHaveTextContent(`針對 ${SHA_B}`);
+ expect(within(panel).getByTestId('pr-ci')).toHaveTextContent('不適用於');
+ expect(within(panel).getByTestId('pr-ci')).not.toHaveTextContent(new RegExp(`${SHA_A}.*CI passed|^CI passed`));
+ expect(within(panel).getByTestId('pr-review')).toHaveTextContent('Not verified');
+});
+
+test('P2-1: CI on a head that is not the displayed head is rejected even if the detail head looks right',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_A},ci:{status:'passing',total:5,headSha:SHA_B}}));await flush();
+ const ci=within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-ci');
+ expect(ci).toHaveTextContent('Not verified');expect(ci).not.toHaveTextContent(/^CI passed/);
+});
+
+test('P2-1: matching SHAs show CI normally with the SHA it was read for and no false stale warning',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55));await flush();
+ const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ expect(within(panel).getByTestId('pr-ci')).toHaveTextContent(`CI passed（5 個 check run） · head ${SHA_A}`);
+ expect(panel).not.toHaveTextContent('Needs refresh');expect(panel).not.toHaveTextContent('Stale data');
+});
+
+test('P2-1: refreshing the snapshot keeps the selected PR and re-reads its detail instead of reusing the old one',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55));await flush();
+ expect(within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-ci')).toHaveTextContent('CI passed');
+ const before=m.pending.length;
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
+ const snapshot=m.pending.at(-1)!;expect(snapshot.url).toContain('refresh=1');
+ snapshot.resolve(makeHistory({fetchedAt:'2026-10-16T03:00:00.000Z',pulls:makeHistory().pulls.map(p=>p.number===55?{...p,headSha:SHA_B}:p)}));await flush();
+ const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('#55'); // selection preserved
+ expect(m.pending.length).toBeGreaterThan(before+1); // a new detail request followed the new snapshot
+ expect(within(panel).getByTestId('pr-ci')).toHaveTextContent('Not checked'); // old CI is not carried over
+ detailReq(m).resolve(detailWith(55,{pull:{headSha:SHA_B},ci:{status:'failing',total:5,headSha:SHA_B}}));await flush();
+ expect(within(panel).getByTestId('pr-ci')).toHaveTextContent(`CI failed`);expect(within(panel).getByTestId('pr-ci')).toHaveTextContent(`head ${SHA_B}`);
+ expect(panel).not.toHaveTextContent('Needs refresh');
+});
+
+test.each([
+ ['OPEN → MERGED',{status:'merged' as const,state:'closed' as const,merged:true,isDraft:false,mergedAt:'2026-10-16T02:00:00Z',closedAt:'2026-10-16T02:00:00Z'},'DRAFT → MERGED'],
+ ['OPEN → CLOSED',{status:'closed_unmerged' as const,state:'closed' as const,merged:false,isDraft:false,mergedAt:null,closedAt:'2026-10-16T02:00:00Z'},'DRAFT → CLOSED · 未合併'],
+ ['DRAFT → READY',{status:'open' as const,state:'open' as const,merged:false,isDraft:false},'DRAFT → OPEN'],
+])('P2-1 state change %s is shown as Needs refresh with both states',async(_name,change,label)=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{pull:change}));await flush();
+ const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('狀態已變更');expect(panel).toHaveTextContent(label);expect(panel).toHaveTextContent('Needs refresh');
+});
+
+test('P2-1: a refreshed snapshot that no longer contains the selected PR is reported, not silently cleared',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55));await flush();
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
+ m.pending.at(-1)!.resolve(makeHistory({pulls:makeHistory().pulls.filter(p=>p.number!==55)}));await flush();
+ expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('PR #55 不在最新快照中');
+});
+
+test('P2-2 negative control: incomplete review pagination shows Partial / UNKNOWN, never Approved',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{reviews:{status:'partial',count:300,complete:false,observed:'approved'}}));await flush();
+ const review=within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-review');
+ expect(review).toHaveTextContent('Partial');expect(review).toHaveTextContent('UNKNOWN');expect(review).toHaveTextContent('300');
+ expect(review).not.toHaveTextContent(/^Approved/);expect(review).not.toHaveTextContent('undefined');
+});
+
+test('P2-2: a legacy detail that says approved with complete=false is still rendered Partial',async()=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{reviews:{status:'approved',count:300,complete:false}}));await flush();
+ const review=within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-review');
+ expect(review).toHaveTextContent('Partial');expect(review).not.toHaveTextContent(/^Approved/);
+});
+
+test.each([
+ ['no_reviews','沒有已送出的 review'],['not_checked','Not checked'],['approved','Approved（'],['changes_requested','Changes requested（'],
+])('P2-2: complete review state %s keeps its own label',async(status,text)=>{
+ const m=await openPr();
+ detailReq(m).resolve(detailWith(55,{reviews:{status,count:status==='no_reviews'?0:2,complete:status!=='not_checked'}}));await flush();
+ const review=within(screen.getByRole('complementary',{name:'PR 詳細資訊'})).getByTestId('pr-review');
+ expect(review).toHaveTextContent(text);expect(review).not.toHaveTextContent('Partial');
+});
+
+test('Snapshot: drifted refs and PR/branch head mismatches downgrade status and turn ancestry UNKNOWN',async()=>{
+ const drifted=makeHistory({status:'partial',warnings:['Branch heads moved during the read: claude/v23-product-integration.'],
+  consistency:{atomic:false,status:'inconsistent',rereadAt:'2026-10-15T23:57:30.000Z',driftedRefs:[{ref:'claude/v23-product-integration',observed:'p1',reread:'p9',relevant:true}],prHeadMismatches:[{number:55,headRef:'claude/v23-browser-e2e-hardening',prHeadSha:'e1',branchHeadSha:'e9'}]}});
+ const m=await openPr(55,drifted);
+ const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ expect(screen.getByLabelText('資料來源')).toHaveTextContent('Partial history');
+ expect(panel).toHaveTextContent('UNKNOWN（快照期間 base 分支 claude/v23-product-integration 的 head 已移動）');
+ expect(panel).not.toHaveTextContent('已驗證：claude/v23-product-integration');
+ expect(panel).toHaveTextContent('PR 清單與分支清單的 head 不一致');
+ expect(screen.getByText(/非原子快照/)).toBeVisible();
+ expect(m.pending.length).toBeGreaterThan(0);
+});
+
+test('Snapshot: a consistent read still labels itself non-atomic',async()=>{
+ await openPr(55,makeHistory({consistency:{atomic:false,status:'consistent',rereadAt:'2026-10-15T23:57:30.000Z',driftedRefs:[],prHeadMismatches:[]}}));
+ expect(screen.getByText(/非原子快照/)).toBeVisible();expect(screen.getByLabelText('資料來源')).toHaveTextContent('Complete');
 });
