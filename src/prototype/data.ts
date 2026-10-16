@@ -1,5 +1,9 @@
 // Local presentation fixtures only. No API, persisted approval or live telemetry authority.
-export type Page = 'overview' | 'workspace' | 'cost';
+export type Page = 'overview' | 'workspace' | 'cost' | 'history';
+// The single project connected to live, read-only GitHub history in this phase.
+// Its identity is explicit (source + stable ID + exact repository); the DEMO
+// 'PM Dashboard' card never upgrades into it by name.
+export const LIVE_PM_DASHBOARD = { source: 'REGISTERED' as const, projectId: 'registered-pm-dashboard', repository: 'augusliang23-web/pm-dashboard', displayName: 'PM Dashboard' };
 export type DemoProject = { name: string; description: string; milestone: string; blocker: string; next: string };
 export type DemoTask = {
   id: string; title: string; reference: string; branch: string; description: string;

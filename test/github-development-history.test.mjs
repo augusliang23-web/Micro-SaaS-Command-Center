@@ -1,0 +1,354 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import express from 'express';
+
+import {
+  DEVELOPMENT_HISTORY_REPOS,
+  HISTORY_LIMITS,
+  classifyGhFailure,
+  createHistoryCache,
+  fetchDevelopmentHistory,
+  fetchPaginated,
+  fetchPullDetail,
+  isAllowlistedHistoryRepo,
+  nextPageNumber,
+  normalizeBranch,
+  normalizePull,
+  parseGhIncludeOutput,
+  parseLinkHeader,
+  selectFocusRefs,
+  summarizeReviews,
+} from '../server/githubDevelopmentHistory.mjs';
+import { aggregateCiResponse } from '../server/githubPullStatus.mjs';
+import { createGithubRouter } from '../server/githubRoutes.mjs';
+import { GithubCliError } from '../server/githubRepos.mjs';
+
+const REPO = 'augusliang23-web/pm-dashboard';
+
+// Versioned fixture: PR fields copied from a read-only GitHub snapshot of
+// augusliang23-web/pm-dashboard taken 2026-10-15T23:57:20Z (67 branches,
+// 57 PRs, 12 open at that moment). These are observations for unit tests,
+// NOT expected live values — live counts are re-read at validation time.
+// [number, title, state, draft, created, updated, closed, merged, base, head, headSha, mergeSha]
+const SNAPSHOT_2026_10_15 = [
+  [13, 'Consolidate PROD/UAT source and bootstrap CI', 'closed', false, '2026-09-24T01:26:19Z', '2026-09-24T01:43:01Z', '2026-09-24T01:43:01Z', '2026-09-24T01:43:01Z', 'main', 'migration/consolidated-source-ci', '0b008da97b46ab0cf5bf673fbf33dd0b0741d02a', 'f7b69b6ca25b244efa3d0fadae3a70a487ae8f0e'],
+  [23, 'B8: integrate accepted UAT PDF Cloud Run service URL', 'closed', false, '2026-09-27T00:23:29Z', '2026-09-27T00:56:04Z', '2026-09-27T00:56:04Z', '2026-09-27T00:56:04Z', 'main', 'claude/b8-uat-pdf-url-integration', '34a2dae82f7e2d0d783eafff3633c04843a9cec0', 'c2f9a4dd4b811a48f3dfd833adfd1baaf38a3c26'],
+  [33, 'feat: add per-user Manage Weeks permission foundation', 'closed', false, '2026-10-03T00:38:15Z', '2026-10-03T04:08:35Z', '2026-10-03T04:08:35Z', '2026-10-03T04:08:35Z', 'main', 'claude/week-manage-permission-foundation', 'c66d0d24b950e03a0804662447c4509547c6312a', '4e0283e7eca0333153c914fbecd936d96944dbec'],
+  [34, 'feat: add Admin user permissions management', 'closed', false, '2026-10-03T04:27:37Z', '2026-10-03T04:48:45Z', '2026-10-03T04:48:45Z', '2026-10-03T04:48:45Z', 'main', 'claude/user-permissions-ui', '1ffe3f1a1c9df54230ab62a7b6d4d2835fc3717a', '0db63dfcef466864353ce47c7d25ff58836e7942'],
+  [35, 'Prepare Cloud Functions Node 22 migration candidate', 'closed', false, '2026-10-03T08:54:21Z', '2026-10-03T09:45:30Z', '2026-10-03T09:45:30Z', '2026-10-03T09:45:30Z', 'main', 'codex/functions-node22-candidate', '5e27ecc621d3a4182aab1df4851fae46213dff87', '606fe7e3462d16e7fc9364efccfcafc5c4688db0'],
+  [36, 'release: prepare User Permissions Production promotion', 'open', false, '2026-10-03T14:21:09Z', '2026-10-03T14:37:52Z', null, null, 'main', 'claude/production-user-permissions-promotion', '3a9a728b2dcbf79b5f4536498580e3cbdb9407a4', null],
+  [37, 'release: port User Permissions UI to production-pages', 'open', false, '2026-10-03T14:21:15Z', '2026-10-03T14:21:15Z', null, null, 'production-pages', 'claude/production-pages-user-permissions', 'febf2cf85a9188652aaadecfc0c6e3882c7178ac', null],
+  [40, 'release: port User Permissions V2 to production-pages', 'closed', false, '2026-10-04T04:17:04Z', '2026-10-06T08:46:13Z', '2026-10-06T08:46:13Z', '2026-10-06T08:46:12Z', 'production-pages', 'claude/production-pages-user-permissions-v2', '015e8b2afcc48851f87c7ec8b1adeb9482a20fe0', 'a9648a16e9261b85a9f1c49f2e43ef9a08863112'],
+  [47, 'feat: one-paste Copilot weekly update in the project editor', 'closed', false, '2026-10-09T23:00:03Z', '2026-10-10T00:37:34Z', '2026-10-10T00:37:34Z', '2026-10-10T00:37:34Z', 'main', 'claude/weekly-update-one-paste-uat', '479855e6217f5a127e8da46c7a8185f3a6c159b1', 'a12368b739571dcfcc1d632cb082c97789d97927'],
+  [48, 'feat: port One-Paste weekly update (PR #47) to Production Pages', 'closed', false, '2026-10-10T00:14:12Z', '2026-10-10T00:53:47Z', '2026-10-10T00:53:47Z', '2026-10-10T00:53:46Z', 'production-pages', 'claude/weekly-one-paste-production-pages', 'e221c61eb6d890352e3cfc49b987a034519293a2', '9c4254142cdd59f28854ec78cf095681e916324f'],
+  [50, 'feat: V2.3 Delivery Trends presentation components (draft, not wired)', 'open', true, '2026-10-14T03:09:33Z', '2026-10-14T03:09:33Z', null, null, 'main', 'claude/v23-delivery-presentation', 'cd573dc5f0cdc3197e42abf8f3c3a75e1bb89f4b', null],
+  [51, 'feat: V2.3 shared delivery metrics engine and verified PDF package', 'open', true, '2026-10-14T05:19:42Z', '2026-10-14T05:22:52Z', null, null, 'main', 'codex/v23-shared-metrics-engine', 'e8817619538b4399e81932c8e7ac7c0be41edd8a', null],
+  [52, 'feat: V2.3 historical data pipeline and PDF metrics preparation', 'open', true, '2026-10-14T05:57:01Z', '2026-10-14T13:30:11Z', null, null, 'integration/v23-foundation', 'codex/v23-history-pipeline', 'c8cd5d8b6c65e604421c038f79bf34b81ab6f3fb', null],
+  [53, 'feat: V2.3 UAT-only Delivery Trends page + PDF section integration (draft)', 'open', true, '2026-10-14T07:22:32Z', '2026-10-14T14:06:56Z', null, null, 'integration/v23-foundation', 'claude/v23-product-integration', 'e06da6ec8f1a92d4b48cd552303c27a3ca8c6382', null],
+  [54, 'feat: unify UAT Draft Publish and preserve original Archive lifecycle', 'open', true, '2026-10-14T13:52:23Z', '2026-10-15T00:34:12Z', null, null, 'main', 'codex/new-project-draft-publish', '4be45fb07dfc6656fcfebedb4874e2488b41e801', null],
+  [55, 'feat: V2.3 Phase 2C browser reliability and UAT automation (stacked, draft)', 'open', true, '2026-10-14T14:39:09Z', '2026-10-14T14:39:09Z', null, null, 'claude/v23-product-integration', 'claude/v23-browser-e2e-hardening', '669ab2dbb02ccdcfa9b9b217ca5a5704a9eaa88c', null],
+  [56, 'feat: V2.3 Gate 2 integrated UAT review candidate', 'open', true, '2026-10-14T23:57:17Z', '2026-10-15T00:02:08Z', null, null, 'integration/v23-foundation', 'integration/v23-e2e-candidate', 'aed4e72942e7e0d571070debe006b5023ad99853', null],
+  [57, 'feat: V2.3 Gate 2 closeout (F-1, PR #55 import, week selection) — stacked draft', 'open', true, '2026-10-15T00:33:08Z', '2026-10-15T00:33:08Z', null, null, 'integration/v23-e2e-candidate', 'claude/v23-gate2-closeout', '7c02e7f44e4aac72c9a1a948512ea2bdbcdbd940', null],
+  [58, 'release(uat): PDF backend candidate — enable Delivery Performance on UAT only (draft)', 'open', true, '2026-10-15T05:42:11Z', '2026-10-15T05:42:11Z', null, null, 'claude/v23-gate2-closeout', 'claude/v23-uat-backend-activation', '0ad92930682d86fb009b1a3f9bcbb0e669c348cd', null],
+  [59, 'release(uat): frontend candidate — enable Delivery Performance PDF option on UAT only (draft)', 'open', true, '2026-10-15T05:42:13Z', '2026-10-15T05:42:13Z', null, null, 'claude/v23-gate2-closeout', 'claude/v23-uat-frontend-activation', '1473475e78e5ff0ae9a466398ae98d35a588e117', null],
+];
+const ghPull = ([number, title, state, draft, created, updated, closed, merged, base, head, headSha, mergeSha]) => ({
+  number, title, state, draft, created_at: created, updated_at: updated, closed_at: closed, merged_at: merged,
+  html_url: `https://github.com/${REPO}/pull/${number}`, user: { login: 'augusliang23-web' },
+  base: { ref: base, sha: `base-${number}`, repo: { full_name: REPO } },
+  head: { ref: head, sha: headSha, repo: { full_name: REPO } },
+  merge_commit_sha: mergeSha,
+});
+const PULLS = SNAPSHOT_2026_10_15.map(ghPull);
+// The PR #13 merge commit and its real parents (main side, PR head side).
+const MERGE_13 = { sha: 'f7b69b6ca25b244efa3d0fadae3a70a487ae8f0e', parents: [{ sha: 'e1f0e5c7177d83c8e6d4d14cc1e01d47791ab340' }, { sha: '0b008da97b46ab0cf5bf673fbf33dd0b0741d02a' }], html_url: 'u', commit: { message: 'Merge pull request #13', author: { date: '2026-09-24T01:43:01Z' }, committer: { date: '2026-09-24T01:43:01Z' } } };
+const commit = (sha, parents, date) => ({ sha, parents: parents.map((p) => ({ sha: p })), html_url: `https://github.com/${REPO}/commit/${sha}`, commit: { message: `msg ${sha}`, author: { date }, committer: { date } } });
+
+// Branches still present at snapshot time; PR #13's head
+// (migration/consolidated-source-ci) is deliberately kept to also test a
+// head ref that IS present, while PR #23's head is absent here.
+const BRANCHES = ['main', 'production-pages', 'integration/v23-foundation', 'claude/v23-product-integration', 'claude/v23-browser-e2e-hardening', 'integration/v23-e2e-candidate', 'claude/v23-gate2-closeout', 'claude/v23-uat-backend-activation', 'claude/v23-uat-frontend-activation', 'migration/consolidated-source-ci']
+  .map((name, i) => ({ name, commit: { sha: name === 'main' ? 'm3' : `sha-${i}` }, protected: name === 'main' }));
+
+function ghOutput(body, { status = 200, headers = {} } = {}) {
+  const lines = [`HTTP/2.0 ${status} OK`, ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`)];
+  return `${lines.join('\r\n')}\r\n\r\n${JSON.stringify(body)}`;
+}
+
+/** Fake `gh` that answers GET paths from a route table and records every call. */
+function fakeGh(routes) {
+  const calls = [];
+  const execFileFn = (cmd, args, opts, cb) => {
+    calls.push({ cmd, args, opts });
+    const path = args[args.length - 1];
+    for (const [pattern, handler] of routes) {
+      if (pattern.test(path)) {
+        const out = handler(path);
+        if (out instanceof Error || out?.error) { cb(out.error ?? out, out.stdout ?? '', out.stderr ?? ''); return; }
+        cb(null, out, '');
+        return;
+      }
+    }
+    cb(Object.assign(new Error('unrouted'), { code: 1 }), ghOutput({ message: 'Not Found' }, { status: 404 }), 'gh: Not Found (HTTP 404)');
+  };
+  return { execFileFn, calls };
+}
+
+function standardRoutes(overrides = []) {
+  return [
+    ...overrides,
+    [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput({ default_branch: 'main', html_url: `https://github.com/${REPO}` })],
+    [/\/branches\?/, () => ghOutput(BRANCHES)],
+    [/\/pulls\?state=all/, () => ghOutput(PULLS)],
+    [/\/commits\?sha=main/, () => ghOutput([commit('m3', ['m2'], '2026-10-14T05:13:33Z'), commit('m2', ['m1'], '2026-10-10T00:37:33Z'), MERGE_13, commit('m1', [], '2026-04-26T21:42:44Z')].map((c, i) => (i === 2 ? c : c)))],
+    [/\/compare\//, (path) => ghOutput({ status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1, merge_base_commit: { sha: 'm3' }, commits: [commit(`c-${decodeURIComponent(path.split('...')[1].split('?')[0])}`, ['m3'], '2026-10-15T00:00:00Z')] })],
+  ];
+}
+
+test('allowlist is exactly the PM Dashboard repository', () => {
+  assert.deepEqual([...DEVELOPMENT_HISTORY_REPOS], [REPO]);
+  assert.equal(isAllowlistedHistoryRepo(REPO), true);
+  for (const bad of ['augusliang23-web/pm-dashboard-uat', 'augusliang23-web/Micro-SaaS-Command-Center', 'github.com/augusliang23-web/pm-dashboard', 'PM Dashboard', '', undefined]) {
+    assert.equal(isAllowlistedHistoryRepo(bad), false, String(bad));
+  }
+});
+
+test('A/D/E/F: real PR normalization keeps created/merged/closed distinct and OPEN has no merge date', () => {
+  const byNumber = new Map(PULLS.map((p) => [p.number, normalizePull(p)]));
+  const pr13 = byNumber.get(13);
+  assert.equal(pr13.status, 'merged');
+  assert.equal(pr13.createdAt, '2026-09-24T01:26:19Z');
+  assert.equal(pr13.mergedAt, '2026-09-24T01:43:01Z');
+  assert.notEqual(pr13.createdAt, pr13.mergedAt);
+  assert.equal(pr13.mergeCommitSha, 'f7b69b6ca25b244efa3d0fadae3a70a487ae8f0e');
+  const pr40 = byNumber.get(40);
+  assert.equal(pr40.baseRef, 'production-pages');
+  assert.equal(pr40.mergedAt, '2026-10-06T08:46:12Z');
+  assert.equal(pr40.closedAt, '2026-10-06T08:46:13Z'); // closed_at and merged_at are different source fields
+  for (const n of [36, 37, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]) {
+    const pr = byNumber.get(n);
+    assert.equal(pr.state, 'open');
+    assert.equal(pr.mergedAt, null, `#${n} must not have a merge date`);
+    assert.equal(pr.mergeCommitSha, null);
+    assert.equal(pr.merged, false);
+  }
+  assert.equal(byNumber.get(36).status, 'open'); // open, not draft
+  assert.equal(byNumber.get(55).status, 'draft');
+  // A closed PR without merged_at is closed-unmerged, never "merged".
+  assert.equal(normalizePull({ ...PULLS[0], merged_at: null, state: 'closed' }).status, 'closed_unmerged');
+});
+
+test('G: stacked V2.3 base/head relationships come straight from PR metadata', () => {
+  const pr = (n) => normalizePull(PULLS.find((p) => p.number === n));
+  const expected = { 52: 'integration/v23-foundation', 53: 'integration/v23-foundation', 54: 'main', 55: 'claude/v23-product-integration', 56: 'integration/v23-foundation', 57: 'integration/v23-e2e-candidate', 58: 'claude/v23-gate2-closeout', 59: 'claude/v23-gate2-closeout' };
+  for (const [n, base] of Object.entries(expected)) assert.equal(pr(Number(n)).baseRef, base, `#${n}`);
+  assert.equal(pr(55).baseRef, pr(53).headRef); // #55 stacked on #53
+  assert.equal(pr(57).baseRef, pr(56).headRef); // #57 stacked on #56
+  assert.equal(pr(58).baseRef, pr(57).headRef);
+  assert.equal(pr(59).baseRef, pr(57).headRef);
+});
+
+test('B: branch normalization keeps name, head SHA and protection only', () => {
+  assert.deepEqual(normalizeBranch({ name: 'main', commit: { sha: 'abc' }, protected: true, extra: 1 }), { name: 'main', headSha: 'abc', protected: true });
+  assert.deepEqual(normalizeBranch({ name: 'x' }), { name: 'x', headSha: null, protected: false });
+});
+
+test('Link header and gh -i output parsing', () => {
+  const links = parseLinkHeader('<https://api.github.com/repositories/1/commits?per_page=100&page=2>; rel="next", <https://api.github.com/repositories/1/commits?per_page=100&page=7>; rel="last"');
+  assert.equal(nextPageNumber(links.next), 2);
+  assert.equal(nextPageNumber(undefined), null);
+  const parsed = parseGhIncludeOutput(ghOutput([1], { headers: { Link: '<x>; rel="next"', 'X-RateLimit-Remaining': '42' } }));
+  assert.equal(parsed.status, 200);
+  assert.equal(parsed.headers['x-ratelimit-remaining'], '42');
+  assert.deepEqual(JSON.parse(parsed.body), [1]);
+});
+
+test('every request is GET-only, repo-bound, and next links cannot redirect to another path', async () => {
+  const { execFileFn, calls } = fakeGh([[/\/branches/, (path) => ghOutput([{ name: path }], { headers: path.includes('page=2') ? {} : { Link: '<https://api.github.com/repositories/999/branches?per_page=100&page=2>; rel="next"' } })]]);
+  const result = await fetchPaginated(`repos/${REPO}/branches`, { maxPages: 5, execFileFn });
+  assert.equal(result.complete, true);
+  assert.equal(result.pages, 2);
+  assert.deepEqual(calls.map((c) => c.args.at(-1)), [`repos/${REPO}/branches?per_page=100`, `repos/${REPO}/branches?per_page=100&page=2`]);
+  for (const c of calls) {
+    assert.equal(c.cmd, 'gh');
+    assert.deepEqual(c.args.slice(0, 4), ['api', '--method', 'GET', '-i']);
+    assert.ok(c.opts.timeout > 0, 'every request has a timeout');
+  }
+});
+
+test('L/T: pagination beyond the bound is reported as Partial, never Complete', async () => {
+  const { execFileFn } = fakeGh(standardRoutes([[/\/branches\?/, (path) => ghOutput(BRANCHES, { headers: { Link: `<https://api.github.com/repositories/1/branches?page=${Number((path.match(/page=(\d+)/) || [0, 1])[1]) + 1}>; rel="next"` } })]]));
+  const history = await fetchDevelopmentHistory(REPO, { execFileFn });
+  assert.equal(history.coverage.branches.complete, false);
+  assert.equal(history.coverage.branches.pages, HISTORY_LIMITS.maxBranchPages);
+  assert.equal(history.status, 'partial');
+  assert.match(history.warnings.join(' '), /Branch list truncated/);
+});
+
+test('full snapshot read: provenance, counts derived from data, verified DAG inputs, out-of-scope fields not checked', async () => {
+  const { execFileFn, calls } = fakeGh(standardRoutes());
+  const history = await fetchDevelopmentHistory(REPO, { execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
+  assert.equal(history.source, 'GitHub');
+  assert.equal(history.repository, REPO);
+  assert.equal(history.fetchedAt, '2026-10-16T00:00:00.000Z');
+  assert.equal(history.status, 'complete');
+  assert.equal(history.coverage.pulls.count, PULLS.length);
+  assert.equal(history.coverage.pulls.open, 12);
+  assert.equal(history.coverage.pulls.draft, 10);
+  assert.equal(history.coverage.branches.count, BRANCHES.length);
+  assert.equal(history.coverage.localWorktrees, 'not_checked');
+  assert.equal(history.coverage.deployments, 'not_checked');
+  const merge13 = history.commits.find((c) => c.sha === MERGE_13.sha);
+  assert.deepEqual(merge13.parents, ['e1f0e5c7177d83c8e6d4d14cc1e01d47791ab340', '0b008da97b46ab0cf5bf673fbf33dd0b0741d02a']);
+  assert.ok(merge13.parents.includes(history.pulls.find((p) => p.number === 13).headSha), 'PR #13 merge commit has the PR head as a parent');
+  // Compare reads only for focus refs that exist as branches.
+  const compared = calls.map((c) => c.args.at(-1)).filter((p) => p.includes('/compare/'));
+  assert.ok(compared.some((p) => p.includes('main...production-pages')));
+  assert.ok(compared.some((p) => p.includes(encodeURIComponent('claude/v23-gate2-closeout'))));
+  assert.ok(history.comparisons.every((c) => c.base === 'main' && c.mergeBaseSha === 'm3'));
+  assert.ok(!('baseRepo' in history.pulls[0]), 'internal fields are not exposed');
+});
+
+test('O/P: missing branches are not compared, and a deleted historical head ref stays as PR metadata', () => {
+  const pulls = PULLS.map((p) => ({ ...normalizePull(p), baseRepo: REPO }));
+  const branches = BRANCHES.map(normalizeBranch);
+  const focus = selectFocusRefs({ defaultBranch: 'main', branches, pulls });
+  // claude/v23-delivery-presentation (#50 head) is absent from this branch fixture.
+  assert.ok(!focus.refs.includes('claude/v23-delivery-presentation'));
+  assert.ok(focus.refs.includes('production-pages'));
+  assert.ok(focus.refs.includes('integration/v23-foundation'));
+  assert.equal(focus.refs.includes('main'), false);
+  // PR #23's head branch is absent but the PR record is kept unchanged.
+  const pr23 = pulls.find((p) => p.number === 23);
+  assert.equal(pr23.headRef, 'claude/b8-uat-pdf-url-integration');
+  assert.equal(branches.some((b) => b.name === pr23.headRef), false);
+  const bounded = selectFocusRefs({ defaultBranch: 'main', branches, pulls, limit: 2 });
+  assert.equal(bounded.refs.length, 2);
+  assert.equal(bounded.truncated, true);
+});
+
+test('M/N: authorization, rate-limit, timeout, abort and 404 are classified distinctly', () => {
+  assert.equal(classifyGhFailure({ error: { code: 1 }, stdout: ghOutput({}, { status: 401 }), stderr: 'gh: Bad credentials (HTTP 401)' }).kind, 'not_authenticated');
+  const rl = classifyGhFailure({ error: { code: 1 }, stdout: ghOutput({}, { status: 403, headers: { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': '1792112400' } }), stderr: 'gh: API rate limit exceeded (HTTP 403)' });
+  assert.equal(rl.kind, 'rate_limited');
+  assert.equal(rl.resetAt, new Date(1792112400 * 1000).toISOString());
+  assert.equal(classifyGhFailure({ error: { killed: true, signal: 'SIGTERM' } }).kind, 'timeout');
+  assert.equal(classifyGhFailure({ error: { name: 'AbortError', code: 'ABORT_ERR' } }).kind, 'aborted');
+  assert.equal(classifyGhFailure({ error: { code: 'ENOENT' } }).kind, 'not_found');
+  assert.equal(classifyGhFailure({ error: { code: 1 }, stdout: ghOutput({}, { status: 404 }), stderr: 'gh: Not Found (HTTP 404)' }).kind, 'missing');
+});
+
+test('auth failure aborts the whole read instead of returning partial or fixture data', async () => {
+  const { execFileFn } = fakeGh([[/./, () => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: ghOutput({}, { status: 401 }), stderr: 'gh: Bad credentials (HTTP 401)' })]]);
+  await assert.rejects(fetchDevelopmentHistory(REPO, { execFileFn }), (e) => e instanceof GithubCliError && e.kind === 'not_authenticated');
+  await assert.rejects(fetchDevelopmentHistory('augusliang23-web/other', { execFileFn }), (e) => e.kind === 'forbidden');
+});
+
+test('a pre-aborted request never spawns gh', async () => {
+  const { execFileFn, calls } = fakeGh(standardRoutes());
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(fetchDevelopmentHistory(REPO, { execFileFn, signal: controller.signal }), (e) => e.kind === 'aborted');
+  assert.equal(calls.length, 0);
+});
+
+test('R: PR detail distinguishes Not checked, No CI checks and CI passed', async () => {
+  const base = (checks) => fakeGh([
+    [/\/pulls\/55$/, () => ghOutput({ ...PULLS.find((p) => p.number === 55), changed_files: 12, additions: 889, deletions: 8, commits: 2 })],
+    [/\/check-runs/, checks],
+    [/\/reviews/, () => ghOutput([])],
+  ]);
+  const none = await fetchPullDetail(REPO, 55, { execFileFn: base(() => ghOutput({ total_count: 0, check_runs: [] })).execFileFn, aggregateCi: aggregateCiResponse });
+  assert.equal(none.ci.status, 'none');
+  const passed = await fetchPullDetail(REPO, 55, { execFileFn: base(() => ghOutput({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] })).execFileFn, aggregateCi: aggregateCiResponse });
+  assert.equal(passed.ci.status, 'passing');
+  const failedRead = await fetchPullDetail(REPO, 55, { execFileFn: base(() => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' })).execFileFn, aggregateCi: aggregateCiResponse });
+  assert.equal(failedRead.ci.status, 'not_checked');
+  assert.equal(none.reviews.status, 'no_reviews');
+  assert.equal(none.pull.changedFiles, 12);
+  assert.equal(summarizeReviews([{ user: { login: 'a' }, state: 'COMMENTED', submitted_at: '2026-10-01T00:00:00Z' }]), 'commented_only');
+  assert.equal(summarizeReviews([{ user: { login: 'a' }, state: 'APPROVED', submitted_at: '2026-10-01T00:00:00Z' }]), 'approved');
+});
+
+test('cache is per repository, expires, and is cleared on demand', () => {
+  let t = 0;
+  const cache = createHistoryCache({ ttlMs: 1000, now: () => t });
+  cache.set(REPO, { repository: REPO });
+  assert.deepEqual(cache.get(REPO), { repository: REPO });
+  assert.equal(cache.get('other/repo'), null);
+  t = 1001;
+  assert.equal(cache.get(REPO), null);
+});
+
+async function withRouter(deps, fn) {
+  const app = express();
+  app.use('/api/github', createGithubRouter(deps));
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  try {
+    await fn(`http://127.0.0.1:${server.address().port}/api/github`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test('route: only GET on the allowlisted repo; errors map to explicit statuses; refresh bypasses cache', async () => {
+  let calls = 0;
+  let mode = 'ok';
+  const fetchHistory = async (repo) => {
+    calls += 1;
+    if (mode === 'auth') throw new GithubCliError('not authed', 'not_authenticated');
+    if (mode === 'rate') { const e = new GithubCliError('rate', 'rate_limited'); e.resetAt = '2026-10-16T01:00:00.000Z'; throw e; }
+    if (mode === 'timeout') throw new GithubCliError('slow', 'timeout');
+    return { repository: repo, fetchedAt: `t${calls}`, status: 'complete' };
+  };
+  await withRouter({ fetchHistory }, async (base) => {
+    const other = await fetch(`${base}/development-history?repo=augusliang23-web/Micro-SaaS-Command-Center`);
+    assert.equal(other.status, 403);
+    assert.equal(calls, 0);
+    const first = await (await fetch(`${base}/development-history?repo=${REPO}`)).json();
+    const second = await (await fetch(`${base}/development-history?repo=${REPO}`)).json();
+    assert.equal(first.cache, 'miss');
+    assert.equal(second.cache, 'hit');
+    assert.equal(second.fetchedAt, first.fetchedAt, 'cached response keeps its original fetch time');
+    const refreshed = await (await fetch(`${base}/development-history?repo=${REPO}&refresh=1`)).json();
+    assert.equal(refreshed.cache, 'refreshed');
+    assert.equal(calls, 2);
+    const post = await fetch(`${base}/development-history?repo=${REPO}`, { method: 'POST' });
+    assert.equal(post.status, 404, 'no write method is routed');
+    const foreign = await fetch(`${base}/development-history?repo=${REPO}`, { headers: { Origin: 'https://evil.example' } });
+    assert.equal(foreign.status, 403);
+    mode = 'auth';
+    const auth = await fetch(`${base}/development-history?repo=${REPO}&refresh=1`);
+    assert.equal(auth.status, 401);
+    assert.equal((await auth.json()).status, 'unavailable');
+    mode = 'rate';
+    const rate = await fetch(`${base}/development-history?repo=${REPO}&refresh=1`);
+    assert.equal(rate.status, 429);
+    assert.equal((await rate.json()).resetAt, '2026-10-16T01:00:00.000Z');
+    mode = 'timeout';
+    assert.equal((await fetch(`${base}/development-history?repo=${REPO}&refresh=1`)).status, 504);
+  });
+});
+
+test('route: a history response for another repository is rejected, never cached', async () => {
+  await withRouter({ fetchHistory: async () => ({ repository: 'someone/else' }) }, async (base) => {
+    const res = await fetch(`${base}/development-history?repo=${REPO}`);
+    assert.equal(res.status, 502);
+  });
+});
+
+test('route: PR detail validates number and repository', async () => {
+  const seen = [];
+  await withRouter({ fetchHistoryPull: async (repo, number) => { seen.push([repo, number]); return { repository: repo, number }; } }, async (base) => {
+    assert.equal((await fetch(`${base}/development-history/pull?repo=${REPO}&number=abc`)).status, 400);
+    assert.equal((await fetch(`${base}/development-history/pull?repo=x/y&number=5`)).status, 403);
+    assert.equal((await fetch(`${base}/development-history/pull?repo=${REPO}&number=55`)).status, 200);
+  });
+  assert.deepEqual(seen, [[REPO, 55]]);
+});
+
+test('V: the history module exposes no write or execution capability', async () => {
+  const mod = await import('../server/githubDevelopmentHistory.mjs');
+  const names = Object.keys(mod).join(' ');
+  assert.doesNotMatch(names, /merge|approve|dispatch|execute|run|write|post|create(?!HistoryCache)/i);
+});

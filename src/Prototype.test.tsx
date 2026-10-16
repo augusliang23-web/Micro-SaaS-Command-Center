@@ -1,4 +1,4 @@
-import {cleanup,fireEvent,render,screen,within,waitFor} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,within,waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach,beforeEach,expect,test,vi} from 'vitest';
 import App from './App';
@@ -17,8 +17,8 @@ const save=()=>fireEvent.click(screen.getByRole('button',{name:'加入 Prompt �
 const full='Agent: Codex\nModel: GPT-6 Sol\n- Reasoning Effort: Medium\nGitHub Issue: #32\n\n任務：修改節點。\nDo NOT execute agents.\nSafety: no provider calls\nAcceptance: all tests pass\n';
 const clipboard=(reject=false)=>{const writeText=vi.fn(async(_text:string)=>{if(reject)throw Error('denied');});Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText}});return writeText;};
 
-test('two-item global navigation with workspace capabilities available from project cards',()=>{
- render(<App/>);expect(within(screen.getByRole('navigation',{name:'主要頁面'})).getAllByRole('button').map(b=>b.textContent)).toEqual(['專案總覽','Cost Guard']);
+test('global navigation adds the read-only development map; workspace capabilities stay on project cards',()=>{
+ render(<App/>);expect(within(screen.getByRole('navigation',{name:'主要頁面'})).getAllByRole('button').map(b=>b.textContent)).toEqual(['專案總覽','開發地圖','Cost Guard']);
  for(const name of ['PM Dashboard','SwipeRight','SaaS Cost Guard','ProSync','Micro-SaaS Command Center'])expect(screen.getByRole('article',{name:`${name} 示範專案`})).toHaveTextContent('進入工作區');
  workspace();expect(screen.getByRole('region',{name:'開發分支圖'})).toBeVisible();expect(screen.getByRole('button',{name:'返回專案總覽'})).toBeVisible();
 });
@@ -200,4 +200,240 @@ test('missing registered project ID blocks prompt state instead of using name or
 
 test('mode toggle explicitly selects DEMO even when the display name is unchanged',()=>{
  identityFixture([{id:'registered-pm',name:'PM Dashboard',repository:'owner/private-pm'}]);registered(1);node(/UI\/UX Development/);tab();input('PRIVATE');save();fireEvent.click(screen.getByRole('button',{name:'返回已登記專案'}));fireEvent.click(screen.getByRole('button',{name:'進入 DEMO'}));expect(screen.getByLabelText('目前專案')).toHaveValue('PM Dashboard');workspace('PM Dashboard');expect(screen.getByText('DEMO PROJECT')).toBeVisible();node(/UI\/UX Development/);tab();expect(screen.getByLabelText('你的指令')).toHaveValue('');tab('Prompt 紀錄');expect(screen.queryByRole('article',{name:'Prompt 1'})).not.toBeInTheDocument();registered(1);node(/UI\/UX Development/);tab('Prompt 紀錄');expect(screen.getByLabelText('Prompt 1 原文')).toHaveValue('PRIVATE');
+});
+
+// ---------------- Track B B1 · live read-only PM Dashboard development map ----------------
+import {formatSgt,liveRepositoryFor,stackParent,stackChildren,relatedPulls,indexCommits,isAncestor,mergeEvidence,buildTimeline,LANES} from './prototype/gitHistoryModel';
+import type {DevelopmentHistory,HistoryPull,HistoryCommit} from './prototype/gitHistoryTypes';
+import {LIVE_PM_DASHBOARD} from './prototype/data';
+
+const PM='augusliang23-web/pm-dashboard';
+// PR numbers, titles, refs and timestamps are copied from the read-only GitHub
+// snapshot of augusliang23-web/pm-dashboard at 2026-10-15T23:57:20Z. Commit
+// SHAs are short synthetic stand-ins so the DAG fixture stays small; they are
+// only used to exercise ancestry logic, never shown as real evidence.
+const pr=(number:number,title:string,status:HistoryPull['status'],createdAt:string,mergedAt:string|null,baseRef:string,headRef:string,headSha:string,mergeCommitSha:string|null=null):HistoryPull=>({number,title,url:`https://github.com/${PM}/pull/${number}`,author:'augusliang23-web',state:status==='open'||status==='draft'?'open':'closed',isDraft:status==='draft',merged:status==='merged',status,createdAt,updatedAt:mergedAt??createdAt,closedAt:mergedAt,mergedAt,baseRef,baseSha:null,headRef,headSha,headRepo:PM,mergeCommitSha});
+const c=(sha:string,parents:string[],date:string):HistoryCommit=>({sha,parents,message:`commit ${sha}`,authorDate:date,committerDate:date,author:'a',url:`https://github.com/${PM}/commit/${sha}`});
+function makeHistory(over:Partial<DevelopmentHistory>={}):DevelopmentHistory{
+ const pulls=[
+  pr(13,'Consolidate PROD/UAT source and bootstrap CI','merged','2026-09-24T01:26:19Z','2026-09-24T01:43:01Z','main','migration/consolidated-source-ci','h13','M13'),
+  pr(36,'release: prepare User Permissions Production promotion','open','2026-10-03T14:21:09Z',null,'main','claude/production-user-permissions-promotion','h36'),
+  pr(48,'feat: port One-Paste weekly update (PR #47) to Production Pages','merged','2026-10-10T00:14:12Z','2026-10-10T00:53:46Z','production-pages','claude/weekly-one-paste-production-pages','h48','pp1'),
+  pr(52,'feat: V2.3 historical data pipeline and PDF metrics preparation','draft','2026-10-14T05:57:01Z',null,'integration/v23-foundation','codex/v23-history-pipeline','h52'),
+  pr(53,'feat: V2.3 UAT-only Delivery Trends page + PDF section integration (draft)','draft','2026-10-14T07:22:32Z',null,'integration/v23-foundation','claude/v23-product-integration','p1'),
+  pr(54,'feat: unify UAT Draft Publish and preserve original Archive lifecycle','draft','2026-10-14T13:52:23Z',null,'main','codex/new-project-draft-publish','h54'),
+  pr(55,'feat: V2.3 Phase 2C browser reliability and UAT automation (stacked, draft)','draft','2026-10-14T14:39:09Z',null,'claude/v23-product-integration','claude/v23-browser-e2e-hardening','e1'),
+  pr(56,'feat: V2.3 Gate 2 integrated UAT review candidate','draft','2026-10-14T23:57:17Z',null,'integration/v23-foundation','integration/v23-e2e-candidate','h56'),
+  pr(57,'feat: V2.3 Gate 2 closeout (F-1, PR #55 import, week selection) — stacked draft','draft','2026-10-15T00:33:08Z',null,'integration/v23-e2e-candidate','claude/v23-gate2-closeout','h57'),
+  pr(58,'release(uat): PDF backend candidate — enable Delivery Performance on UAT only (draft)','draft','2026-10-15T05:42:11Z',null,'claude/v23-gate2-closeout','claude/v23-uat-backend-activation','h58'),
+  pr(59,'release(uat): frontend candidate — enable Delivery Performance PDF option on UAT only (draft)','draft','2026-10-15T05:42:13Z',null,'claude/v23-gate2-closeout','claude/v23-uat-frontend-activation','h59'),
+ ];
+ const commits=[c('m1',[],'2026-04-26T21:42:44Z'),c('h13',['m1'],'2026-09-24T01:20:00Z'),c('m2',['m1'],'2026-09-20T00:00:00Z'),c('M13',['m2','h13'],'2026-09-24T01:43:01Z'),c('m3',['M13'],'2026-10-14T05:13:33Z'),c('h48',['m2'],'2026-10-10T00:10:00Z'),c('pp1',['m2','h48'],'2026-10-10T00:53:46Z'),c('f1',['m3'],'2026-10-14T05:50:00Z'),c('p1',['f1'],'2026-10-14T07:20:00Z'),c('e1',['p1'],'2026-10-14T14:30:00Z'),c('orphan',['missing-parent'],'2026-10-14T15:00:00Z')];
+ const branches=[['main','m3'],['production-pages','pp1'],['integration/v23-foundation','f1'],['claude/v23-product-integration','p1'],['claude/v23-browser-e2e-hardening','e1'],['codex/stale-experiment','not-fetched']].map(([name,headSha])=>({name,headSha,protected:name==='main'}));
+ return {source:'GitHub',repository:PM,repositoryUrl:`https://github.com/${PM}`,defaultBranch:'main',startedAt:'2026-10-15T23:57:08.000Z',fetchedAt:'2026-10-15T23:57:20.883Z',status:'complete',cache:'miss',
+  coverage:{branches:{count:branches.length,pages:1,complete:true},pulls:{count:pulls.length,open:pulls.filter(p=>p.state==='open').length,draft:pulls.filter(p=>p.isDraft).length,merged:2,closedUnmerged:0,pages:1,complete:true},commits:{count:commits.length,defaultBranchCommits:4,defaultBranchComplete:true},focusRefs:{compared:4,requested:4,truncated:false},localWorktrees:'not_checked',deployments:'not_checked',ci:'not_checked'},
+  warnings:[],branches,pulls,commits,defaultBranchShas:['m3','M13','m2','m1'],refs:{},comparisons:[{base:'main',head:'production-pages',status:'diverged',aheadBy:2,behindBy:2,totalCommits:2,mergeBaseSha:'m2',commitShas:['pp1','h48'],complete:true,error:null}],...over};
+}
+const detailFor=(number:number,ci:'none'|'passing'|'not_checked')=>({source:'GitHub',repository:PM,number,fetchedAt:'2026-10-16T00:01:00.000Z',pull:{...makeHistory().pulls.find(p=>p.number===number)!,changedFiles:12,additions:889,deletions:8,commits:2},ci:{status:ci,total:ci==='passing'?5:ci==='none'?0:null,headSha:'e1'},reviews:{status:'no_reviews',count:0,complete:true}});
+type Pending={url:string;resolve:(body:unknown,status?:number)=>void};
+function mockFetch(){const pending:Pending[]=[];const spy=vi.spyOn(globalThis,'fetch').mockImplementation((input:RequestInfo|URL,init?:RequestInit)=>new Promise((resolveFetch,reject)=>{const url=String(input);init?.signal?.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')));pending.push({url,resolve:(body,status=200)=>resolveFetch(new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}}))});}));return {spy,pending};}
+const openLive=()=>nav('開發地圖');
+const flush=()=>act(async()=>{await Promise.resolve();await new Promise(r=>setTimeout(r,0));});
+
+test('B1 C: UTC timestamps convert to Asia/Singapore with the year always shown',()=>{
+ expect(formatSgt('2026-09-24T01:43:01Z')).toBe('2026-09-24 09:43 SGT');
+ expect(formatSgt('2026-10-14T23:57:17Z')).toBe('2026-10-15 07:57 SGT');
+ expect(formatSgt('2026-12-31T16:30:00Z')).toBe('2027-01-01 00:30 SGT');
+ expect(formatSgt('2026-10-06T08:46:12Z',false)).toBe('2026-10-06');
+ expect(formatSgt(null)).toBe('Not available');expect(formatSgt('garbage')).toBe('Not available');
+});
+
+test('B1 G: stacked V2.3 PRs link only through reported base/head refs',()=>{
+ const h=makeHistory();const get=(n:number)=>h.pulls.find(p=>p.number===n)!;
+ expect(stackParent(get(55),h.pulls)?.number).toBe(53);
+ expect(stackParent(get(57),h.pulls)?.number).toBe(56);
+ expect(stackParent(get(52),h.pulls)).toBeNull(); // integration/v23-foundation is a branch, not an open PR head
+ expect(stackParent(get(54),h.pulls)).toBeNull();
+ expect(stackChildren(get(57),h.pulls).map(p=>p.number)).toEqual([58,59]);
+ expect([...relatedPulls(get(57),h.pulls)].sort()).toEqual([56,57,58,59]);
+ expect(relatedPulls(get(54),h.pulls).has(55)).toBe(false);
+});
+
+test('B1 H/I: commit-parent ancestry is verified, and missing history stays UNKNOWN',()=>{
+ const h=makeHistory();const idx=indexCommits(h.commits);
+ expect(isAncestor(idx,'f1','e1')).toBe(true);
+ expect(isAncestor(idx,'e1','m3')).toBe(false);
+ expect(isAncestor(idx,'m1','orphan')).toBe('unknown');
+ expect(isAncestor(idx,'m1','not-fetched')).toBe('unknown');
+ expect(isAncestor(idx,null,'e1')).toBe('unknown');
+ const get=(n:number)=>h.pulls.find(p=>p.number===n)!;
+ expect(mergeEvidence(get(13),idx)).toBe('verified_merge_commit');
+ expect(mergeEvidence(get(48),idx)).toBe('verified_merge_commit');
+ expect(mergeEvidence({...get(13),mergeCommitSha:'m3'},idx)).toBe('single_parent_commit');
+ expect(mergeEvidence({...get(13),mergeCommitSha:'gone'},idx)).toBe('unknown');
+ expect(mergeEvidence(get(55),idx)).toBe('not_merged');
+});
+
+test('B1 J/K: only an explicit REGISTERED identity with the exact repository is live',()=>{
+ expect(liveRepositoryFor(LIVE_PM_DASHBOARD)).toBe(PM);
+ expect(liveRepositoryFor({...LIVE_PM_DASHBOARD,source:'DEMO'})).toBeNull();
+ expect(liveRepositoryFor({...LIVE_PM_DASHBOARD,projectId:undefined})).toBeNull();
+ expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',repository:'augusliang23-web/pm-dashboard-uat',displayName:'PM Dashboard'})).toBeNull();
+ expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',displayName:'PM Dashboard'})).toBeNull();
+ expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',repository:'github.com/augusliang23-web/pm-dashboard',displayName:'Any'})).toBe(PM);
+});
+
+test('B1 F/T: timeline range is anchored to the verified fetch time and open PRs end at Last checked',()=>{
+ const h=makeHistory();const all=new Set(LANES.map(l=>l.id));
+ const six=buildTimeline(h,{range:'6m',state:'all',lanes:all,collapsed:new Set(),pxPerDay:10});
+ expect(six.items.map(i=>i.pr.number)).toContain(13);
+ const later=makeHistory({fetchedAt:'2026-12-01T00:00:00.000Z'});
+ const one=buildTimeline(later,{range:'1m',state:'all',lanes:all,collapsed:new Set(),pxPerDay:10});
+ expect(one.items.map(i=>i.pr.number)).not.toContain(13);
+ expect(one.items.find(i=>i.pr.number===55)!.endIso).toBe(later.fetchedAt); // still OPEN at Last checked
+ const merged=buildTimeline(h,{range:'all',state:'merged',lanes:all,collapsed:new Set(),pxPerDay:10});
+ expect(merged.items.map(i=>i.pr.number).sort()).toEqual([13,48]);
+ const collapsed=buildTimeline(h,{range:'all',state:'all',lanes:all,collapsed:new Set(['v23-feature']),pxPerDay:10});
+ expect(collapsed.items.some(i=>i.lane==='v23-feature')).toBe(false);
+ expect(collapsed.lanes.find(l=>l.id==='v23-feature')!.count).toBeGreaterThan(0);
+});
+
+test('B1: live view reads only the allowlisted repo and shows provenance, counts and Not checked boundaries',async()=>{
+ const {spy,pending}=mockFetch();render(<App/>);openLive();
+ expect(screen.getByText('REGISTERED · LIVE GITHUB READ-ONLY')).toBeVisible();
+ expect(pending).toHaveLength(1);expect(pending[0].url).toBe(`/api/github/development-history?repo=${encodeURIComponent(PM)}`);
+ expect(screen.getByRole('status')).toHaveTextContent('正在從 GitHub 讀取');
+ pending[0].resolve(makeHistory());await flush();
+ const prov=screen.getByLabelText('資料來源');
+ expect(prov).toHaveTextContent('GitHub');expect(prov).toHaveTextContent(PM);expect(prov).toHaveTextContent('2026-10-16 07:57 SGT');expect(prov).toHaveTextContent('Complete');
+ const summary=screen.getByLabelText('Repository 摘要');
+ expect(summary).toHaveTextContent('遠端分支（GitHub）6');expect(summary).toHaveTextContent('OPEN 9（DRAFT 8）');
+ expect(within(summary).getAllByText('Not checked')).toHaveLength(2);expect(summary).toHaveTextContent('MERGED ≠ DEPLOYED');
+ expect(spy.mock.calls.every(([u])=>String(u).startsWith('/api/github/development-history'))).toBe(true);
+ for(const fake of ['PR #18','PR #22','PR #25','237 commits','3 Worktrees','Deployed'])expect(document.body.textContent).not.toContain(fake);
+});
+
+test('B1 G/R: selecting a stacked PR shows metadata, verified ancestry and CI only after it is fetched',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();pending[0].resolve(makeHistory());await flush();
+ fireEvent.click(screen.getByRole('button',{name:/^PR #55 ·/}));
+ const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('claude/v23-browser-e2e-hardening');expect(panel).toHaveTextContent('claude/v23-product-integration');
+ expect(panel).toHaveTextContent('base = PR #53 的 head');expect(panel).toHaveTextContent('Not merged');expect(panel).toHaveTextContent('2026-10-14 22:39 SGT');
+ expect(panel).toHaveTextContent('已驗證：claude/v23-product-integration 目前 head p1 是 PR head 的祖先');
+ expect(panel).toHaveTextContent('CINot checked（讀取中…）');
+ const detail=pending.find(p=>p.url.includes('/development-history/pull'))!;expect(detail.url).toContain('number=55');
+ detail.resolve(detailFor(55,'passing'));await flush();
+ expect(panel).toHaveTextContent('CI passed（5 個 check run）');expect(panel).toHaveTextContent('沒有已送出的 review');
+ expect(screen.getByRole('button',{name:/^PR #53 ·/})).toHaveClass('is-related');expect(screen.getByRole('button',{name:/^PR #54 ·/})).toHaveClass('is-dim');
+ expect(screen.getByLabelText(/PR #55 回報的 base：claude\/v23-product-integration（PR #53 的 head）/)).toHaveAttribute('data-kind','reported-base');
+ fireEvent.click(screen.getByRole('button',{name:/^PR #56 ·/}));
+ pending.filter(p=>p.url.includes('number=56')).forEach(p=>p.resolve(detailFor(56,'none')));await flush();
+ expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).toHaveTextContent('No CI checks');
+ expect(screen.getByRole('complementary',{name:'PR 詳細資訊'})).not.toHaveTextContent('CI passed');
+});
+
+test('B1 E/H: merged PR detail uses merged_at and draws a solid edge only for a verified merge commit',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();pending[0].resolve(makeHistory());await flush();
+ expect(screen.getByLabelText(/PR #13 合併到 main：已驗證/)).toHaveAttribute('data-kind','verified-merge');
+ fireEvent.click(screen.getByRole('button',{name:/^PR #13 ·/}));
+ const panel=screen.getByRole('complementary',{name:'PR 詳細資訊'});
+ expect(panel).toHaveTextContent('2026-09-24 09:26 SGT');expect(panel).toHaveTextContent('合併（merged_at）2026-09-24 09:43 SGT');
+ expect(panel).toHaveTextContent('已驗證：merge commit 的 parent 包含 PR head');
+ expect(panel).toHaveTextContent('（上次檢查時不在遠端分支清單；不推測是否曾刪除）');
+ cleanup();vi.restoreAllMocks();
+ const second=mockFetch();render(<App/>);openLive();
+ second.pending[0].resolve(makeHistory({commits:makeHistory().commits.filter(x=>x.sha!=='M13')}));await flush();
+ expect(screen.getByLabelText(/PR #13 合併到 main：UNKNOWN/)).toHaveAttribute('data-kind','pr-record');
+});
+
+test('B1 M/N: GitHub auth and rate-limit failures show Unavailable without DEMO substitution',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();
+ pending[0].resolve({error:'GitHub CLI is not authenticated.',kind:'not_authenticated',status:'unavailable'},401);await flush();
+ expect(screen.getByRole('alert')).toHaveTextContent('GitHub CLI 尚未授權');expect(screen.getByLabelText('資料來源')).toHaveTextContent('Unavailable');
+ expect(screen.queryAllByRole('button',{name:/^PR #/})).toHaveLength(0);expect(screen.queryByText(/DEMO DATA/)).not.toBeInTheDocument();
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));
+ expect(pending[1].url).toContain('refresh=1');
+ pending[1].resolve({error:'rate',kind:'rate_limited',resetAt:'2026-10-16T01:00:00.000Z',status:'unavailable'},429);await flush();
+ expect(screen.getByRole('alert')).toHaveTextContent('速率限制');expect(screen.getByRole('alert')).toHaveTextContent('2026-10-16 09:00 SGT');
+});
+
+test('B1 T: partial history and a failed refresh are labeled, never shown as complete',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();
+ pending[0].resolve(makeHistory({status:'partial',warnings:['main history truncated after 1000 commits.']}));await flush();
+ expect(screen.getByLabelText('資料來源')).toHaveTextContent('Partial history');expect(screen.getByText(/main history truncated/)).toBeVisible();
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));pending[1].resolve({error:'slow',kind:'timeout'},504);await flush();
+ expect(screen.getByLabelText('資料來源')).toHaveTextContent('Needs refresh');expect(screen.getByRole('alert')).toHaveTextContent('上一次成功讀取的資料');
+ expect(screen.getAllByRole('button',{name:/^PR #/}).length).toBeGreaterThan(0);
+});
+
+test('B1 J/Q: switching projects cancels the request and a late PM response never lands in DEMO',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();
+ fireEvent.click(within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getAllByRole('button',{name:/PM Dashboard/})[1]);
+ expect(screen.getByLabelText('開發地圖不可用')).toHaveTextContent('DEMO PROJECT');
+ pending[0].resolve(makeHistory());await flush();
+ expect(screen.queryAllByRole('button',{name:/^PR #/})).toHaveLength(0);expect(document.body.textContent).not.toContain('claude/v23-browser-e2e-hardening');
+ expect(pending).toHaveLength(1); // DEMO identity issues no GitHub read
+ fireEvent.click(within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getByRole('button',{name:/SwipeRight/}));
+ expect(screen.getByLabelText('開發地圖不可用')).toHaveTextContent('SwipeRight');
+});
+
+test('B1 Q: refresh is single-flight and an older response resolving late never replaces newer data',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();pending[0].resolve(makeHistory());await flush();
+ const refresh=screen.getByRole('button',{name:'重新整理 GitHub 資料'});
+ fireEvent.click(refresh);expect(pending[1].url).toContain('refresh=1');
+ expect(refresh).toBeDisabled();fireEvent.click(refresh);expect(pending).toHaveLength(2);
+ const rail=()=>within(screen.getByRole('navigation',{name:'專案（開發地圖）'}));
+ fireEvent.click(rail().getByRole('button',{name:/SwipeRight/}));fireEvent.click(rail().getByRole('button',{name:/LIVE/}));
+ const older=pending[1];const newer=pending[2];
+ newer.resolve(makeHistory({fetchedAt:'2026-10-16T02:00:00.000Z'}));await flush();
+ older.resolve(makeHistory({fetchedAt:'2026-10-16T01:00:00.000Z'}));await flush();
+ expect(screen.getByLabelText('資料來源')).toHaveTextContent('2026-10-16 10:00 SGT');
+ fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));pending[3].resolve(makeHistory({repository:'someone/else'}));await flush();
+ expect(screen.getByRole('alert')).toHaveTextContent('GitHub 讀取失敗');expect(screen.getByLabelText('資料來源')).toHaveTextContent('Needs refresh');
+});
+
+test('B1 S/U/V: no local worktree claim, no deployment claim, no AI or agent controls in the live view',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();pending[0].resolve(makeHistory());await flush();
+ expect(screen.getByLabelText('Repository 摘要')).toHaveTextContent('本機 WorktreeNot checked');
+ expect(screen.queryByRole('textbox',{name:/指令|Prompt/})).not.toBeInTheDocument();
+ expect(screen.queryByRole('tab',{name:/AI 指令|Prompt/})).not.toBeInTheDocument();
+ for(const b of screen.getAllByRole('button'))expect(b.textContent).not.toMatch(/執行|Execute|Generate|Dispatch|AI Command|\bMerge\b|Approve|\bDeploy\b/i);
+ expect(document.body.textContent).not.toMatch(/\/Users\/|worktrees\//);
+});
+
+test('B1: Git topology draws only verified parent edges and reports heads outside the fetched DAG',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();pending[0].resolve(makeHistory());await flush();
+ fireEvent.click(screen.getByRole('tab',{name:/Git 拓樸/}));
+ const graph=screen.getByRole('region',{name:'Git 拓樸圖'});
+ expect(within(graph).getByLabelText('已驗證 parent：h13 → M13')).toHaveAttribute('data-kind','verified-parent');
+ expect(within(graph).getByLabelText(/orphan 的 parent missing 不在目前視窗/)).toHaveAttribute('data-kind','outside-window');
+ expect(graph).toHaveTextContent('1 個 branch head 不在已取得的 commit 圖中 → ancestry UNKNOWN');
+ fireEvent.click(within(graph).getByRole('button',{name:/^commit M13 ·/}));
+ const panel=screen.getByRole('complementary',{name:'Commit 詳細資訊'});
+ expect(panel).toHaveTextContent('#13（merge commit）');expect(panel).toHaveTextContent('2026-09-24 09:43 SGT');expect(panel).toHaveTextContent(`在已取得的 main 歷史中`);
+ fireEvent.click(screen.getByRole('tab',{name:/清單/}));
+ expect(screen.getByRole('region',{name:'可捲動 PR 清單'})).toHaveAttribute('tabindex','0');
+ expect(screen.getByRole('button',{name:/^PR #55 ·/})).toBeVisible();
+});
+
+test('B1: graph is keyboard reachable, scrollable regions are focusable and filters narrow the view',async()=>{
+ const {pending}=mockFetch();render(<App/>);openLive();pending[0].resolve(makeHistory());await flush();
+ expect(screen.getByRole('region',{name:/可捲動的開發時間軸/})).toHaveAttribute('tabindex','0');
+ const card=screen.getByRole('button',{name:/^PR #57 ·/});card.focus();expect(card).toHaveFocus();
+ fireEvent.change(screen.getByLabelText('PR 狀態篩選'),{target:{value:'merged'}});
+ expect(screen.queryByRole('button',{name:/^PR #57 ·/})).not.toBeInTheDocument();expect(screen.getByRole('button',{name:/^PR #13 ·/})).toBeVisible();
+ fireEvent.change(screen.getByLabelText('PR 狀態篩選'),{target:{value:'all'}});
+ fireEvent.click(within(screen.getByRole('group',{name:'分支群組篩選'})).getByRole('button',{name:/V2.3 feature/}));
+ expect(screen.queryByRole('button',{name:/^PR #55 ·/})).not.toBeInTheDocument();
+ fireEvent.click(screen.getByRole('button',{name:/^PR #56 ·/}));fireEvent.keyDown(window,{key:'Escape'});
+ expect(screen.queryByRole('complementary',{name:'PR 詳細資訊'})).not.toBeInTheDocument();
+});
+
+test('B1: the DEMO PM Dashboard card offers the live map explicitly without upgrading the DEMO workspace',async()=>{
+ const {pending}=mockFetch();render(<App/>);
+ fireEvent.click(within(screen.getByRole('article',{name:'PM Dashboard 示範專案'})).getByRole('button',{name:/真實 GitHub 開發地圖/}));
+ expect(screen.getByText('REGISTERED · LIVE GITHUB READ-ONLY')).toBeVisible();expect(pending[0].url).toContain(encodeURIComponent(PM));
+ cleanup();render(<App/>);
+ expect(within(screen.getByRole('article',{name:'SwipeRight 示範專案'})).queryByRole('button',{name:/LIVE|真實 GitHub/})).toBeNull();
+ workspace('PM Dashboard');expect(screen.getByText('DEMO PROJECT')).toBeVisible();expect(screen.queryByText('REGISTERED · LIVE GITHUB READ-ONLY')).toBeNull();
 });

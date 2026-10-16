@@ -1,19 +1,21 @@
 import {ReactNode,useState,useCallback,useLayoutEffect,useRef} from 'react';
-import {LayoutGrid,Wallet,Terminal,FlaskConical,ArrowLeft,Plus} from 'lucide-react';
-import {PROJECTS,Page,tasksFor,DemoTask} from './data';
+import {LayoutGrid,Wallet,Terminal,FlaskConical,ArrowLeft,Plus,Network} from 'lucide-react';
+import {PROJECTS,Page,tasksFor,DemoTask,LIVE_PM_DASHBOARD} from './data';
+import {GitDevelopmentMap,RailEntry} from './GitDevelopmentMap';
 import {Overview} from './Overview';
 import {DevelopmentMap} from './DevelopmentMap';
 import {CostGuard} from './CostGuard';
 import {NodeCommandPanel,PromptDraft,emptyDraft,promptBytes,MAX_PROMPT_BYTES} from './NodeCommandPanel';
 import {PromptEntry} from './PromptHistory';
 import './prototype.css';
-const PAGES=[{id:'overview',label:'專案總覽',icon:LayoutGrid},{id:'cost',label:'Cost Guard',icon:Wallet}] as const;
+const PAGES=[{id:'overview',label:'專案總覽',icon:LayoutGrid},{id:'history',label:'開發地圖',icon:Network},{id:'cost',label:'Cost Guard',icon:Wallet}] as const;
 type RegisteredContext={id?:string;name:string;repository?:string};
 type WorkspaceIdentity={source:'REGISTERED'|'DEMO';projectId?:string;repository?:string;displayName:string};
 const DEMO_IDS:Record<string,string>={'PM Dashboard':'demo-pm','SwipeRight':'demo-swipe','SaaS Cost Guard':'demo-cost','ProSync':'demo-prosync','Micro-SaaS Command Center':'demo-command-center'};
 const demoIdentity=(name:string):WorkspaceIdentity=>({source:'DEMO',projectId:Object.prototype.hasOwnProperty.call(DEMO_IDS,name)?DEMO_IDS[name]:undefined,displayName:name,repository:name==='Micro-SaaS Command Center'?'augusliang23-web/Micro-SaaS-Command-Center':undefined});
 const workspaceKey=(identity:WorkspaceIdentity)=>JSON.stringify([identity.source,identity.projectId??null,identity.repository??null]);
 const registeredIdentity=(context:RegisteredContext):WorkspaceIdentity=>({source:'REGISTERED',projectId:context.id?.trim()?context.id:undefined,repository:context.repository?.trim()||undefined,displayName:context.name});
+const RAIL:RailEntry[]=[{identity:LIVE_PM_DASHBOARD,label:'PM Dashboard',tag:'LIVE · GitHub 唯讀'},...PROJECTS.map(p=>({identity:demoIdentity(p.name),label:p.name,tag:'DEMO · 未連線'}))];
 export function PrototypeShell({registeredOverview}:{registeredOverview:(remember:(context:RegisteredContext)=>void)=>ReactNode}) {
   const [demo,setDemo]=useState(()=>new URLSearchParams(window.location.search).get('mode')==='demo');
   const [page,setPage]=useState<Page>('overview');const [identity,setIdentity]=useState<WorkspaceIdentity>(()=>demoIdentity('Micro-SaaS Command Center'));
@@ -37,6 +39,7 @@ export function PrototypeShell({registeredOverview}:{registeredOverview:(remembe
   const rememberRegistered=useCallback((context:RegisteredContext)=>{setRegistered(context);setIdentity(registeredIdentity(context));setTaskId('');setAdding(false);setOpenCommand(false);setNewTitle('');setNewRequirement('');},[]);
   const chooseProject=(name:string)=>switchIdentity(demoIdentity(name));
   const navigate=(destination:Page,name=project)=>{chooseProject(name);setPage(destination);setDemo(true);};
+  const openHistory=()=>{switchIdentity(LIVE_PM_DASHBOARD);setPage('history');};
   const enterRegistered=()=>{if(!registered)return;switchIdentity(registeredIdentity(registered));setPage('workspace');setDemo(true);};
   const select=(id:string)=>{setTaskId(id);setOpenCommand(false);};
   const titleInvalid=!newTitle.trim()||newTitle.length>80;const requirementInvalid=!newRequirement.trim()||promptBytes(newRequirement)>MAX_PROMPT_BYTES;
@@ -51,13 +54,17 @@ export function PrototypeShell({registeredOverview}:{registeredOverview:(remembe
   const panel=identityKnown&&task?<NodeCommandPanel key={key} workspaceSource={identity.source} workspaceId={identity.projectId!} project={project} repository={repository} task={task} tasks={tasks} draft={drafts[key]??emptyDraft()} change={d=>setDrafts(prev=>({...prev,[key]:d}))} entries={histories[key]??[]} save={entry=>{const saved={...entry,id:++sequence.current};setHistories(h=>({...h,[key]:[...(h[key]??[]),saved]}));}} initialTab={openCommand?'AI 指令':'任務資訊'}/>:null;
   return <div className="prototype-shell">
     <header className="p-header"><div className="p-brand"><span><Terminal size={20}/></span><div><strong>COMMAND CENTER</strong><small>Micro-SaaS workspace</small></div></div>
-      <nav aria-label="主要頁面">{PAGES.map(p=><button key={p.id} aria-current={page===p.id||(p.id==='overview'&&page==='workspace')?'page':undefined} onClick={()=>{if(demo||p.id==='cost')navigate(p.id);else setPage('overview');}}><p.icon size={16}/>{p.label}</button>)}</nav>
-      <button className="p-mode" onClick={()=>{if(!demo)chooseProject(project);clearSelection();setNewTitle('');setNewRequirement('');setDemo(!demo);setPage('overview');}}><FlaskConical size={15}/>{demo?'返回已登記專案':'進入 DEMO'}</button>
+      <nav aria-label="主要頁面">{PAGES.map(p=><button key={p.id} aria-current={page===p.id||(p.id==='overview'&&page==='workspace')?'page':undefined} onClick={()=>{if(p.id==='history')openHistory();else if(demo||p.id==='cost')navigate(p.id);else setPage('overview');}}><p.icon size={16}/>{p.label}</button>)}</nav>
+      <button className="p-mode" onClick={()=>{if(page==='history'){chooseProject(PROJECTS[0].name);setDemo(true);setPage('overview');clearSelection();return;}if(!demo)chooseProject(project);clearSelection();setNewTitle('');setNewRequirement('');setDemo(!demo);setPage('overview');}}><FlaskConical size={15}/>{page==='history'?'進入 DEMO':demo?'返回已登記專案':'進入 DEMO'}</button>
     </header>
-    {demo?<>
+    {page==='history'?<>
+      <div className="p-live-bar"><span><strong>LIVE · GitHub 唯讀</strong> 資料直接讀自 GitHub；沒有 AI 對話、Prompt 或 agent 執行。</span></div>
+      <main className="p-main g-main"><GitDevelopmentMap identity={identity} rail={RAIL} selectIdentity={switchIdentity}/></main>
+      <footer className="p-footer"><span>GitHub 遠端分支 ≠ 本機 worktree ≠ 部署環境。</span><span>REAL_AGENT_EXECUTION = NOT_AUTHORIZED</span></footer>
+    </>:demo?<>
       <div className="p-demo-bar"><span><FlaskConical size={15}/><strong>DEMO DATA</strong> 本地原型／有界快照 · 無 AI 執行或帳單連線</span><label htmlFor="p-project">目前專案<select aria-label="目前專案" id="p-project" value={identity.source==='REGISTERED'?'registered-current':project} onChange={e=>chooseProject(e.target.value)}>{identity.source==='REGISTERED'&&<option value="registered-current" disabled>{project}（REGISTERED）</option>}{PROJECTS.map(p=><option key={p.name}>{p.name}</option>)}</select></label></div>
       <main className="p-main">
-        {page==='overview'&&<Overview selected={project} navigate={navigate}/>}
+        {page==='overview'&&<Overview selected={project} navigate={navigate} openLiveHistory={openHistory}/>}
         {page==='cost'&&<CostGuard project={project} select={chooseProject}/>}
         {page==='workspace'&&<>
           <div className="p-workspace-heading"><button className="p-secondary" onClick={()=>navigate('overview')}><ArrowLeft size={14}/>返回專案總覽</button><h1>{project} 工作區</h1><button className="p-primary" disabled={!identityKnown} onClick={()=>setAdding(!adding)}><Plus size={15}/>+ 新增開發任務</button></div>
