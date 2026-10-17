@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai'; // loading the SDK constructs nothing; a client is only built by the opt-in provider bridge
-import { apiNotFound, createRequestPolicy, methodGate, parseTrustedOrigin, resolveCapabilities } from './server/v1RequestPolicy.mjs';
+import { apiNotFound, createDevAssetGuard, createRequestPolicy, methodGate, parseTrustedOrigin, resolveCapabilities } from './server/v1RequestPolicy.mjs';
 import { createV1ReadOnlyRouter } from './server/v1ReadOnlyRoutes.mjs';
 import { createGithubRouter } from './server/githubRoutes.mjs';
 
@@ -542,12 +542,25 @@ async function startServer() {
   app.use('/api', apiNotFound);
 
   if (process.env.NODE_ENV !== 'production') {
+    // Everything that is not exactly NODE_ENV=production (including an unset or mistyped value) takes this development path, so the
+    // development surface is held to the same V1 boundary as production:
+    //  - R3: HMR and Vite's WebSocket server are OFF. In middleware mode Vite would otherwise open a SECOND http server for HMR (port
+    //    24678, all interfaces) that bypasses the Host/Origin policy above. Trade-off: no hot reload, reload the page after an edit.
+    //    The file watcher stays on so a reload serves fresh modules.
+    //  - R2: Vite serves the whole project root by default (business files, /@fs, raw modules, the @ alias, editor launchers). The
+    //    guard below is an allowlist that runs BEFORE Vite; `fs` is defence in depth for anything that ever reaches Vite.
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        ws: false,
+        fs: { strict: true, deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.bridge/**', '**/*.local.json', '**/data/tasks/**'] },
+      },
       appType: 'spa',
       // V1 never reads .env files, not even through Vite (the V1 app reads no Vite env variables); legacy keeps Vite's default.
       ...(CAPABILITIES.size === 0 ? { envDir: false as const } : {}),
     });
+    app.use(createDevAssetGuard({ trustedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN, root: process.cwd() }));
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');

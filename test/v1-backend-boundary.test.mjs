@@ -69,7 +69,18 @@ cp.execFile = function (cmd, args, opts, cb) {
   if (cb) setImmediate(() => cb(err, '', String(err.message)));
   return { kill() {}, on() {} };
 };
-for (const name of ['spawn', 'exec', 'fork']) cp[name] = function (cmd, args) { throw refuse(name, cmd, args); };
+for (const name of ['exec', 'fork']) cp[name] = function (cmd, args) { throw refuse(name, cmd, args); };
+// The ONLY process allowed through: Vite's own esbuild service (it transforms TypeScript in development). Matched by the exact
+// installed-binary path shape AND the service argument, and recorded as a separate `tool` event, never as a refused `spawn`.
+const realSpawn = cp.spawn;
+const ESBUILD_BINARY = /[\\/]node_modules[\\/]@esbuild[\\/][a-z0-9-]+[\\/]bin[\\/]esbuild$/;
+cp.spawn = function (cmd, args, ...rest) {
+  if (typeof cmd === 'string' && ESBUILD_BINARY.test(cmd) && Array.isArray(args) && typeof args[0] === 'string' && /^--service=/.test(args[0])) {
+    record({ kind: 'tool', tool: 'esbuild-service' });
+    return realSpawn.call(this, cmd, args, ...rest);
+  }
+  throw refuse('spawn', cmd, args);
+};
 for (const name of ['execFileSync', 'execSync', 'spawnSync']) cp[name] = function (cmd, args) { throw refuse(name, cmd, args); };
 void origExecFile;
 
@@ -96,6 +107,24 @@ for (const n of ['readFileSync', 'readdirSync', 'existsSync', 'statSync', 'lstat
 for (const n of ['mkdirSync', 'writeFileSync', 'appendFileSync', 'renameSync', 'rmSync', 'unlinkSync', 'copyFileSync', 'rmdirSync']) wrap(n, 'write');
 const realOpen = fs.openSync;
 fs.openSync = function (p, flags, ...rest) { const r = typeof p === 'string' ? rel(p) : null; if (r !== null) record({ kind: 'fs', op: 'openSync', access: /[wa+]/.test(String(flags ?? 'r')) ? 'write' : 'read', path: r }); return realOpen.call(this, p, flags, ...rest); };
+
+// ---- what the child actually received, and every socket it tries to bind ----
+// `hasNodeEnv:false` is the genuine "NODE_ENV absent" evidence (the key is not in the child's process.env at all).
+record({ kind: 'env', hasNodeEnv: Object.prototype.hasOwnProperty.call(process.env, 'NODE_ENV'), nodeEnv: Object.prototype.hasOwnProperty.call(process.env, 'NODE_ENV') ? process.env.NODE_ENV : null });
+const net = require('node:net');
+const realListen = net.Server.prototype.listen;
+// Every bind attempt is recorded. A bind that does not name an explicit loopback host (no host = all interfaces, 0.0.0.0, ::) is
+// REFUSED here (never performed), so no test can ever open an exposed listener on the machine running the suite.
+net.Server.prototype.listen = function (...a) {
+  const args = a.filter((x) => typeof x !== 'function');
+  const first = args[0];
+  const host = first !== null && typeof first === 'object' ? first.host : args.find((x, i) => i > 0 && typeof x === 'string');
+  const isPath = typeof first === 'string' && /^[^\d]/.test(first) && args.length === 1;
+  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  record({ kind: 'listen', args, refused: !loopback && !isPath });
+  if (!loopback && !isPath) return this;
+  return realListen.apply(this, a);
+};
 }
 const SPY_SOURCE = `(${spyMain.toString()})();`;
 
@@ -151,14 +180,31 @@ function freePort() {
   return new Promise((resolve, reject) => { const probe = net.createServer(); probe.once('error', reject); probe.listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); }); });
 }
 
+// The two protected provider routes (AGENTS.md / CLAUDE.md) must never receive a request from any test, not even a refused one.
+// This tripwire is a pure predicate used by the harness: a request whose path (decoded, any case) names them is rejected BEFORE a
+// socket is opened. Tests verify these routes statically (section J) and never name them as a request target.
+const PROTECTED_ROUTE = /\/api\/bridge\/(chatgpt-advice|extract-features)/i;
+function isProtectedRoutePath(target) {
+  let decoded = String(target);
+  for (let i = 0; i < 3; i += 1) { try { const next = decodeURIComponent(decoded); if (next === decoded) break; decoded = next; } catch { break; } }
+  return PROTECTED_ROUTE.test(String(target)) || PROTECTED_ROUTE.test(decoded);
+}
+function refuseProtectedRoute(target) {
+  if (isProtectedRoutePath(target)) throw new Error('PROTECTED_ROUTE_REQUEST_REFUSED: tests must not send requests to the protected provider routes');
+}
+
+// R4: `nodeEnv` is decided by KEY PRESENCE. `startServer({ nodeEnv: undefined })` means NODE_ENV is genuinely absent from the child's
+// environment (a default parameter would silently turn `undefined` into 'production'); omitting the key means 'production'.
 /** Starts the bundle in `cwd`; resolves once it reports readiness, or reports an early exit. */
-async function startServer({ cwd, env = {}, nodeEnv = 'production', port } = {}) {
+async function startServer(options = {}) {
+  const { cwd, env = {}, port } = options;
+  const nodeEnv = 'nodeEnv' in options ? options.nodeEnv : 'production';
   const p = port ?? await freePort();
   const logFile = path.join(cwd, '..', `spy-${path.basename(cwd)}.log`);
   fs.writeFileSync(logFile, '');
   const child = spawn(process.execPath, ['--require', spyFile, bundle], {
     cwd,
-    env: { PATH: process.env.PATH, NODE_PATH: path.join(REPO_ROOT, 'node_modules'), PORT: String(p), SPY_LOG: logFile, SPY_FAKE_GH: '1', ...FAKE_KEYS, ...(nodeEnv ? { NODE_ENV: nodeEnv } : {}), ...env },
+    env: { PATH: process.env.PATH, NODE_PATH: path.join(REPO_ROOT, 'node_modules'), PORT: String(p), SPY_LOG: logFile, SPY_FAKE_GH: '1', ...FAKE_KEYS, ...(nodeEnv !== undefined ? { NODE_ENV: nodeEnv } : {}), ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   children.add(child);
@@ -172,6 +218,7 @@ async function startServer({ cwd, env = {}, nodeEnv = 'production', port } = {})
     spy: () => fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)),
     stop: () => new Promise((resolve) => { if (child.exitCode !== null) return resolve(); child.once('exit', () => resolve()); child.kill('SIGTERM'); }),
     request: (method, pathname, { headers = {}, body } = {}) => new Promise((resolve, reject) => {
+      refuseProtectedRoute(pathname);
       const req = http.request({ host: '127.0.0.1', port: p, method, path: pathname, agent: false, headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...headers } }, (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -181,7 +228,19 @@ async function startServer({ cwd, env = {}, nodeEnv = 'production', port } = {})
       if (body) req.write(typeof body === 'string' ? body : JSON.stringify(body));
       req.end();
     }),
+    /** Sends exactly `text` on a raw loopback socket (WebSocket upgrade probes, absolute-form targets) and resolves with the bytes received. */
+    raw: (text) => new Promise((resolve) => {
+      refuseProtectedRoute(text);
+      const s = net.connect(p, '127.0.0.1', () => s.write(text));
+      let d = '';
+      const done = () => resolve(d);
+      s.setTimeout(3000, () => s.destroy());
+      s.on('data', (c) => { d += c; });
+      s.on('close', done);
+      s.on('error', done);
+    }),
   };
+
   const deadline = Date.now() + 20_000;
   for (;;) {
     if (child.exitCode !== null) { server.earlyExit = child.exitCode; return server; }
@@ -257,7 +316,9 @@ describe('B. the V1 API surface is exactly four GET routes', () => {
         }
       }
       // legacy routes: not mounted. Reads are 404 (API JSON), everything else is refused by the method policy.
-      const legacy = ['/api/tasks', `/api/tasks/${TASK_ID}`, '/api/bridge/codex-handoffs', '/api/bridge/summarize-changes', '/api/bridge/chatgpt-advice', '/api/bridge/extract-features',
+      // The two protected provider routes are deliberately absent from this list: they are verified STATICALLY (see section J)
+      // and the harness refuses to send any request to them. Unrelated synthetic paths below exercise the generic method policy.
+      const legacy = ['/api/tasks', `/api/tasks/${TASK_ID}`, '/api/bridge/codex-handoffs', '/api/bridge/summarize-changes', '/api/bridge/synthetic-unmounted-post-route',
         '/api/local-git/status?path=/tmp', '/api/local-git/find?repo=me/demo', '/api/github/repos', '/api/github/pull-status?repo=me/demo&number=1', '/api/github/changed-files?repo=me/demo&number=1', '/api/github/recent-commits?repo=me/demo', '/api/unknown', '/api/', '/api'];
       for (const route of legacy) {
         const get = await server.request('GET', route);
@@ -310,7 +371,7 @@ describe('C/D/E. provider, agent and local Git capabilities are unreachable in V
         assert.deepEqual(processesIn(spy), [], 'agent dispatch and git execution counts are zero');
         assert.deepEqual(readsOf(spy, SENSITIVE_READ), [], 'neither .env, the registry nor the allowlist is read');
         assert.deepEqual(businessWritesIn(spy), [], 'only the development tool cache may be written, and only in development');
-        if (nodeEnv !== 'development') assert.deepEqual(writesIn(spy), []);
+        if (nodeEnv === 'production') assert.deepEqual(writesIn(spy), []);
         const health = (await server.request('GET', '/api/health')).json;
         assert.equal(health.status, 'ok');
         assert.equal('hasGeminiKey' in health || 'hasOpenAIKey' in health, false, 'V1 health does not even reveal whether provider keys exist');
@@ -478,4 +539,327 @@ describe('production and development have the same V1 capability boundary', () =
     }
     assert.doesNotMatch(src, /^import 'dotenv\/config';/m, 'secrets are not loaded at module import');
   });
+});
+
+// =====================================================================================================================
+// Issue #49 (R1-R4). Same rules as above: disposable child processes, synthetic fixtures, no provider, no agent, no real data,
+// and NO request is ever sent to the two protected provider routes (the harness refuses them; section J checks them statically).
+// =====================================================================================================================
+
+// A synthetic frontend: a real Vite dev server needs an index.html and a module. Everything here is invented for the test.
+const MARK = { registry: 'SYNTH-MARK-REGISTRY-7c1', task: 'SYNTH-MARK-TASK-7c1', state: 'SYNTH-MARK-STATE-7c1', business: 'SYNTH-MARK-BUSINESS-7c1', bridge: 'SYNTH-MARK-BRIDGE-7c1', env: 'SYNTH-MARK-ENV-7c1', noext: 'SYNTH-MARK-NOEXT-7c1', config: 'SYNTH-MARK-CONFIG-7c1', outside: 'SYNTH-MARK-OUTSIDE-7c1' };
+const DEV_HTML_MARK = 'SYNTHETIC DEV FRONTEND';
+const DEV_JS_MARK = 'SYNTHETIC-FRONTEND-MODULE';
+const SECRET_FILES = [
+  ['projects.local.json', MARK.registry], [`data/tasks/${TASK_ID}.json`, MARK.task], ['data/app-state.json', MARK.state],
+  ['business/fixture-business.txt', MARK.business], ['business/fixture-business.json', MARK.business],
+  ['.bridge/codex-projects.local.json', MARK.bridge], ['.env', MARK.env], ['NOTES', MARK.noext], ['server-config.ts', MARK.config],
+];
+function makeDevCwd() {
+  const cwd = fs.realpathSync(fs.mkdtempSync(path.join(work, 'devcwd-')));
+  const put = (rel, text) => { fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true }); fs.writeFileSync(path.join(cwd, rel), text); };
+  put('index.html', `<!doctype html><title>${DEV_HTML_MARK}</title><div id="root"></div><script type="module" src="/src/main.js"></script>`);
+  put('src/main.js', `console.log('${DEV_JS_MARK}');\nexport {};\n`);
+  put('dist/index.html', '<!doctype html><title>SYNTHETIC V1 SPA</title><div id="root"></div>');
+  put('projects.local.json', JSON.stringify({ marker: MARK.registry }));
+  put(`data/tasks/${TASK_ID}.json`, JSON.stringify({ marker: MARK.task }));
+  put('data/app-state.json', JSON.stringify({ projects: [{ id: 'reg-pm', name: MARK.state, repository: PM }], attentionItems: [], nba: {}, snapshot: {} }));
+  put('business/fixture-business.txt', MARK.business);
+  put('business/fixture-business.json', JSON.stringify({ marker: MARK.business }));
+  put('.bridge/codex-projects.local.json', JSON.stringify({ marker: MARK.bridge }));
+  put('.env', `GEMINI_API_KEY=${MARK.env}\n`);
+  put('NOTES', MARK.noext);
+  put('server-config.ts', `export const x = '${MARK.config}';`);
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(work, 'outside-')));
+  fs.writeFileSync(path.join(outside, 'secret.txt'), MARK.outside);
+  return { cwd, outside };
+}
+const ALL_MARKERS = Object.values(MARK);
+const ABSENT = undefined; // readability only: `nodeEnv: ABSENT` means the key is genuinely missing (see startServer)
+
+// ---------------------------------------------------------------- I. R1 API path classification
+describe('I. (R1) /api is classified exactly the way Express routes it: case-insensitively', () => {
+  test('isApiPath accepts every spelling Express mounts under /api and nothing else', async () => {
+    const { isApiPath } = await import('../server/v1RequestPolicy.mjs');
+    assert.equal(typeof isApiPath, 'function', 'the policy exports the single API classifier');
+    for (const p of ['/api', '/api/', '/api/state', '/API', '/API/', '/API/state', '/Api/State', '/aPi/github/Development-History', '/API/unknown']) assert.equal(isApiPath(p), true, p);
+    for (const p of ['/', '', '/apix', '/api.json', '/apis/state', '/ap', '//api/state', '/%61pi/state', '/api%2Fstate', '/x/api/state', '/assets/api']) assert.equal(isApiPath(p), false, p);
+  });
+
+  test('differential: isApiPath agrees with real Express mount matching for every probe path', async () => {
+    const { isApiPath } = await import('../server/v1RequestPolicy.mjs');
+    const { default: express } = await import('express');
+    const app = express();
+    app.use('/api', (req, res) => { res.end('api'); });
+    app.use((req, res) => { res.end('other'); });
+    const srv = await new Promise((resolve) => { const s = http.createServer(app); s.listen(0, '127.0.0.1', () => resolve(s)); });
+    try {
+      const port = srv.address().port;
+      const probes = ['/api', '/api/', '/api/state', '/API', '/API/', '/API/state', '/Api/State?x=1', '/aPi/github/x', '/apix', '/api.json', '/apis/state', '/ap', '//api/state', '/%61pi/state', '/api%2Fstate', '/x/api/state', '/', '/assets/api', '/API//state', '/api?q=1'];
+      for (const probe of probes) {
+        const body = await new Promise((resolve, reject) => { http.get({ host: '127.0.0.1', port, path: probe, agent: false }, (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(d)); }).on('error', reject); });
+        assert.equal(isApiPath(probe.split('?')[0]), body === 'api', `${probe}: Express answered ${JSON.stringify(body)}`);
+      }
+    } finally { await new Promise((resolve) => srv.close(resolve)); }
+  });
+
+  for (const nodeEnv of ['production', 'development']) {
+    test(`NODE_ENV=${nodeEnv}: every spelling gets the same Host/Origin/Referer and method policy (no HEAD/OPTIONS bypass)`, async () => {
+      const cwd = makeCwd({ state: true, activeTask: true });
+      const before = snapshotTree(cwd);
+      await withServer({ cwd, nodeEnv }, async (server) => {
+        assert.equal(server.earlyExit, undefined, server.stderr());
+        const hist = `repo=${encodeURIComponent(PM)}`;
+        // [path, status of an ordinary GET]. Unknown spellings of the history paths fall through to the JSON API 404, never to the SPA.
+        const table = [
+          ['/api/health', 200], ['/API/health', 200], ['/Api/Health', 200], ['/aPI/state', 200], ['/API/STATE', 200], ['/API/unknown', 404], ['/Api', 404], ['/API/', 404], ['/api', 404],
+          [`/api/github/development-history?${hist}`, 200], [`/api/GITHUB/development-history?${hist}`, 200], [`/API/Github/development-history?${hist}`, 200],
+          [`/api/github/Development-History?${hist}`, 404], [`/API/github/development-history/PULL?${hist}&number=7`, 404], [`/API/github/development-history/pull?${hist}&number=7`, 200],
+        ];
+        const own = `http://127.0.0.1:${server.port}`;
+        for (const [route, expected] of table) {
+          const get = await server.request('GET', route);
+          assert.equal(get.status, expected, `GET ${route}`);
+          assert.ok(get.json && typeof (get.json.error ?? get.json.status ?? get.json.repository ?? get.json.number ?? get.json.projects) !== 'undefined', `GET ${route} answers API JSON, never the SPA`);
+          assert.equal((await server.request('GET', route, { headers: { Origin: own } })).status, expected, `GET ${route} with the trusted Origin`);
+          for (const bad of [{ Origin: 'http://evil.example' }, { Referer: 'http://evil.example/x' }, { Origin: 'null' }, { Host: 'evil.example' }]) {
+            const res = await server.request('GET', route, { headers: bad });
+            assert.equal(res.status, 403, `GET ${route} ${JSON.stringify(bad)} must be refused before any handler`);
+            assert.deepEqual(Object.keys(res.json ?? {}), ['error']);
+          }
+          for (const method of ['HEAD', 'OPTIONS', ...ALL_WRITE_METHODS]) {
+            const res = await server.request(method, route, { body: ALL_WRITE_METHODS.includes(method) ? { x: 1 } : undefined });
+            assert.equal(res.status, 405, `${method} ${route}`);
+            assert.equal(res.headers.allow, 'GET', `${method} ${route}`);
+          }
+        }
+        // Not API-shaped for Express either: these must never return API data.
+        for (const route of ['//api/state', '/%61pi/state', '/apix', '/api.json']) {
+          const res = await server.request('GET', route);
+          assert.equal(res.json?.status === 'ok' || Array.isArray(res.json?.projects), false, `${route} is not an API route`);
+        }
+        const spy = server.spy();
+        assert.deepEqual(processesIn(spy), []);
+        assert.deepEqual(networkIn(spy), []);
+        assert.deepEqual(businessWritesIn(spy), []);
+        assert.deepEqual(ghIn(spy).filter((g) => !g.path.startsWith(`repos/${PM}`)), []);
+      });
+      assert.deepEqual(snapshotTree(cwd), before);
+    });
+  }
+});
+
+// ---------------------------------------------------------------- J. protected provider routes: STATIC verification only
+describe('J. the two protected provider routes are verified statically; no request to them exists in this file', () => {
+  const src = fs.readFileSync(path.join(REPO_ROOT, 'server.ts'), 'utf8');
+  const PROTECTED = ['/api/bridge/chatgpt-advice', '/api/bridge/extract-features'];
+
+  test('they are registered only inside mountProviderBridge, which only runs behind the "providers" opt-in, which only runs behind mountLegacy', () => {
+    const start = src.indexOf('async function mountProviderBridge');
+    const end = src.indexOf('async function mountLegacy');
+    assert.ok(start > 0 && end > start, 'mount functions found');
+    const inside = src.slice(start, end);
+    for (const route of PROTECTED) {
+      assert.equal(src.split(`'${route}'`).length - 1, 1, `${route} is registered exactly once`);
+      assert.ok(inside.includes(`app.post('${route}'`), `${route} is a POST registered inside mountProviderBridge`);
+    }
+    assert.equal([...src.matchAll(/mountProviderBridge\(app\)/g)].length, 1, 'mountProviderBridge is invoked from exactly one place');
+    assert.match(src, /if \(capabilities\.has\('providers'\)\) await mountProviderBridge\(app\);/);
+    assert.equal([...src.matchAll(/mountLegacy\(app, CAPABILITIES\)/g)].length, 1);
+    assert.match(src, /if \(CAPABILITIES\.size > 0\) await mountLegacy\(app, CAPABILITIES\);/);
+    const legacyCall = src.indexOf('mountLegacy(app, CAPABILITIES)');
+    assert.ok(legacyCall > src.indexOf('createRequestPolicy('), 'the request policy is installed before any legacy mount');
+  });
+
+  test('neither the V1 router nor the request policy mentions them, and the V1 router registers only its own read routes', () => {
+    const v1 = fs.readFileSync(path.join(REPO_ROOT, 'server/v1ReadOnlyRoutes.mjs'), 'utf8');
+    const policy = fs.readFileSync(path.join(REPO_ROOT, 'server/v1RequestPolicy.mjs'), 'utf8');
+    for (const text of [v1, policy]) { for (const route of PROTECTED) assert.equal(text.includes(route), false, route); assert.equal(text.includes('/bridge'), false); }
+    assert.deepEqual([...v1.matchAll(/router\.(get|post|put|patch|delete|all|use)\(\s*'([^']*)'/g)].map((m) => `${m[1]} ${m[2]}`), ['get /health', 'get /state', 'use /github']);
+  });
+
+  test('the harness tripwire refuses these paths in any spelling (pure predicate, no socket involved)', () => {
+    for (const spelling of ['/api/bridge/chatgpt-advice', '/API/BRIDGE/Extract-Features?x=1', '/api/bridge/%63hatgpt-advice', '/api%2Fbridge%2Fextract-features']) assert.equal(isProtectedRoutePath(spelling), true, spelling);
+    for (const fine of ['/api/bridge/summarize-changes', '/api/bridge/synthetic-unmounted-post-route', '/api/health']) assert.equal(isProtectedRoutePath(fine), false, fine);
+    assert.throws(() => refuseProtectedRoute('/Api/Bridge/ChatGPT-Advice'), /PROTECTED_ROUTE_REQUEST_REFUSED/);
+  });
+});
+
+// ---------------------------------------------------------------- K. R2 Vite development file boundary
+describe('K. (R2) the Vite development server serves only the V1 frontend, never business files or editor tools', () => {
+  test('pure classifier: frontend paths are allowed, everything addressable outside the frontend surface is denied', async () => {
+    const { classifyDevAssetRequest } = await import('../server/v1RequestPolicy.mjs');
+    assert.equal(typeof classifyDevAssetRequest, 'function');
+    const root = '/srv/synthetic root/project';
+    const c = (url) => classifyDevAssetRequest(url, { root }).action;
+    for (const url of ['/src/main.tsx', '/src/main.tsx?t=1700000000', '/src/v1/ReadOnlyCommandCenter.tsx', '/src/index.css', '/@vite/client', '/@vite/env', '/@react-refresh', '/node_modules/.vite/deps/react.js?v=abc123', '/node_modules/.vite/deps/_metadata.json',
+      `/@fs/${root}/node_modules/tailwindcss/index.css`, '/@id/__x00__virtual:synthetic', '/@id/virtual:synthetic-module']) assert.equal(c(url), 'allow', url);
+    for (const url of ['/', '/index.html', '/some/client/route', '/some/client/route?x=1', '/projects', '/NOTES', '/data/tasks']) assert.equal(c(url), 'spa', url);
+    for (const url of [
+      '/projects.local.json', '/projects.local.json?raw', '/data/tasks/CC-1.json', '/data/app-state.json', '/business/x.txt', '/.env', '/.env.local', '/.bridge/codex-projects.local.json', '/vite.config.ts', '/package.json', '/server.ts', '/server/v1RequestPolicy.mjs', '/test/x.mjs',
+      '/src/../projects.local.json', '/src/%2e%2e/projects.local.json', '/src/%2E%2E/projects.local.json', '/src/..%2fprojects.local.json', '/src/..%5cprojects.local.json', '/src\\..\\projects.local.json', '/src//..//projects.local.json', '/./projects.local.json', '/%2e/projects.local.json', '//projects.local.json',
+      '/src/%252e%252e/projects.local.json', '/src/main.js%00.json', '/src/main.js\0', '/src/.env', '/src/.hidden/x.js', '/SRC/main.js', '/Src/main.js', '/@FS/x', '/@VITE/client',
+      `/@fs/${root}/projects.local.json`, `/@fs/${root}/data/tasks/CC-1.json`, `/@fs/${root}/.env`, `/@fs/${root}/node_modules/../projects.local.json`, `/@fs/${root}/node_modules/%2e%2e/projects.local.json`, '/@fs/etc/synthetic', '/@fs//synthetic/secret.txt',
+      '/@id/@/projects.local.json', '/@id/%40/projects.local.json', '/@id/projects.local.json', '/@id/', '/@vite/../projects.local.json', '/node_modules/other/package.json', '/node_modules/../projects.local.json',
+      '/__open-in-editor?file=x', '/__open-stack-frame-in-editor?file=x', '/__vite_ping', '/@vite-plugin-synthetic', 'http://evil.example/src/main.js', '*', '',
+    ]) assert.equal(c(url), 'deny', JSON.stringify(url));
+  });
+
+  test('a disposable dev server never returns a synthetic business, config, secret or out-of-root file, in any URL form', async () => {
+    const { cwd, outside } = makeDevCwd();
+    const before = snapshotTree(cwd);
+    await withServer({ cwd, nodeEnv: 'development' }, async (server) => {
+      assert.equal(server.earlyExit, undefined, server.stderr());
+      const urls = [];
+      for (const [rel] of SECRET_FILES) {
+        urls.push(`/${rel}`, `/${rel}?raw`, `/${rel}?import`, `/${rel}?url`, `/${rel}?inline`, `/${rel}?import&raw`, `/${rel}?t=1&import`, `/${rel.toUpperCase()}`,
+          `/@fs/${cwd}/${rel}`, `/@fs/${cwd}/${rel}?raw`, `/@fs/${cwd}/${rel}?import`, `/@fs/${cwd}/src/../${rel}`, `/@id/@/${rel}`, `/src/../${rel}`, `/src/%2e%2e/${rel}`, `/src/..%2f${rel}`, `/./${rel}`, `/%2e/${rel}`, `//${rel}`, `/${rel}/`);
+      }
+      urls.push(`/@fs/${outside}/secret.txt`, `/@fs/${outside}/secret.txt?raw`, `/@fs/${cwd}/../${path.basename(outside)}/secret.txt`, `/__open-in-editor?file=${encodeURIComponent(path.join(cwd, 'projects.local.json'))}`, '/__open-stack-frame-in-editor?file=x');
+      for (const url of urls) {
+        const res = await server.request('GET', url);
+        for (const marker of ALL_MARKERS) assert.equal(res.text.includes(marker), false, `GET ${url} (HTTP ${res.status}) leaked ${marker}`);
+        // never the file: either refused/not found, or the ordinary SPA page (only possible for a path that names no file)
+        const spaPage = res.status === 200 && /text\/html/.test(String(res.headers['content-type'])) && res.text.includes(DEV_HTML_MARK);
+        assert.ok([403, 404].includes(res.status) || spaPage, `GET ${url} -> ${res.status}`);
+        if (/__open|@fs/.test(url)) assert.ok([403, 404].includes(res.status), `GET ${url} must be refused outright`);
+      }
+      const spy = server.spy();
+      assert.deepEqual(processesIn(spy), [], 'the editor-launch endpoints started no process');
+      assert.deepEqual(networkIn(spy), []);
+      assert.deepEqual(businessWritesIn(spy), []);
+    });
+    assert.deepEqual(snapshotTree(cwd), before, 'probing did not alter a single synthetic file');
+  });
+
+  test('positive controls: the V1 frontend (entry page, SPA routes, source modules, Vite client) is still delivered, and the API still works', async () => {
+    const { cwd } = makeDevCwd();
+    await withServer({ cwd, nodeEnv: 'development' }, async (server) => {
+      assert.equal(server.earlyExit, undefined, server.stderr());
+      const own = `http://127.0.0.1:${server.port}`;
+      for (const route of ['/', '/index.html', '/some/client/route', '/projects']) {
+        const res = await server.request('GET', route);
+        assert.equal(res.status, 200, route);
+        assert.match(res.text, new RegExp(DEV_HTML_MARK), route);
+        assert.match(res.text, /src="\/src\/main\.js"/, route);
+      }
+      assert.equal((await server.request('HEAD', '/')).status, 200);
+      const mod = await server.request('GET', '/src/main.js', { headers: { Origin: own, Referer: `${own}/` } });
+      assert.equal(mod.status, 200);
+      assert.match(mod.text, new RegExp(DEV_JS_MARK));
+      assert.equal((await server.request('GET', '/@vite/client')).status, 200);
+      assert.equal((await server.request('GET', '/api/health')).status, 200);
+      assert.equal((await server.request('GET', '/api/state')).json.projects[0].name, MARK.state, 'the V1 state API (not a static route) still serves saved state');
+    });
+  });
+
+  test('asset requests get the same Host/Origin/Referer checks as the API', async () => {
+    const { cwd } = makeDevCwd();
+    await withServer({ cwd, nodeEnv: 'development' }, async (server) => {
+      for (const route of ['/src/main.js', '/@vite/client']) {
+        for (const bad of [{ Origin: 'http://evil.example' }, { Origin: 'null' }, { Referer: 'http://evil.example/page' }, { Host: 'evil.example' }, { Host: `localhost:${server.port}` }]) {
+          assert.equal((await server.request('GET', route, { headers: bad })).status, 403, `${route} ${JSON.stringify(bad)}`);
+        }
+      }
+      assert.equal((await server.request('GET', '/', { headers: { Host: 'evil.example' } })).status, 403);
+    });
+  });
+});
+
+// ---------------------------------------------------------------- L. R3 listener boundary
+function listeningSocketsOf(pid) {
+  try {
+    const out = execFileSync('lsof', ['-nP', '-a', '-p', String(pid), '-iTCP', '-sTCP:LISTEN', '-Fn'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return out.split('\n').filter((l) => l.startsWith('n')).map((l) => l.slice(1));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null; // passive inspection unavailable on this machine
+    if (error.status === 1) return []; // lsof: nothing matched
+    throw error;
+  }
+}
+describe('L. (R3) exactly one listener, on loopback, with no HMR / WebSocket endpoint', () => {
+  const MODES = [['development', 'development'], ['production', 'production'], ['NODE_ENV absent', ABSENT], ['NODE_ENV invalid', 'staging']];
+  for (const [label, nodeEnv] of MODES) {
+    test(`${label}: one recorded bind (127.0.0.1:<PORT>), none refused, no upgrade accepted, passive socket listing agrees`, async (t) => {
+      const { cwd } = makeDevCwd();
+      await withServer({ cwd, nodeEnv }, async (server) => {
+        assert.equal(server.earlyExit, undefined, server.stderr());
+        const listens = server.spy().filter((e) => e.kind === 'listen');
+        assert.deepEqual(listens.map((l) => l.args), [[server.port, '127.0.0.1']], 'every bind attempt of the whole process');
+        assert.deepEqual(listens.filter((l) => l.refused), [], 'no attempt to bind all interfaces / 0.0.0.0 / [::]');
+        for (const protocol of ['vite-hmr', 'vite-ping']) {
+          const reply = await server.raw(`GET / HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: ${protocol}\r\n\r\n`);
+          assert.doesNotMatch(reply, /^HTTP\/1\.1 101/, `a ${protocol} WebSocket upgrade must not be accepted`);
+        }
+        const sockets = listeningSocketsOf(server.child.pid);
+        if (sockets === null) t.diagnostic('lsof unavailable: passive socket listing NOT_VERIFIED on this machine');
+        else assert.deepEqual(sockets, [`127.0.0.1:${server.port}`], 'the only listening TCP socket of this process');
+      });
+    });
+  }
+
+  test('source contract: HMR and the Vite WebSocket server are disabled, and no second listener or upgrade handler exists in server.ts', () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'server.ts'), 'utf8');
+    assert.match(src, /hmr:\s*false/);
+    assert.match(src, /ws:\s*false/);
+    assert.equal([...src.matchAll(/\.listen\(/g)].length, 1);
+    assert.doesNotMatch(src, /on\(\s*['"]upgrade['"]/);
+    assert.doesNotMatch(src, /hmr:\s*\{/, 'no HMR server/port option that could open a listener');
+  });
+});
+
+// ---------------------------------------------------------------- M. R4 genuine NODE_ENV modes
+describe('M. (R4) every NODE_ENV mode, including genuinely absent and invalid, keeps the V1 boundary', () => {
+  test('the harness really removes NODE_ENV: the child reports the key as absent, as production, as development, and as an invalid value', async () => {
+    const seen = {};
+    for (const [label, nodeEnv] of [['absent', ABSENT], ['production', 'production'], ['development', 'development'], ['typo', 'prodution'], ['empty', '']]) {
+      await withServer({ cwd: makeCwd({}), nodeEnv }, async (server) => {
+        seen[label] = server.spy().find((e) => e.kind === 'env');
+      });
+    }
+    assert.deepEqual(seen.absent, { kind: 'env', hasNodeEnv: false, nodeEnv: null }, 'NODE_ENV is genuinely absent, not defaulted to production');
+    assert.deepEqual(seen.production, { kind: 'env', hasNodeEnv: true, nodeEnv: 'production' });
+    assert.deepEqual(seen.development, { kind: 'env', hasNodeEnv: true, nodeEnv: 'development' });
+    assert.deepEqual(seen.typo, { kind: 'env', hasNodeEnv: true, nodeEnv: 'prodution' });
+    assert.deepEqual(seen.empty, { kind: 'env', hasNodeEnv: true, nodeEnv: '' });
+  });
+
+  const MODES = [['production', 'production', 'prod'], ['development', 'development', 'dev'], ['absent', ABSENT, 'dev'], ['typo "prodution"', 'prodution', 'dev'], ['capitalised "Production"', 'Production', 'dev'], ['unknown "staging"', 'staging', 'dev'], ['empty', '', 'dev']];
+  for (const [label, nodeEnv, path_] of MODES) {
+    test(`NODE_ENV ${label}: takes the ${path_ === 'prod' ? 'compiled dist' : 'Vite development'} path and exposes exactly the V1 API, with no startup writes, process, network or sensitive reads`, async () => {
+      const { cwd } = makeDevCwd();
+      fs.mkdirSync(path.join(cwd, 'data', 'tasks'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, 'data', 'tasks', `${TASK_ID}.json`), activeTaskJson());
+      const before = snapshotTree(cwd);
+      await withServer({ cwd, nodeEnv }, async (server) => {
+        assert.equal(server.earlyExit, undefined, server.stderr());
+        const root = await server.request('GET', '/');
+        assert.equal(root.status, 200);
+        if (path_ === 'prod') assert.match(root.text, /SYNTHETIC V1 SPA/);
+        else { assert.match(root.text, new RegExp(DEV_HTML_MARK)); assert.match(root.text, /\/@vite\/client/); }
+        // the same API boundary in every mode
+        assert.equal((await server.request('GET', '/api/health')).status, 200);
+        assert.deepEqual(Object.keys((await server.request('GET', '/api/health')).json).sort(), ['status', 'timestamp']);
+        assert.equal((await server.request('PUT', '/api/state', { body: syntheticState() })).status, 405);
+        assert.equal((await server.request('GET', '/api/tasks')).status, 404);
+        assert.equal((await server.request('GET', '/API/Tasks')).status, 404);
+        assert.equal((await server.request('POST', '/api/bridge/summarize-changes', { body: { repo: 'me/demo' } })).status, 405);
+        assert.equal((await server.request('GET', '/api/local-git/status?path=%2Ftmp')).status, 404);
+        // and the same file boundary: a business file is never served in any mode
+        for (const rel of ['projects.local.json', `data/tasks/${TASK_ID}.json`, '.env', '.bridge/codex-projects.local.json']) {
+          const res = await server.request('GET', `/${rel}`);
+          for (const marker of ALL_MARKERS) assert.equal(res.text.includes(marker), false, `${rel} leaked in NODE_ENV ${label}`);
+        }
+        const spy = server.spy();
+        assert.deepEqual(processesIn(spy), [], 'no agent, no git, no other child process');
+        assert.deepEqual(networkIn(spy), [], 'no provider call');
+        assert.deepEqual(ghIn(spy), [], 'no GitHub request was made');
+        assert.deepEqual(businessWritesIn(spy), [], 'no saved-state or task write');
+        assert.deepEqual(readsOf(spy, /(^|\/)(projects\.local\.json|codex-projects\.local\.json)$/), [], 'no registry or Codex allowlist read');
+        assert.deepEqual(spy.filter((e) => e.kind === 'listen').map((l) => l.args), [[server.port, '127.0.0.1']]);
+      });
+      assert.equal(JSON.parse(fs.readFileSync(path.join(cwd, 'data', 'tasks', `${TASK_ID}.json`), 'utf8')).status, 'RUNNING', 'no TaskStore startup recovery rewrote the active task');
+      assert.deepEqual(snapshotTree(cwd), before, 'every synthetic file is byte-for-byte identical after start and stop');
+    });
+  }
 });

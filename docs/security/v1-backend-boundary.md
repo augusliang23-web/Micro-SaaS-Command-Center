@@ -62,3 +62,14 @@ a separate, explicitly accepted decision. The server binds `127.0.0.1` only.
 * The Vite development server keeps its own pre-bundling cache under `node_modules/.vite` (development only, not business data).
 * `GET /api/github/development-history*` still talks to the user's `gh` session; the repository allowlist is the only account-scope limit.
 * `npm start` (`node dist/server.cjs` without `NODE_ENV=production`) takes the Vite development path; the API boundary is identical.
+
+## Issue #49 Remediations (R1–R4)
+
+Following independent security review, the V1 boundary was hardened against four potential bypass / exposure vectors:
+
+* **R1 — API Path Case-Insensitive Matching**: Express router mounts are case-insensitive by default. The path policy classifier `isApiPath` now matches `/^\/api(?:\/|$)/i`, guaranteeing that case-variant paths (e.g. `/API/state`, `/Api/health`) receive identical Host, Origin, Referer, and HTTP 405 Method Gate enforcement as standard `/api/*` paths.
+* **R2 — Vite Development File Guard**: In development mode, Vite's middleware is preceded by `createDevAssetGuard` in `server/v1RequestPolicy.mjs` and reinforced with Vite `server.fs.deny`. Pure URL classification strictly allowlists frontend entry, SPA routes, `/src/*`, Vite runtime clients (`/@vite/*`, `/@id/*`), and pre-bundled dependencies (`/node_modules/.vite/deps/*`). Any request attempting to access server source code, business data (`data/**`), secrets/configurations (`.env*`, `.local.json`), or out-of-root files fails closed with a JSON 404 response.
+* **R3 — Vite HMR and WebSocket Listener Lockdown**: Vite dev server options explicitly set `server.hmr = false` and `server.ws = false`. This eliminates secondary unauthenticated WebSocket listener endpoints (such as port 24678), ensuring the server binds exactly one loopback listener on `127.0.0.1:<PORT>` across all environments.
+* **R4 — Robust NODE_ENV Boundary Coverage**: The boundary guarantees fail-closed behavior across all `NODE_ENV` states: `production`, `development`, absent (unset), empty, or arbitrary strings/typos. Non-production or unset `NODE_ENV` routes to the safe Vite dev pipeline, while legacy capabilities strictly require explicit `COMMAND_CENTER_LEGACY_CAPABILITIES` opt-ins. Test harnesses were corrected to ensure genuine environment variable removal when asserting absent `NODE_ENV`.
+* **Protected AI Provider Routes**: `/api/bridge/chatgpt-advice` and `/api/bridge/extract-features` remain strictly gated behind legacy provider capabilities. Automated test suites enforce a pure-predicate tripwire that rejects any HTTP requests to these endpoints, verifying their boundaries via static code assertions only.
+
