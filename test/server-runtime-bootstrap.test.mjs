@@ -174,12 +174,16 @@ test('9. an explicit COMMAND_CENTER_ORIGIN keeps its contract: PORT does not add
   assert.equal(decide('http://example.com:3000', remote).ok, false);
 });
 
-test('11. startup changes did not alter the registered API route definitions', () => {
+test('11. the registered API route definitions are the V1 composition plus the legacy routes that only an explicit opt-in mounts', () => {
   const routes = [...SERVER_SRC.matchAll(/^\s*app\.(get|post|put|patch|delete|use)\(\s*('[^']*')/gm)].map((m) => `${m[1]} ${m[2]}`);
   assert.deepEqual(routes, [
-    "use '/api/bridge/codex-handoffs'", "use '/api/state'", "use '/api/tasks'", "use '/api/github'", "use '/api/local-git'",
-    "get '/api/health'", "post '/api/bridge/chatgpt-advice'", "post '/api/bridge/extract-features'", "post '/api/bridge/summarize-changes'", "get '*'",
+    "use '/api/bridge/codex-handoffs'", "use '/api/tasks'", "get '/api/health'", "post '/api/bridge/chatgpt-advice'", "post '/api/bridge/extract-features'", "post '/api/bridge/summarize-changes'",
+    "use '/api/state'", "use '/api/local-git'", "use '/api'", "use '/api'", "get '*'",
   ]);
+  // every legacy mount sits behind its own named capability (see test/v1-backend-boundary.test.mjs for the runtime proof)
+  for (const capability of ['state-write', 'tasks', 'providers', 'github-legacy', 'local-git', 'codex-handoff']) {
+    assert.match(SERVER_SRC, new RegExp(`capabilities\\.has\\('${capability}'\\)`), capability);
+  }
 });
 
 test('source contract: HOST is the literal loopback address, no import.meta, no second port setting', () => {

@@ -1,26 +1,12 @@
-import 'dotenv/config';
+import dotenv from 'dotenv'; // importing `dotenv` has no effect; `dotenv/config` (auto-load) is deliberately NOT imported
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
-import { CodexAppServerClient } from './server/codexAppServerClient.mjs';
-import { CodexHandoffService } from './server/codexHandoffService.mjs';
-import {
-  createCodexHandoffRouter,
-  isLoopbackOrigin,
-  loadCodexProjectAllowlist,
-} from './server/codexHandoffRoutes.mjs';
-import { createStateRouter } from './server/stateRoutes.mjs';
+import { GoogleGenAI } from '@google/genai'; // loading the SDK constructs nothing; a client is only built by the opt-in provider bridge
+import { apiNotFound, createDevAssetGuard, createRequestPolicy, methodGate, parseTrustedOrigin, resolveCapabilities } from './server/v1RequestPolicy.mjs';
+import { createV1ReadOnlyRouter } from './server/v1ReadOnlyRoutes.mjs';
 import { createGithubRouter } from './server/githubRoutes.mjs';
-import { createTaskRouter } from './server/tasks/taskRoutes.mjs';
-import { TaskStore } from './server/tasks/taskStore.mjs';
-import { loadProjectRegistry } from './server/tasks/projectRegistry.mjs';
-import { createLocalGitRouter } from './server/localGitRoutes.mjs';
-import { fetchChangedFiles, isRealGithubRepo } from './server/githubPullStatus.mjs';
-import { fetchLocalDiff } from './server/localGitStatus.mjs';
-import { GithubCliError } from './server/githubRepos.mjs';
 
-const app = express();
 const DEFAULT_PORT = 3000;
 // An explicit PORT must be a plain decimal 1-65535. An invalid explicit value fails closed instead of falling back to 3000.
 function resolvePort(raw: string | undefined): number {
@@ -35,11 +21,36 @@ const PORT = resolvePort(process.env.PORT);
 const HOST = '127.0.0.1';
 const EXPECTED_COMMAND_CENTER_ORIGIN = process.env.COMMAND_CENTER_ORIGIN || `http://${HOST}:${PORT}`;
 
-app.use(express.json());
+// Capability selection happens HERE, before any service, store, secret or provider client exists. V1 (read-only) is the
+// default; legacy capabilities must be named by the operator in COMMAND_CENTER_LEGACY_CAPABILITIES. NODE_ENV never enables one.
+// An unknown or malformed value, or a non-loopback expected origin, refuses to start.
+function loadCapabilitiesOrExit(): Set<string> {
+  try {
+    if (!parseTrustedOrigin(EXPECTED_COMMAND_CENTER_ORIGIN)) {
+      throw new Error('COMMAND_CENTER_ORIGIN must be an http loopback origin such as http://127.0.0.1:3000.');
+    }
+    return resolveCapabilities(process.env);
+  } catch (error) {
+    console.error(`Refusing to start (capability configuration): ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+const CAPABILITIES = loadCapabilitiesOrExit();
 
-if (process.env.NODE_ENV === 'development') {
-  let codexHandoffService: CodexHandoffService | null = null;
-  if (isLoopbackOrigin(EXPECTED_COMMAND_CENTER_ORIGIN)) {
+type ExpressApp = ReturnType<typeof express>;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Legacy capabilities. Nothing below is imported, constructed or mounted unless the operator opted in by name.
+// ---------------------------------------------------------------------------------------------------------------------
+
+async function mountCodexHandoff(app: ExpressApp) {
+  if (process.env.NODE_ENV !== 'development') return; // opt-in AND development only
+  const { CodexAppServerClient } = await import('./server/codexAppServerClient.mjs');
+  const { CodexHandoffService } = await import('./server/codexHandoffService.mjs');
+  const { createCodexHandoffRouter, isLoopbackOrigin, loadCodexProjectAllowlist } = await import('./server/codexHandoffRoutes.mjs');
+  const EXPECTED_COMMAND_CENTER_ORIGIN_LOCAL = EXPECTED_COMMAND_CENTER_ORIGIN;
+  let codexHandoffService: InstanceType<typeof CodexHandoffService> | null = null;
+  if (isLoopbackOrigin(EXPECTED_COMMAND_CENTER_ORIGIN_LOCAL)) {
     try {
       const allowlistPath =
         process.env.COMMAND_CENTER_CODEX_PROJECTS_CONFIG ||
@@ -63,15 +74,44 @@ if (process.env.NODE_ENV === 'development') {
     '/api/bridge/codex-handoffs',
     createCodexHandoffRouter({
       service: codexHandoffService,
-      expectedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN,
+      expectedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN_LOCAL,
       nodeEnv: process.env.NODE_ENV,
     }),
   );
 }
 
+async function mountTasks(app: ExpressApp) {
+  const { createTaskRouter } = await import('./server/tasks/taskRoutes.mjs');
+  const { TaskStore } = await import('./server/tasks/taskStore.mjs');
+  const { loadProjectRegistry } = await import('./server/tasks/projectRegistry.mjs');
+  // Agent Console Phase 1: DRAFT tasks only. No agent, git or worktree execution.
+  // A missing/invalid registry leaves task creation disabled (fail closed).
+  let projectRegistry: ReturnType<typeof loadProjectRegistry> | null = null;
+  try {
+    projectRegistry = loadProjectRegistry(
+      process.env.COMMAND_CENTER_PROJECTS_CONFIG || path.join(process.cwd(), 'projects.local.json'),
+    );
+  } catch (error) {
+    console.warn('Agent Console task creation is disabled:', error instanceof Error ? error.message : String(error));
+  }
+  app.use(
+    '/api/tasks',
+    createTaskRouter({
+      store: new TaskStore({ dir: path.join(process.cwd(), 'data', 'tasks') }),
+      registry: projectRegistry,
+      expectedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN,
+    }),
+  );
+}
+
+async function mountProviderBridge(app: ExpressApp) {
+  const { fetchChangedFiles, isRealGithubRepo } = await import('./server/githubPullStatus.mjs');
+  const { fetchLocalDiff } = await import('./server/localGitStatus.mjs');
+  const { GithubCliError } = await import('./server/githubRepos.mjs');
+
 // Lazy-initialized Gemini client
-let geminiClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI | null {
+let geminiClient: InstanceType<typeof GoogleGenAI> | null = null;
+function getGeminiClient(): InstanceType<typeof GoogleGenAI> | null {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
   if (!geminiClient) {
@@ -86,34 +126,6 @@ function getGeminiClient(): GoogleGenAI | null {
   }
   return geminiClient;
 }
-
-// Local single-file persistence for the dashboard's own state
-app.use('/api/state', createStateRouter());
-
-// Agent Console Phase 1: DRAFT tasks only. No agent, git or worktree execution.
-// A missing/invalid registry leaves task creation disabled (fail closed).
-let projectRegistry: ReturnType<typeof loadProjectRegistry> | null = null;
-try {
-  projectRegistry = loadProjectRegistry(
-    process.env.COMMAND_CENTER_PROJECTS_CONFIG || path.join(process.cwd(), 'projects.local.json'),
-  );
-} catch (error) {
-  console.warn('Agent Console task creation is disabled:', error instanceof Error ? error.message : String(error));
-}
-app.use(
-  '/api/tasks',
-  createTaskRouter({
-    store: new TaskStore({ dir: path.join(process.cwd(), 'data', 'tasks') }),
-    registry: projectRegistry,
-    expectedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN,
-  }),
-);
-
-// Server-side proxy over the local `gh` CLI session; the GitHub token never reaches the browser
-app.use('/api/github', createGithubRouter());
-
-// Runs `git status` against a local clone path the owner typed in himself — read-only, loopback-only
-app.use('/api/local-git', createLocalGitRouter());
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -493,13 +505,63 @@ ${localDiffText}`;
     });
   }
 });
+}
+
+async function mountLegacy(app: ExpressApp, capabilities: Set<string>) {
+  // Legacy handlers read JSON bodies; V1 never parses a request body.
+  app.use(express.json());
+  if (capabilities.has('codex-handoff')) await mountCodexHandoff(app);
+  // Local single-file persistence for the dashboard's own state (includes PUT)
+  if (capabilities.has('state-write')) {
+    const { createStateRouter } = await import('./server/stateRoutes.mjs');
+    app.use('/api/state', createStateRouter());
+  }
+  if (capabilities.has('tasks')) await mountTasks(app);
+  // Server-side proxy over the local `gh` CLI session (all legacy GitHub routes); the token never reaches the browser
+  if (capabilities.has('github-legacy')) app.use('/api/github', createGithubRouter());
+  // Runs `git status` (with `git fetch`) against a local clone path the owner typed in himself
+  if (capabilities.has('local-git')) {
+    const { createLocalGitRouter } = await import('./server/localGitRoutes.mjs');
+    app.use('/api/local-git', createLocalGitRouter());
+  }
+  if (capabilities.has('providers')) await mountProviderBridge(app);
+}
 
 async function startServer() {
+  // Legacy capabilities used to read .env at import time. Secrets are now loaded only when a legacy capability is enabled.
+  if (CAPABILITIES.size > 0) dotenv.config();
+
+  const app = express();
+  // 1. Host (every request) and Origin/Referer (/api) policy, before any handler or body parser.
+  app.use(createRequestPolicy({ trustedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN }));
+  // 2. Opted-in legacy routers only (none by default).
+  if (CAPABILITIES.size > 0) await mountLegacy(app, CAPABILITIES);
+  // 3. Everything below is V1: /api accepts GET only, exactly four GET routes exist, unknown /api paths are API 404s.
+  app.use(methodGate);
+  app.use('/api', createV1ReadOnlyRouter({ githubRouter: createGithubRouter() }));
+  app.use('/api', apiNotFound);
+
   if (process.env.NODE_ENV !== 'production') {
+    // Everything that is not exactly NODE_ENV=production (including an unset or mistyped value) takes this development path, so the
+    // development surface is held to the same V1 boundary as production:
+    //  - R3: HMR and Vite's WebSocket server are OFF. In middleware mode Vite would otherwise open a SECOND http server for HMR (port
+    //    24678, all interfaces) that bypasses the Host/Origin policy above. Trade-off: no hot reload, reload the page after an edit.
+    //    The file watcher stays on so a reload serves fresh modules.
+    //  - R2: Vite serves the whole project root by default (business files, /@fs, raw modules, the @ alias, editor launchers). The
+    //    guard below is an allowlist that runs BEFORE Vite; `fs` is defence in depth for anything that ever reaches Vite.
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        ws: false,
+        fs: { strict: true, deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.bridge/**', '**/*.local.json', '**/data/tasks/**'] },
+      },
       appType: 'spa',
+      publicDir: false,
+      // V1 never reads .env files, not even through Vite (the V1 app reads no Vite env variables); legacy keeps Vite's default.
+      ...(CAPABILITIES.size === 0 ? { envDir: false as const } : {}),
     });
+    app.use(createDevAssetGuard({ trustedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN, root: process.cwd() }));
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
