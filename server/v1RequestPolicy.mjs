@@ -287,6 +287,14 @@ export function classifyDevAssetRequest(rawUrl, { root, checkFs = false } = {}) 
     return /^(?:__x00__|virtual:)[^/]/.test(idRest) ? { action: 'allow' } : deny;
   }
 
+  // Vite's /@vite/client imports /node_modules/vite/dist/client/env.mjs directly. Only this exact installed client file is allowed.
+  if (decoded === '/node_modules/vite/dist/client/env.mjs') {
+    return verifyCanonicalTarget(
+      { kind: 'node-modules', relSegments: ['vite', 'dist', 'client', 'env.mjs'] },
+      { root, checkFs },
+    );
+  }
+
   const segments = decoded.split('/').slice(1);
   if (decoded.startsWith('/node_modules/.vite/deps/')) {
     const depSegments = segments.slice(3);
