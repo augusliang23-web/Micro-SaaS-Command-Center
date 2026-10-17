@@ -557,6 +557,7 @@ async function startServer() {
         fs: { strict: true, deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.bridge/**', '**/*.local.json', '**/data/tasks/**'] },
       },
       appType: 'spa',
+      publicDir: false,
       // V1 never reads .env files, not even through Vite (the V1 app reads no Vite env variables); legacy keeps Vite's default.
       ...(CAPABILITIES.size === 0 ? { envDir: false as const } : {}),
     });

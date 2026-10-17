@@ -695,6 +695,7 @@ describe('J. the two protected provider routes are verified statically; no reque
 
 // ---------------------------------------------------------------- K. R2 Vite development file boundary
 const DOT_MARK = 'SYNTH-MARK-DOTFILE-7c1';
+const SHADOW_PUBLIC_MARK = 'SYNTH-MARK-SHADOW-PUBLIC-7c1';
 const HELPER_JS_MARK = 'SYNTHETIC-HELPER-MODULE';
 const PKG_JS_MARK = 'SYNTHETIC-NODE-MODULE';
 const DEP_JS_MARK = 'SYNTHETIC-OPTIMIZED-DEP';
@@ -752,6 +753,12 @@ function makeSymlinkDevCwd() {
   put('node_modules/.vite/deps/.env', `SECRET=${DOT_MARK}\n`);
   put('node_modules/.vite/deps/.dotdir/secret.js', `export const d = '${DOT_MARK}';\n`);
   link('node_modules/.vite/deps/dot-link.js', './.env');
+
+  // I. Public-shadowing prevention: synthetic files under public/ attempting to shadow /src modules or serve static assets
+  put('public/src/main.js', `export const shadow = '${SHADOW_PUBLIC_MARK}';\n`);
+  put('public/src/sub/helper.js', `export const shadow = '${SHADOW_PUBLIC_MARK}';\n`);
+  put('public/robots.txt', `User-agent: *\nDisallow: /secret\n`);
+  put('public/secret.txt', `SYNTHETIC-PUBLIC-ROOT-SECRET\n`);
 
   return { cwd, outside };
 }
@@ -815,10 +822,10 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
     assert.equal(c('/projects'), 'deny', 'SPA fallback with symlinked index.html must be denied');
   });
 
-  test('runtime dev server blocks symlink, ancestor-symlink, nested-symlink, encoded, /@fs, dependency-cache and dotfile escapes before Vite, while serving legitimate frontend modules', async () => {
+  test('runtime dev server blocks symlink, ancestor-symlink, nested-symlink, encoded, /@fs, dependency-cache, dotfile, and public-shadow escapes before Vite, while serving legitimate frontend modules', async () => {
     const { cwd } = makeSymlinkDevCwd();
     const before = snapshotTree(cwd);
-    const forbiddenMarkers = [...ALL_MARKERS, DOT_MARK];
+    const forbiddenMarkers = [...ALL_MARKERS, DOT_MARK, SHADOW_PUBLIC_MARK];
     await withServer({ cwd, nodeEnv: 'development' }, async (server) => {
       assert.equal(server.earlyExit, undefined, server.stderr());
       const baseBlocked = [
@@ -831,6 +838,7 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
         '/src/sub/.dotfile.js', '/src/sub/.dotdir/secret.js', '/src/dot-link.js', '/src/dotdir-link/secret.js',
         `/@fs/${cwd}/node_modules/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.dotdir/secret.js`, `/@fs/${cwd}/node_modules/synth-pkg/dot-link.js`,
         '/node_modules/.vite/deps/.env', '/node_modules/.vite/deps/.dotdir/secret.js', '/node_modules/.vite/deps/dot-link.js',
+        '/robots.txt', '/secret.txt',
       ];
       const blockedUrls = [];
       for (const u of baseBlocked) {
@@ -864,6 +872,7 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
         const res = await server.request('GET', url, { headers: { Origin: own, Referer: `${own}/` } });
         assert.equal(res.status, 200, `positive control GET ${url} (${res.text.slice(0, 120)})`);
         assert.match(res.text, new RegExp(expectedMark), `positive control GET ${url}`);
+        assert.equal(res.text.includes(SHADOW_PUBLIC_MARK), false, `GET ${url} must not serve shadowed file from public/`);
       }
       assert.equal((await server.request('GET', '/@vite/client')).status, 200);
       assert.equal((await server.request('GET', '/api/health')).status, 200);
