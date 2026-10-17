@@ -172,7 +172,15 @@ function makeCwd({ state = false, malformedState = false, activeTask = false, re
 }
 const snapshotTree = (dir) => {
   const out = {};
-  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.name === '.vite') continue; /* development tool cache, not data */ const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else out[path.relative(dir, p)] = fs.readFileSync(p).toString('hex'); } };
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === '.vite') continue; /* development tool cache, not data */
+      const p = path.join(d, e.name);
+      if (e.isSymbolicLink()) out[path.relative(dir, p)] = `link:${fs.readlinkSync(p)}`;
+      else if (e.isDirectory()) walk(p);
+      else out[path.relative(dir, p)] = fs.readFileSync(p).toString('hex');
+    }
+  };
   walk(dir);
   return out;
 };
@@ -686,6 +694,68 @@ describe('J. the two protected provider routes are verified statically; no reque
 });
 
 // ---------------------------------------------------------------- K. R2 Vite development file boundary
+const DOT_MARK = 'SYNTH-MARK-DOTFILE-7c1';
+const HELPER_JS_MARK = 'SYNTHETIC-HELPER-MODULE';
+const PKG_JS_MARK = 'SYNTHETIC-NODE-MODULE';
+const DEP_JS_MARK = 'SYNTHETIC-OPTIMIZED-DEP';
+
+function makeSymlinkDevCwd() {
+  const { cwd, outside } = makeDevCwd();
+  const put = (rel, text) => { fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true }); fs.writeFileSync(path.join(cwd, rel), text); };
+  const link = (rel, target) => { fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true }); fs.symlinkSync(target, path.join(cwd, rel)); };
+
+  // Legitimate frontend modules, dependency packages, and pre-bundled dep cache
+  put('src/sub/helper.js', `export const helper = '${HELPER_JS_MARK}';\n`);
+  put('node_modules/synth-pkg/index.js', `export const pkg = '${PKG_JS_MARK}';\n`);
+  put('node_modules/.vite/deps/synth-dep.js', `export const dep = '${DEP_JS_MARK}';\n`);
+
+  // A. Allowed /src symlinks resolving inside /src
+  link('src/alias-main.js', './main.js');
+  link('src/linked-sub', './sub');
+
+  // B. Allowed /src symlinks resolving to private / business / out-of-root files
+  link('src/leak-registry.json', '../projects.local.json');
+  link('src/leak-state.json', '../data/app-state.json');
+  link('src/leak-task.json', `../data/tasks/${TASK_ID}.json`);
+  link('src/leak-business.json', '../business/fixture-business.json');
+  link('src/leak-business.txt', '../business/fixture-business.txt');
+  link('src/leak-outside.txt', path.join(outside, 'secret.txt'));
+
+  // C. Symlinked ancestor directories resolving outside trusted /src root (including hop-out-and-back-in)
+  link('src/dir-business', '../business');
+  link('src/dir-outside', outside);
+  fs.symlinkSync(path.join(cwd, 'src', 'main.js'), path.join(outside, 'hop-back.js'));
+
+  // D. Nested symlinks (in-boundary vs escaping vs dangling)
+  link('src/sub/hop2-ok.js', '../main.js');
+  link('src/hop1-ok.js', './sub/hop2-ok.js');
+  link('src/sub/hop2-bad.json', '../../projects.local.json');
+  link('src/hop1-bad.json', './sub/hop2-bad.json');
+  link('src/dangling.js', './does-not-exist.js');
+
+  // F & G. /@fs and node_modules / .vite/deps symlinks (legitimate in-root vs escaping)
+  link('node_modules/synth-alias', './synth-pkg');
+  link('node_modules/evil-pkg/index.js', '../../projects.local.json');
+  link('node_modules/evil-dir', outside);
+  link('node_modules/.vite/deps/synth-dep-link.js', './synth-dep.js');
+  link('node_modules/.vite/deps/evil-dep.js', '../../../projects.local.json');
+
+  // H. Nested dotfiles and symlinks to dotfiles across /src, node_modules, and .vite/deps
+  put('src/sub/.dotfile.js', `export const d = '${DOT_MARK}';\n`);
+  put('src/sub/.dotdir/secret.js', `export const d = '${DOT_MARK}';\n`);
+  link('src/dot-link.js', './sub/.dotfile.js');
+  link('src/dotdir-link', './sub/.dotdir');
+  put('node_modules/.env', `SECRET=${DOT_MARK}\n`);
+  put('node_modules/synth-pkg/.env', `SECRET=${DOT_MARK}\n`);
+  put('node_modules/synth-pkg/.dotdir/secret.js', `export const d = '${DOT_MARK}';\n`);
+  link('node_modules/synth-pkg/dot-link.js', './.env');
+  put('node_modules/.vite/deps/.env', `SECRET=${DOT_MARK}\n`);
+  put('node_modules/.vite/deps/.dotdir/secret.js', `export const d = '${DOT_MARK}';\n`);
+  link('node_modules/.vite/deps/dot-link.js', './.env');
+
+  return { cwd, outside };
+}
+
 describe('K. (R2) the Vite development server serves only the V1 frontend, never business files or editor tools', () => {
   test('pure classifier: frontend paths are allowed, everything addressable outside the frontend surface is denied', async () => {
     const { classifyDevAssetRequest } = await import('../server/v1RequestPolicy.mjs');
@@ -698,11 +768,113 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
     for (const url of [
       '/projects.local.json', '/projects.local.json?raw', '/data/tasks/CC-1.json', '/data/app-state.json', '/business/x.txt', '/.env', '/.env.local', '/.bridge/codex-projects.local.json', '/vite.config.ts', '/package.json', '/server.ts', '/server/v1RequestPolicy.mjs', '/test/x.mjs',
       '/src/../projects.local.json', '/src/%2e%2e/projects.local.json', '/src/%2E%2E/projects.local.json', '/src/..%2fprojects.local.json', '/src/..%5cprojects.local.json', '/src\\..\\projects.local.json', '/src//..//projects.local.json', '/./projects.local.json', '/%2e/projects.local.json', '//projects.local.json',
-      '/src/%252e%252e/projects.local.json', '/src/main.js%00.json', '/src/main.js\0', '/src/.env', '/src/.hidden/x.js', '/SRC/main.js', '/Src/main.js', '/@FS/x', '/@VITE/client',
+      '/src/%252e%252e/projects.local.json', '/src/main.js%00.json', '/src/main.js\0', '/src/.env', '/src/.hidden/x.js', '/src/nested/.env', '/src/a/b/.hidden/x.js', '/SRC/main.js', '/Src/main.js', '/@FS/x', '/@VITE/client', '/@vite/other',
       `/@fs/${root}/projects.local.json`, `/@fs/${root}/data/tasks/CC-1.json`, `/@fs/${root}/.env`, `/@fs/${root}/node_modules/../projects.local.json`, `/@fs/${root}/node_modules/%2e%2e/projects.local.json`, '/@fs/etc/synthetic', '/@fs//synthetic/secret.txt',
+      `/@fs/${root}/node_modules/.env`, `/@fs/${root}/node_modules/tailwindcss/.env`, `/@fs/${root}/node_modules/tailwindcss/.hidden/x.js`, `/@fs/${root}/node_modules/.bin/vite`, `/@fs/${root}/node_modules/.cache/secret.json`, `/@fs/${root}/node_modules/.vite/metadata.json`, `/@fs/${root}/node_modules/.vite/deps/.env`,
+      '/node_modules/.vite/deps/.env', '/node_modules/.vite/deps/.hidden/x.js', '/node_modules/.vite/deps/sub/.env',
       '/@id/@/projects.local.json', '/@id/%40/projects.local.json', '/@id/projects.local.json', '/@id/', '/@vite/../projects.local.json', '/node_modules/other/package.json', '/node_modules/../projects.local.json',
       '/__open-in-editor?file=x', '/__open-stack-frame-in-editor?file=x', '/__vite_ping', '/@vite-plugin-synthetic', 'http://evil.example/src/main.js', '*', '',
     ]) assert.equal(c(url), 'deny', JSON.stringify(url));
+  });
+
+  test('canonical realpath classifier (R2 P2 closure): symlinks escaping approved roots or targeting dotfiles are denied while in-boundary symlinks and modules are allowed', async () => {
+    const { classifyDevAssetRequest } = await import('../server/v1RequestPolicy.mjs');
+    const { cwd } = makeSymlinkDevCwd();
+    const c = (url) => classifyDevAssetRequest(url, { root: cwd }).action;
+
+    // A, D, F, G, J (positive): legitimate files and in-boundary symlinks inside /src, node_modules, and .vite/deps
+    for (const allowed of [
+      '/src/main.js', '/src/sub/helper.js', '/src/alias-main.js', '/src/linked-sub/helper.js', '/src/hop1-ok.js',
+      '/%73rc/main.js', '/src/main.js?import', '/src/main.js?raw',
+      `/@fs/${cwd}/node_modules/synth-pkg/index.js`, `/@fs/${cwd}/node_modules/synth-alias/index.js`,
+      '/node_modules/.vite/deps/synth-dep.js', '/node_modules/.vite/deps/synth-dep.js?v=123', '/node_modules/.vite/deps/synth-dep-link.js',
+      '/@vite/client', '/@vite/env', '/@react-refresh',
+    ]) assert.equal(c(allowed), 'allow', allowed);
+
+    // B, C, D, E, F, G, H, I (negative): escaping symlinks, ancestor symlinks, hop-out-and-back, nested symlinks, dangling symlinks, encoded variants, /@fs, .vite/deps, and dotfiles
+    for (const denied of [
+      '/src/leak-registry.json', '/src/leak-registry.json?raw', '/src/leak-registry.json?import', '/src/leak-registry.json?url', '/src/leak-registry.json?inline',
+      '/src/leak-state.json', '/src/leak-task.json', '/src/leak-business.json', '/src/leak-business.txt', '/src/leak-outside.txt',
+      '/src/dir-business/fixture-business.json', '/src/dir-business/fixture-business.txt', '/src/dir-outside/secret.txt', '/src/dir-outside/hop-back.js',
+      '/src/hop1-bad.json', '/src/sub/hop2-bad.json', '/src/dangling.js', '/src/does-not-exist.js',
+      '/%73rc/leak-registry.json', '/src/%6ceak-registry.json', '/src/dir-business/%66ixture-business.json',
+      `/@fs/${cwd}/node_modules/evil-pkg/index.js`, `/@fs/${cwd}/node_modules/evil-pkg/index.js?raw`, `/@fs/${cwd}/node_modules/evil-dir/secret.txt`,
+      '/node_modules/.vite/deps/evil-dep.js', '/node_modules/.vite/deps/evil-dep.js?v=123',
+      '/src/sub/.dotfile.js', '/src/sub/.dotdir/secret.js', '/src/dot-link.js', '/src/dotdir-link/secret.js',
+      `/@fs/${cwd}/node_modules/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.dotdir/secret.js`, `/@fs/${cwd}/node_modules/synth-pkg/dot-link.js`,
+      '/node_modules/.vite/deps/.env', '/node_modules/.vite/deps/.dotdir/secret.js', '/node_modules/.vite/deps/dot-link.js',
+    ]) assert.equal(c(denied), 'deny', denied);
+
+    // SPA entry check: normal index.html is 'spa', but a symlinked index.html fails closed as 'deny'
+    assert.equal(c('/'), 'spa');
+    assert.equal(c('/index.html'), 'spa');
+    fs.unlinkSync(path.join(cwd, 'index.html'));
+    fs.symlinkSync(path.join(cwd, 'projects.local.json'), path.join(cwd, 'index.html'));
+    assert.equal(c('/'), 'deny', 'symlinked index.html must be denied');
+    assert.equal(c('/index.html'), 'deny', 'symlinked index.html must be denied');
+    assert.equal(c('/projects'), 'deny', 'SPA fallback with symlinked index.html must be denied');
+  });
+
+  test('runtime dev server blocks symlink, ancestor-symlink, nested-symlink, encoded, /@fs, dependency-cache and dotfile escapes before Vite, while serving legitimate frontend modules', async () => {
+    const { cwd } = makeSymlinkDevCwd();
+    const before = snapshotTree(cwd);
+    const forbiddenMarkers = [...ALL_MARKERS, DOT_MARK];
+    await withServer({ cwd, nodeEnv: 'development' }, async (server) => {
+      assert.equal(server.earlyExit, undefined, server.stderr());
+      const baseBlocked = [
+        '/src/leak-registry.json', '/src/leak-state.json', '/src/leak-task.json', '/src/leak-business.json', '/src/leak-business.txt', '/src/leak-outside.txt',
+        '/src/dir-business/fixture-business.json', '/src/dir-business/fixture-business.txt', '/src/dir-outside/secret.txt', '/src/dir-outside/hop-back.js',
+        '/src/hop1-bad.json', '/src/sub/hop2-bad.json', '/src/dangling.js',
+        '/%73rc/leak-registry.json', '/src/%6ceak-registry.json', '/src/dir-business/%66ixture-business.json',
+        `/@fs/${cwd}/node_modules/evil-pkg/index.js`, `/@fs/${cwd}/node_modules/evil-dir/secret.txt`,
+        '/node_modules/.vite/deps/evil-dep.js',
+        '/src/sub/.dotfile.js', '/src/sub/.dotdir/secret.js', '/src/dot-link.js', '/src/dotdir-link/secret.js',
+        `/@fs/${cwd}/node_modules/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.dotdir/secret.js`, `/@fs/${cwd}/node_modules/synth-pkg/dot-link.js`,
+        '/node_modules/.vite/deps/.env', '/node_modules/.vite/deps/.dotdir/secret.js', '/node_modules/.vite/deps/dot-link.js',
+      ];
+      const blockedUrls = [];
+      for (const u of baseBlocked) {
+        blockedUrls.push(u, `${u}?raw`, `${u}?import`, `${u}?url`, `${u}?inline`, `${u}?t=1700000000`);
+      }
+      for (const url of blockedUrls) {
+        const res = await server.request('GET', url);
+        assert.equal(res.status, 404, `GET ${url} must be refused with 404 JSON before reaching Vite (got ${res.status})`);
+        assert.deepEqual(res.json, { error: 'Not found.' }, `GET ${url} must return the guard's JSON 404`);
+        for (const marker of forbiddenMarkers) assert.equal(res.text.includes(marker), false, `GET ${url} leaked ${marker}`);
+      }
+
+      // J. Positive controls: legitimate frontend modules, in-boundary symlinks, dependency packages, and SPA routes still load
+      const own = `http://127.0.0.1:${server.port}`;
+      for (const [url, expectedMark] of [
+        ['/', DEV_HTML_MARK],
+        ['/index.html', DEV_HTML_MARK],
+        ['/projects', DEV_HTML_MARK],
+        ['/src/main.js', DEV_JS_MARK],
+        ['/src/main.js?import', DEV_JS_MARK],
+        ['/src/main.js?raw', DEV_JS_MARK],
+        ['/src/alias-main.js', DEV_JS_MARK],
+        ['/src/hop1-ok.js', DEV_JS_MARK],
+        ['/src/sub/helper.js', HELPER_JS_MARK],
+        ['/src/linked-sub/helper.js', HELPER_JS_MARK],
+        [`/@fs/${cwd}/node_modules/synth-pkg/index.js`, PKG_JS_MARK],
+        [`/@fs/${cwd}/node_modules/synth-alias/index.js`, PKG_JS_MARK],
+        ['/node_modules/.vite/deps/synth-dep.js?v=123', DEP_JS_MARK],
+        ['/node_modules/.vite/deps/synth-dep-link.js?v=123', DEP_JS_MARK],
+      ]) {
+        const res = await server.request('GET', url, { headers: { Origin: own, Referer: `${own}/` } });
+        assert.equal(res.status, 200, `positive control GET ${url} (${res.text.slice(0, 120)})`);
+        assert.match(res.text, new RegExp(expectedMark), `positive control GET ${url}`);
+      }
+      assert.equal((await server.request('GET', '/@vite/client')).status, 200);
+      assert.equal((await server.request('GET', '/api/health')).status, 200);
+
+      const spy = server.spy();
+      assert.deepEqual(readsOf(spy, SENSITIVE_READ), [], 'no sensitive business/config/secret file was read or stat-probed');
+      assert.deepEqual(processesIn(spy), []);
+      assert.deepEqual(networkIn(spy), []);
+      assert.deepEqual(businessWritesIn(spy), []);
+    });
+    assert.deepEqual(snapshotTree(cwd), before, 'fixture tree is byte-for-byte identical after symlink probing');
   });
 
   test('a disposable dev server never returns a synthetic business, config, secret or out-of-root file, in any URL form', async () => {
