@@ -146,7 +146,7 @@ test('B1 G/R: selecting a stacked PR shows metadata, verified ancestry and CI on
 });
 
 test('B1 E/H: merged PR detail uses merged_at and draws a solid edge only for a verified merge commit',async()=>{
- const {pending}=mockFetch();render(<Harness/>);openLive();pending[0].resolve(makeHistory());await flush();
+ const {pending}=mockFetch();render(<Harness/>);openLive();pending[0].resolve(makeHistory());await flush();fireEvent.click(screen.getByRole('button',{name:'6 個月'}));
  expect(screen.getByLabelText(/PR #13 合併到 main：已驗證/)).toHaveAttribute('data-kind','verified-merge');
  fireEvent.click(screen.getByRole('button',{name:/^PR #13 ·/}));
  const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
@@ -155,7 +155,7 @@ test('B1 E/H: merged PR detail uses merged_at and draws a solid edge only for a 
  expect(panel).toHaveTextContent('（上次檢查時不在遠端分支清單；不推測是否曾刪除）');
  cleanup();vi.restoreAllMocks();
  const second=mockFetch();render(<Harness/>);openLive();
- second.pending[0].resolve(makeHistory({commits:makeHistory().commits.filter(x=>x.sha!=='M13')}));await flush();
+ second.pending[0].resolve(makeHistory({commits:makeHistory().commits.filter(x=>x.sha!=='M13')}));await flush();fireEvent.click(screen.getByRole('button',{name:'6 個月'}));
  expect(screen.getByLabelText(/PR #13 合併到 main：UNKNOWN/)).toHaveAttribute('data-kind','pr-record');
 });
 
@@ -230,7 +230,7 @@ test('B1: Git topology draws only verified parent edges and reports heads outsid
 });
 
 test('B1: graph is keyboard reachable, scrollable regions are focusable and filters narrow the view',async()=>{
- const {pending}=mockFetch();render(<Harness/>);openLive();pending[0].resolve(makeHistory());await flush();
+ const {pending}=mockFetch();render(<Harness/>);openLive();pending[0].resolve(makeHistory());await flush();fireEvent.click(screen.getByRole('button',{name:'6 個月'}));
  expect(screen.getByRole('region',{name:/可捲動的開發時間軸/})).toHaveAttribute('tabindex','0');
  const card=screen.getByRole('button',{name:/^PR #57 ·/});card.focus();expect(card).toHaveFocus();
  fireEvent.change(screen.getByLabelText('PR 狀態篩選'),{target:{value:'merged'}});
@@ -252,7 +252,7 @@ const detailWith=(number:number,over:{pull?:Partial<HistoryPull>;ci?:{status:str
  const base=detailFor(number,'passing');
  return {...base,pull:{...base.pull,...over.pull},ci:over.ci??base.ci,reviews:over.reviews??base.reviews};
 };
-const openPr=async(n=55,history=makeHistory())=>{const m=mockFetch();render(<Harness/>);openLive();m.pending[0].resolve(history);await flush();fireEvent.click(screen.getByRole('button',{name:new RegExp(`^PR #${n} ·`)}));return m;};
+const openPr=async(n=55,history=makeHistory())=>{const m=mockFetch();render(<Harness/>);openLive();m.pending[0].resolve(history);await flush();fireEvent.click(screen.getByRole('button',{name:'6 個月'}));fireEvent.click(screen.getByRole('button',{name:new RegExp(`^PR #${n} ·`)}));return m;};
 const detailReq=(m:{pending:Pending[]},n=55)=>m.pending.filter(p=>p.url.includes('/development-history/pull')&&p.url.includes(`number=${n}`)).at(-1)!;
 
 test('P2-1 negative control: snapshot head SHA A + fresh head SHA B with CI PASS never shows PASS against SHA A',async()=>{
@@ -461,7 +461,8 @@ const fireResize=()=>act(async()=>{roCallbacks.forEach(cb=>cb());await Promise.r
 const setRange=(label:'1 個月'|'3 個月'|'6 個月'|'全部歷史')=>fireEvent.click(within(screen.getByRole('group',{name:'時間範圍'})).getByRole('button',{name:label}));
 const drawable=()=>frameClient()-(document.querySelector('.g-lane-labels') as HTMLElement).offsetWidth;
 const lastCheckedLeft=()=>parseFloat((document.querySelector('.g-now') as HTMLElement).style.left);
-const loadLive=async(history=makeHistory())=>{const m=mockFetch();render(<Harness/>);openLive();m.pending[0].resolve(history);await flush();return m;};
+// Legacy calendar/regression scenarios explicitly choose their original six-month window.
+const loadLive=async(history=makeHistory())=>{const m=mockFetch();render(<Harness/>);openLive();m.pending[0].resolve(history);await flush();setRange('6 個月');return m;};
 afterEach(()=>{vi.unstubAllGlobals();roCallbacks=new Set();WINDOW_W=1366;window.innerWidth=1024;});
 
 test('B1.1 negative control A: choosing 1 month must stretch the date axis across the drawable plot width',async()=>{
@@ -505,7 +506,7 @@ test.each([['1 個月','1m'],['3 個月','3m'],['6 個月','6m'],['全部歷史'
  for(const card of cardEls())expect(parseFloat(card.style.left)+parseFloat(card.style.width)).toBeLessThanOrEqual(canvasWidth()); // right-edge cards slide left, the axis does not grow
 });
 
-test('B1.1 auto fit on initial load (default 6 months) already fills the plot',async()=>{
+test('B1.1 explicit six-month auto fit fills the plot',async()=>{
  mockGeometry();await loadLive();
  expect(canvas().dataset.fit).toBe('auto');expect(lastCheckedLeft()/drawable()).toBeGreaterThanOrEqual(0.9);
  expect(screen.getByRole('button',{name:'Auto Fit'})).toHaveAttribute('aria-pressed','true');

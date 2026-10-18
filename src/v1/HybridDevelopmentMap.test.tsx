@@ -68,7 +68,7 @@ test('selecting a visual node opens a nonmodal inspector; full details require a
  expect(inspector).toHaveTextContent('feature/2');expect(inspector).toHaveTextContent('integration/custom');
  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();expect(fetcher).toHaveBeenCalledTimes(1);
  expect(within(canvas).getByTestId('hybrid-pr-2')).toHaveClass('is-selected');expect(within(canvas).getByTestId('hybrid-pr-1')).toHaveClass('is-dim');
- expect(canvas.querySelectorAll('[data-edge-kind="verified"]')).toHaveLength(1);
+ expect(canvas.querySelectorAll('.is-highlighted[data-edge-kind="verified"]')).toHaveLength(1);
  const detailButton=within(inspector).getByRole('button',{name:'開啟完整 PR 詳情'});detailButton.focus();await user.keyboard('{Enter}');
  expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toHaveTextContent('Synthetic feature 2');
  await user.keyboard('{Escape}');expect(screen.queryByRole('dialog')).not.toBeInTheDocument();expect(detailButton).toHaveFocus();expect(inspector).toBeInTheDocument();
@@ -84,7 +84,7 @@ test('20 PRs start grouped, expand and filter without invented active or deploym
  const expand=within(canvas).getByRole('button',{name:/展開.*20.*PR/});expect(expand).toHaveAttribute('aria-expanded','false');fireEvent.click(expand);
  expect(within(canvas).getAllByRole('button',{name:/PR #/})).toHaveLength(20);
  fireEvent.click(within(canvas).getByRole('button',{name:/PR #10 ·/}));
- expect(canvas.querySelectorAll('[data-edge-kind="reported"]')).toHaveLength(1);
+ expect(canvas.querySelectorAll('.is-highlighted[data-edge-kind="reported"]')).toHaveLength(1);
  fireEvent.click(within(canvas).getByRole('button',{name:/收折.*20.*PR/}));
  expect(within(canvas).queryAllByRole('button',{name:/PR #/})).toHaveLength(0);
  fireEvent.click(within(canvas).getByRole('button',{name:/展開.*20.*PR/}));
@@ -111,7 +111,7 @@ test('stacked selection highlights only its route, marks its reported parent and
  const h=history();h.pulls=[pull(4,'feature/5','open'),pull(5,'trunk','draft'),pull(6,'trunk','open')];
  const {region}=await mount(h);const user=userEvent.setup();const node=within(region).getByRole('button',{name:/PR #4 ·/});node.focus();await user.keyboard(' ');
  expect(within(region).getByTestId('hybrid-pr-5')).toHaveClass('is-related');expect(within(region).getByTestId('hybrid-pr-6')).toHaveClass('is-dim');
- expect(region.querySelectorAll('[data-edge-kind="reported"]')).toHaveLength(1);
+ expect(region.querySelectorAll('.is-highlighted[data-edge-kind="reported"]')).toHaveLength(1);
  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
  fireEvent.click(screen.getByRole('tab',{name:'清單'}));fireEvent.click(screen.getByRole('tab',{name:'開發全貌 / Hybrid'}));
  expect(screen.getByTestId('hybrid-pr-4')).toHaveClass('is-selected');
@@ -122,7 +122,7 @@ test('8 PR visual state separates release branch from deployment and uses the ac
  const {region}=await mount(h);const canvas=within(region).getByRole('region',{name:'Git 視覺流程圖'});
  expect(within(canvas).getAllByRole('button',{name:/PR #/})).toHaveLength(8);
  expect(within(canvas).getByRole('region',{name:'其他發布分支'})).toHaveTextContent('production-pages');
- expect(within(canvas).getByRole('region',{name:'主分支 / trunk'})).toHaveTextContent('IN trunk — VERIFIED');expect(canvas).not.toHaveTextContent('IN MAIN');
+ expect(within(canvas).getByRole('region',{name:'開發 / Feature'})).toHaveTextContent('IN trunk — VERIFIED');expect(within(canvas).getByRole('region',{name:'主分支 / trunk'}).querySelector('.hf-pr')).toBeNull();expect(canvas).not.toHaveTextContent('IN MAIN');
  const deployment=within(region).getByRole('region',{name:'部署 / 驗收'});expect(deployment.querySelector('svg')).toBeNull();expect(within(deployment).getAllByText('Not checked')).toHaveLength(2);
  const summary=within(region).getByRole('region',{name:'本次已取得資料摘要'});expect(summary).toHaveTextContent('MERGED3');expect(summary).toHaveTextContent('IN trunk VERIFIED1');
 });
@@ -137,29 +137,29 @@ test('SVG endpoints follow actual node bounds and remeasure when the layout chan
  let narrow=false;
  const rect=(x:number,y:number,w:number,h:number)=>({left:x,top:y,right:x+w,bottom:y+h,x,y,width:w,height:h,toJSON:()=>({})} as DOMRect);
  vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(){
-   if(this.classList.contains('hf-canvas'))return rect(0,0,1200,800);
-   if(this.dataset.flowNode==='pr:2')return narrow?rect(20,500,200,80):rect(300,200,200,80);
-   if(this.dataset.flowNode==='branch:integration/custom')return narrow?rect(20,300,200,60):rect(300,100,200,60);
+   if(this.classList.contains('hf-canvas'))return rect(0,0,narrow?300:1200,800);
+   if(this.dataset.flowNode==='pr:2')return narrow?rect(20,100,200,80):rect(100,200,200,80);
+   if(this.dataset.flowNode==='branch:integration/custom')return narrow?rect(20,500,200,60):rect(500,100,200,60);
    return rect(0,0,0,0);
  });
- const {region}=await mount();fireEvent.click(within(region).getByRole('button',{name:/PR #2 ·/}));
- const path=region.querySelector('[data-edge-kind="verified"] > path')!;
- expect(path).toHaveAttribute('d','M 400 200 C 400 180, 400 180, 400 160');
+ const {region}=await mount();
+ const path=region.querySelector('[data-from="pr:2"] > path')!;
+ expect(path).toHaveAttribute('d','M 300 240 H 370 V 121 H 500');
  narrow=true;fireEvent(window,new Event('resize'));
- expect(path).toHaveAttribute('d','M 120 500 C 120 430, 120 430, 120 360');
+ expect(path).toHaveAttribute('d','M 220 140 H 292 V 521 H 220');
 });
-test('merged to integration and verified in trunk are independent facts, with only that PR receiving inclusion edges',async()=>{
+test('merged target and verified default inclusion remain independent; arrows route from PR to its actual target only',async()=>{
  const h=history();h.commits.find(c=>c.sha==='tip')!.parents=['m1','m2'];h.defaultBranchShas=['tip','m1','m2','root'];
  const {region}=await mount(h);fireEvent.click(within(region).getByRole('button',{name:/PR #2 ·/}));
  const inspector=within(region).getByRole('complementary');expect(inspector).toHaveTextContent('MERGED');expect(inspector).toHaveTextContent('IN trunk — VERIFIED');expect(inspector).toHaveTextContent('integration/custom');
- const edges=region.querySelectorAll('[data-edge-kind="verified"]');expect(edges).toHaveLength(2);
- expect([...edges].map(e=>e.getAttribute('data-from'))).toEqual(['pr:2','pr:2']);
- expect([...edges].map(e=>e.getAttribute('data-to'))).toEqual(['branch:integration/custom','branch:trunk']);
+ const edges=region.querySelectorAll('.is-highlighted[data-edge-kind="verified"]');expect(edges).toHaveLength(1);
+ expect([...edges].map(e=>e.getAttribute('data-from'))).toEqual(['pr:2']);
+ expect([...edges].map(e=>e.getAttribute('data-to'))).toEqual(['branch:integration/custom']);
 });
 
 test('an OPEN PR remains a feature proposal even when its known head is already in the default branch',async()=>{
  const h=history();h.pulls[0]={...pull(1,'trunk','open'),headSha:'h1'};
  const {region}=await mount(h);const feature=within(region).getByRole('region',{name:'開發 / Feature'});
  const node=within(feature).getByRole('button',{name:/PR #1 ·/});expect(node).toHaveTextContent('OPEN');expect(node).toHaveTextContent('IN trunk — VERIFIED');
- fireEvent.click(node);expect(region.querySelectorAll('[data-edge-kind="reported"]')).toHaveLength(1);expect(region.querySelectorAll('[data-edge-kind="verified"]')).toHaveLength(1);
+ fireEvent.click(node);expect(region.querySelectorAll('.is-highlighted[data-edge-kind="reported"]')).toHaveLength(1);expect(region.querySelectorAll('.is-highlighted[data-edge-kind="verified"]')).toHaveLength(0);
 });

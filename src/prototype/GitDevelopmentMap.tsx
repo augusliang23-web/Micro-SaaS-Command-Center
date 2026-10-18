@@ -164,6 +164,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
   const [view, setView] = useState<View>('timeline');
   const [focusPR, setFocusPR] = useState<number | null>(null);
   const [range, setRange] = useState<RangeId>('6m');
+  const [activityFocus, setActivityFocus] = useState(true);
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [lanes, setLanes] = useState<Set<LaneId>>(() => new Set(LANES.map((l) => l.id)));
   const [collapsed, setCollapsed] = useState<Set<LaneId>>(() => new Set());
@@ -184,8 +185,8 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
     if (!data) return { text: 'GitHub 唯讀 · 正在查詢', read: false };
     return { text: `GitHub 唯讀 · 已讀取 · ${data.status === 'complete' ? 'Complete' : 'Partial'}`, read: true };
   })();
-  const chooseRange = (r: RangeId) => { setRange(r); setFit('auto'); }; // a new range always restarts at Auto Fit
-  const spanDays = data ? effectiveSpanDays(timelineSpan(data, range).start, timelineSpan(data, range).end) : 1;
+  const chooseRange = (r: RangeId) => { setRange(r); setActivityFocus(false); setFit('auto'); }; // a new range always restarts at Auto Fit
+  const spanDays = data ? effectiveSpanDays(timelineSpan(data, range, view === 'timeline' && activityFocus).start, timelineSpan(data, range, view === 'timeline' && activityFocus).end) : 1;
   const nextZoom = (dir: 1 | -1) => zoomStep(liveScale, dir, spanDays);
   const zoomBy = (dir: 1 | -1) => {
     const next = nextZoom(dir); // always from the CURRENT effective scale, whether it came from Auto Fit or a manual step
@@ -239,7 +240,8 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
             <button key={id} role="tab" aria-selected={view === id} onClick={() => { if (id === 'hybrid' && selection?.kind === 'pr') setFocusPR(selection.number); setView(id); }}><Icon size={14} />{label}</button>)}
         </div>
         <div className="g-seg" role="group" aria-label="時間範圍">
-          {(Object.keys(RANGE_LABEL) as RangeId[]).map((r) => <button key={r} aria-pressed={range === r} onClick={() => chooseRange(r)}>{RANGE_LABEL[r]}</button>)}
+          {view === 'timeline' && <button aria-pressed={activityFocus} onClick={() => { setActivityFocus(true); setFit('auto'); }}>聚焦開發活動</button>}
+          {(Object.keys(RANGE_LABEL) as RangeId[]).map((r) => <button key={r} aria-pressed={range === r && (view !== 'timeline' || !activityFocus)} onClick={() => chooseRange(r)}>{RANGE_LABEL[r]}</button>)}
         </div>
         {view !== 'topology' && <label className="g-select">狀態<select aria-label="PR 狀態篩選" value={stateFilter} onChange={(e) => setStateFilter(e.target.value as StateFilter)}>
           {(Object.keys(STATE_LABEL) as StateFilter[]).map((s) => <option key={s} value={s}>{STATE_LABEL[s]}</option>)}
@@ -259,7 +261,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
       </div>}
       <div className="g-layout">
         <section className="g-graph-panel" aria-label={view === 'hybrid' ? '開發全貌 / Hybrid' : view === 'topology' ? 'Git 拓樸圖' : view === 'list' ? 'PR 清單' : '開發時間軸'}>
-          {view === 'timeline' && <Timeline data={data} range={range} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
+          {view === 'timeline' && <Timeline data={data} range={range} activityFocus={activityFocus} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
           {view === 'topology' && <Topology data={data} range={range} selection={selection} select={openDetail} />}
           {view === 'hybrid' && <HybridFlowMap data={data} range={range} stateFilter={stateFilter} query={query} focusPR={focusPR ?? (selection?.kind === 'pr' ? selection.number : null)} onFocusPR={number => { setFocusPR(number); setSelection(null); }} onClearFocus={() => setFocusPR(null)} modalOpen={selection !== null} openDetail={(number, origin) => openDetail({ kind: 'pr', number }, origin)} needsRefresh={state.status === 'error' || state.refreshing} />}
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={openDetail} />}
@@ -290,8 +292,8 @@ function prLabel(pr: HistoryPull) {
   return `PR #${pr.number} · ${pr.title} · ${STATUS_LABEL[pr.status]} · ${pr.headRef ?? '?'} → ${pr.baseRef ?? '?'} · 建立 ${formatSgt(pr.createdAt)}${pr.mergedAt ? ` · 合併 ${formatSgt(pr.mergedAt)}` : ''}`;
 }
 
-function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
-  data: DevelopmentHistory; range: RangeId; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
+function Timeline({ data, range, activityFocus, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
+  data: DevelopmentHistory; range: RangeId; activityFocus: boolean; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
   fit: 'auto' | 'manual'; manualScale: number; compactLabels: boolean; onScale: (pxPerDay: number) => void; query: string; selection: Selection; select: (s: Selection, origin?: Element | null) => void;
   /** The last refresh failed: the held snapshot is historical, so it cannot support a current absence claim. */ refreshFailed?: boolean;
 }) {
@@ -313,18 +315,20 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
     return () => ro.disconnect();
   }, [compactLabels]);
   const plotWidth = box.frame > 0 ? Math.max(0, box.frame - box.labels) : 0;
-  const layout = useMemo(() => buildTimeline(data, { range, state: stateFilter, lanes, collapsed, pxPerDay: fit === 'manual' ? manualScale : undefined, plotWidth, query }), [data, range, stateFilter, lanes, collapsed, fit, manualScale, plotWidth, query]);
+  const layout = useMemo(() => buildTimeline(data, { range, activityFocus, state: stateFilter, lanes, collapsed, pxPerDay: fit === 'manual' ? manualScale : undefined, plotWidth, query }), [data, range, activityFocus, stateFilter, lanes, collapsed, fit, manualScale, plotWidth, query]);
   useLayoutEffect(() => { onScale(layout.pxPerDay); }, [layout.pxPerDay, onScale]);
   const index = useMemo(() => indexCommits(data.commits), [data]);
   const lastScroll = useRef(0);
   const prevScale = useRef<{ ppd: number; start: number } | null>(null);
-  useLayoutEffect(() => { if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth; }, [range]);
+  useLayoutEffect(() => { if (scroller.current) { scroller.current.scrollLeft = activityFocus ? 0 : scroller.current.scrollWidth; lastScroll.current = scroller.current.scrollLeft; } }, [range, activityFocus]);
   // Keep the same moment centred when the scale changes (zoom, resize, rail collapse) instead of jumping.
   useLayoutEffect(() => {
     const el = scroller.current;
     const prev = prevScale.current;
     prevScale.current = { ppd: layout.pxPerDay, start: layout.start };
-    if (!el || !prev || prev.start !== layout.start || prev.ppd === layout.pxPerDay) return;
+    if (!el || !prev) return;
+    if (prev.start !== layout.start) { if (activityFocus && fit === 'auto') { el.scrollLeft = 0; lastScroll.current = 0; } return; }
+    if (prev.ppd === layout.pxPerDay) return;
     const view = Math.max(0, el.clientWidth - (labelsRef.current?.offsetWidth ?? 0));
     const centreMs = prev.start + ((lastScroll.current + view / 2 - PLOT_GUTTER_LEFT) / prev.ppd) * 86_400_000;
     const next = PLOT_GUTTER_LEFT + ((centreMs - layout.start) / 86_400_000) * layout.pxPerDay - view / 2;
@@ -340,7 +344,7 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
   const ppShas = new Set(data.comparisons.find((c) => c.head === 'production-pages')?.commitShas ?? []);
   const laneCommits = (id: 'main' | 'production-pages') => {
     const shas = id === 'main' ? data.defaultBranchShas : [...ppShas];
-    return shas.map((s) => index.get(s)).filter((c): c is HistoryCommit => Boolean(c?.committerDate && Date.parse(c.committerDate) >= layout.start));
+    return shas.map((s) => index.get(s)).filter((c): c is HistoryCommit => Boolean(c?.committerDate && Date.parse(c.committerDate) >= layout.start && Date.parse(c.committerDate) <= layout.end));
   };
   const connectors: { d: string; kind: 'verified-merge' | 'pr-record' | 'reported-base'; label: string; color: string; dim: boolean; focus: boolean }[] = [];
   for (const item of layout.items) {
@@ -354,7 +358,7 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
       const parentItem = stackParent(pr, data.pulls) ? byNumber.get(stackParent(pr, data.pulls)!.number) : undefined;
       const ty = laneLineY(laneForBranch(pr.baseRef, data.defaultBranch)) ?? (parentItem ? AXIS + parentItem.y + 44 : null);
       if (ty !== null) {
-        const sx = item.x + item.barWidth; const tx = xOf(pr.mergedAt);
+        const sx = item.x + item.barWidth; const tx = xOf(new Date(Math.min(layout.end, Date.parse(pr.mergedAt))).toISOString());
         connectors.push({ d: `M ${sx} ${sy} C ${sx + 30} ${sy}, ${tx} ${(sy + ty) / 2}, ${tx} ${ty}`, kind: evidence === 'verified_merge_commit' ? 'verified-merge' : 'pr-record', label: `PR #${pr.number} 合併到 ${pr.baseRef}：${MERGE_EVIDENCE_LABEL[evidence]}`, color, dim, focus });
       }
     } else if (pr.state === 'open') {
@@ -367,7 +371,8 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
       }
     }
   }
-  const fetchedX = xOf(data.fetchedAt);
+  const fetchedX = xOf(new Date(layout.end).toISOString());
+  const checkedInWindow = Date.parse(data.fetchedAt) >= layout.start && Date.parse(data.fetchedAt) <= layout.end;
   // Months in range in which GitHub shows no PR created (a source fact). Months are SGT calendar months.
   const emptyMonths = useMemo(() => {
     const createdMonths = new Set(data.pulls.map((p) => formatSgt(p.createdAt, false).slice(0, 7)));
@@ -382,7 +387,7 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
     return out;
   }, [data.pulls, data.fetchedAt, layout.start]);
   return <>
-    <div className="g-graph-top"><strong>開發時間軸 · {RANGE_LABEL[range]}</strong><span>橫軸：實際日期（Asia/Singapore，UTC+8）· {layout.fit ? 'Auto Fit' : `手動縮放 ${layout.pxPerDay} px/天`}（{layout.pxPerDay.toFixed(1)} px/天）· 顯示 {layout.items.length} / {layout.total} 個 PR{layout.hiddenByRange ? ` · ${layout.hiddenByRange} 個在範圍外` : ''}</span>{range === 'all' && <span data-testid="all-history-scope">{data.status === 'complete' ? '全部歷史＝已取得快照內最早的 commit／PR 起算（all fetched history）。' : 'Partial / UNKNOWN：全部歷史只涵蓋已取得的資料，不代表完整 repository 歷史。'}</span>}</div>
+    <div className="g-graph-top"><strong>開發時間軸 · {activityFocus ? '聚焦開發活動' : RANGE_LABEL[range]}</strong><span>橫軸：實際日期（Asia/Singapore，UTC+8）· {layout.fit ? 'Auto Fit' : `手動縮放 ${layout.pxPerDay} px/天`}（{layout.pxPerDay.toFixed(1)} px/天）· 顯示 {layout.items.length} / {layout.total} 個 PR{layout.hiddenByRange ? ` · ${layout.hiddenByRange} 個未定位（範圍外或日期不完整）` : ''}</span>{activityFocus && <span>視窗：{layout.activityAvailable ? `${formatSgt(new Date(layout.start).toISOString())} → ${formatSgt(new Date(layout.end).toISOString())}` : '沒有可用的 PR 活動日期'} · Last checked {formatSgt(data.fetchedAt)} · 依已取得 PR 事件聚焦，非完整歷史</span>}{!activityFocus && range === 'all' && <span data-testid="all-history-scope">{data.status === 'complete' ? '全部歷史＝已取得快照內最早的 commit／PR 起算（all fetched history）。' : 'Partial / UNKNOWN：全部歷史只涵蓋已取得的資料，不代表完整 repository 歷史。'}</span>}</div>
     <div className="g-frame" ref={scroller} tabIndex={0} role="region" aria-label="可捲動的開發時間軸（水平：日期；垂直：分支群組）" onScroll={(e) => { lastScroll.current = e.currentTarget.scrollLeft; }}>
       <div className={`g-lane-labels ${compactLabels ? 'is-compact' : ''}`} ref={labelsRef} style={{ height: layout.height + AXIS }}>
         {layout.lanes.map((lane) => { const meta = laneById(lane.id); const fixed = lane.id === 'main' || lane.id === 'production-pages';
@@ -391,14 +396,14 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
             <small>{fixed ? meta.note : `${lane.count} PR · ${meta.note}`}</small>
           </div>; })}
       </div>
-      <div className="g-canvas" data-fit={layout.fit ? 'auto' : 'manual'} data-px-per-day={layout.pxPerDay} style={{ width: layout.width, height: layout.height + AXIS }}>
-          <div className="g-axis" style={{ width: layout.width }}>{layout.ticks.map((t) => <span key={t.x} className="g-tick-label" style={{ left: t.x }}>{t.label}</span>)}<span className="g-now" style={{ left: timelineX(layout, data.fetchedAt) }}>Last checked {formatSgt(data.fetchedAt, false)}</span></div>
+      <div className="g-canvas" data-range-mode={activityFocus ? 'activity' : 'calendar'} data-start={layout.start} data-end={layout.end} data-fit={layout.fit ? 'auto' : 'manual'} data-px-per-day={layout.pxPerDay} style={{ width: layout.width, height: layout.height + AXIS }}>
+          <div className="g-axis" style={{ width: layout.width }}>{(layout.activityAvailable === false ? [] : layout.ticks).map((t) => <span key={t.x} className="g-tick-label" style={{ left: t.x }}>{t.label}</span>)}{checkedInWindow && <span className="g-now" style={{ left: timelineX(layout, data.fetchedAt) }}>Last checked {formatSgt(data.fetchedAt, false)}</span>}</div>
           {layout.ticks.map((t) => <i key={t.x} className="g-tick" style={{ left: t.x }} />)}
           {layout.lanes.map((lane, i) => <div key={lane.id} className={`g-band ${i % 2 ? 'is-alt' : ''}`} style={{ top: AXIS + lane.y, height: lane.height }} />)}
           <svg className="g-lines" width={layout.width} height={layout.height + AXIS} aria-hidden={false} role="img" aria-label="PR 與分支關係連線">
             {(['main', 'production-pages'] as const).map((id) => { const y = laneLineY(id); return y === null ? null : <line key={id} x1={8} x2={fetchedX} y1={y} y2={y} stroke={laneById(id).color} strokeWidth={id === 'main' ? 5 : 4} strokeLinecap="round" />; })}
             {connectors.map((c, i) => <path key={i} d={c.d} data-kind={c.kind} aria-label={c.label} stroke={c.kind === 'pr-record' ? '#94a3b8' : c.color} strokeWidth={(c.kind === 'verified-merge' ? 2.4 : 1.8) + (c.focus ? 1.2 : 0)} strokeDasharray={c.kind === 'verified-merge' ? undefined : c.kind === 'reported-base' ? '6 5' : '2 4'} fill="none" opacity={c.focus ? 1 : c.dim ? 0.08 : c.kind === 'reported-base' ? 0.75 : 0.28}><title>{c.label}</title></path>)}
-            <line x1={fetchedX} x2={fetchedX} y1={AXIS - 6} y2={layout.height + AXIS} stroke="#0f172a" strokeDasharray="3 4" opacity={0.35} />
+            {checkedInWindow && <line x1={fetchedX} x2={fetchedX} y1={AXIS - 6} y2={layout.height + AXIS} stroke="#0f172a" strokeDasharray="3 4" opacity={0.35} />}
           </svg>
           {(['main', 'production-pages'] as const).map((id) => { const y = laneLineY(id); if (y === null) return null;
             return laneCommits(id).map((c) => { const merge = c.parents.length > 1; const x = xOf(c.committerDate!);
@@ -408,13 +413,13 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
           {layout.items.map((item) => { const pr = item.pr; const dim = related && !related.has(pr.number);
             return <button key={pr.number} className={`g-pr-card is-${pr.status} kind-${branchKind(pr.headRef, data.defaultBranch)} ${selection?.kind === 'pr' && selection.number === pr.number ? 'is-selected' : ''} ${dim ? 'is-dim' : ''} ${related?.has(pr.number) && selection?.kind === 'pr' && selection.number !== pr.number ? 'is-related' : ''}`}
               style={{ left: item.cardX, top: AXIS + item.y, width: item.width, ['--lane' as string]: laneById(item.lane).color }} data-node={`pr-${pr.number}`} data-select aria-pressed={selection?.kind === 'pr' && selection.number === pr.number} aria-label={prLabel(pr)} title={pr.title} onClick={(e) => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>
-              <span className="g-pr-top"><b>#{pr.number}</b><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span><span className="g-pr-branch">{pr.headRef}</span></span>
+              <span className="g-pr-top"><b>#{pr.number}</b><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span><span className="g-pr-branch">{pr.headRef}</span>{item.clippedStart && <small className="g-clipped">視窗外開始</small>}{item.clippedEnd && <small className="g-clipped">視窗外延續</small>}</span>
               <span className="g-pr-title">{pr.title}</span>
               <span className="g-pr-track" aria-hidden="true"><i style={{ marginLeft: item.x - item.cardX, width: Math.max(2, Math.min(item.barWidth, item.width - (item.x - item.cardX))) }} className={pr.state === 'open' ? 'is-open' : ''} /></span>
             </button>; })}
       </div>
     </div>
-    <div className="g-legend"><span data-testid="no-pr-months">main／production-pages 上的圓點是 commit，不是 PR，兩者沒有推定關聯；PR 卡片只代表 GitHub PR 的建立到合併／關閉期間。{refreshFailed ? '最近一次重新整理失敗（Needs refresh）：目前顯示的是上一次成功讀取的資料，無法確認目前此範圍內是否有月份沒有 PR。' : prAbsenceVerifiable(data) ? (emptyMonths.length ? `此範圍內沒有建立任何 PR 的月份：${emptyMonths.join('、')}（來源事實，並非資料缺漏）。` : '') : 'GitHub 歷史資料不完整，無法確認此範圍內是否有月份沒有 PR。'}</span><span><i className="is-solid" />實線：已驗證 merge commit（parent 含 PR head）</span><span><i className="is-dashed" />虛線：PR 回報的 base（PR metadata，非 fork point）</span><span><i className="is-dotted" />點線：僅 PR 合併紀錄，無 Git parent 證據</span><span>卡片底部條＝實際 PR 期間（建立 → 合併／關閉／Last checked）</span></div>
+    <div className="g-legend"><span data-testid="no-pr-months">main／production-pages 上的圓點是 commit，不是 PR，兩者沒有推定關聯；PR 卡片只代表 GitHub PR 的建立到合併／關閉期間。{activityFocus ? '活動聚焦僅顯示視窗內期間；視窗外開始／延續保留原始日期，不代表 PR 在裁切處建立或結束。缺少有效建立／結束日期者無法定位；可選明確日曆範圍查看。' : refreshFailed ? '最近一次重新整理失敗（Needs refresh）：目前顯示的是上一次成功讀取的資料，無法確認目前此範圍內是否有月份沒有 PR。' : prAbsenceVerifiable(data) ? (emptyMonths.length ? `此範圍內沒有建立任何 PR 的月份：${emptyMonths.join('、')}（來源事實，並非資料缺漏）。` : '') : 'GitHub 歷史資料不完整，無法確認此範圍內是否有月份沒有 PR。'}</span><span><i className="is-solid" />實線：已驗證 merge commit（parent 含 PR head）</span><span><i className="is-dashed" />虛線：PR 回報的 base（PR metadata，非 fork point）</span><span><i className="is-dotted" />點線：僅 PR 合併紀錄，無 Git parent 證據</span><span>卡片底部條＝實際 PR 期間（建立 → 合併／關閉／Last checked）</span></div>
   </>;
 }
 

@@ -317,3 +317,26 @@
 @container(max-width:460px) {
   .hf-lanes { grid-template-columns:minmax(0,1fr); }
 }
+/* Phase 1C: a dedicated source column and destination stack leave an unobstructed routing gutter. */
+.hf-lanes { grid-template-columns:minmax(0,1fr) minmax(0,1fr); column-gap:100px; row-gap:20px; align-items:start; }
+.hf-lane.is-feature { grid-column:1; grid-row:1 / span 3; }
+.hf-lane.is-integration { grid-column:2; grid-row:1; }
+.hf-lane.is-main { grid-column:2; grid-row:2; }
+.hf-lane.is-release { grid-column:2; grid-row:3; }
+.hf-source-name { font-size:10px; color:#6c8177; overflow-wrap:anywhere; }
+.hf-edge { opacity:.65; stroke-width:2; }
+.hf-edges .is-highlighted .hf-edge { opacity:1; stroke-width:3.5; }
+.hf-edges .is-dim .hf-edge { opacity:.12; }
+.hf-route-labels summary { cursor:pointer; padding:5px 0; }
+.hf-route-labels li { margin:5px 0; }
+.g-clipped { flex-shrink:0; font-size:9px; color:#7c5b23; background:#faf2dd; padding:1px 3px; border-radius:3px; }
+@media(max-width:600px) {
+  .hf-canvas { padding-right:52px; }
+  .hf-lanes { grid-template-columns:minmax(0,1fr); gap:20px; }
+  .hf-lane.is-feature,.hf-lane.is-integration,.hf-lane.is-main,.hf-lane.is-release { grid-column:1; grid-row:auto; }
+}
+@container(max-width:460px) {
+  .hf-canvas { padding-right:52px; }
+  .hf-lanes { grid-template-columns:minmax(0,1fr); gap:20px; }
+  .hf-lane.is-feature,.hf-lane.is-integration,.hf-lane.is-main,.hf-lane.is-release { grid-column:1; grid-row:auto; }
+}
