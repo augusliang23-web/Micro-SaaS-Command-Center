@@ -12,6 +12,7 @@ import {
 } from './gitHistoryModel';
 
 import { HybridFlowMap } from './HybridFlowMap';
+import { ACTIVITY_RECHECK_MS, projectRecentActivity, type CommitWindowHours, type RecentActivitySnapshot } from './recentActivityModel';
 
 type LoadState = {
   key: string; status: 'loading' | 'ready' | 'error'; data?: DevelopmentHistory;
@@ -165,6 +166,19 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
   const [focusPR, setFocusPR] = useState<number | null>(null);
   const [range, setRange] = useState<RangeId>('6m');
   const [activityFocus, setActivityFocus] = useState(true);
+  const [commitWindowHours, setCommitWindowHours] = useState<CommitWindowHours>(12);
+  const [pulseEnabled, setPulseEnabled] = useState(true);
+  const [activityNow, setActivityNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!data) return;
+    const tick = () => setActivityNow(Date.now());
+    tick();
+    const timer = window.setInterval(tick, ACTIVITY_RECHECK_MS);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, [data?.fetchedAt]);
+  const recentActivity = useMemo(() => projectRecentActivity(data, repo, activityNow, commitWindowHours, state.status !== 'ready' || state.refreshing), [data, repo, activityNow, commitWindowHours, state.status, state.refreshing]);
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [lanes, setLanes] = useState<Set<LaneId>>(() => new Set(LANES.map((l) => l.id)));
   const [collapsed, setCollapsed] = useState<Set<LaneId>>(() => new Set());
@@ -256,14 +270,20 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
           <button aria-pressed={compactLabels} onClick={() => setCompactLabels((c) => !c)} title={compactLabels ? '展開分支標籤欄' : '收合分支標籤欄'}>{compactLabels ? '展開分支標籤' : '收合分支標籤'}</button>
         </div>}
       </div>
+      {(view === 'timeline' || view === 'hybrid') && <section className="pr-activity-controls" aria-label="近期 HEAD Commit 提示">
+        <div><button className="p-secondary" aria-label="近期 Commit 提示" aria-pressed={pulseEnabled} onClick={() => { setPulseEnabled(value => !value); setActivityNow(Date.now()); }}>{pulseEnabled ? '近期 Commit 提示：開啟' : '近期 Commit 提示：關閉'}</button>
+          <label>Commit 時窗<select aria-label="近期 Commit 時窗" value={commitWindowHours} onChange={event => { setCommitWindowHours(Number(event.target.value) as CommitWindowHours); setActivityNow(Date.now()); }}>{([6,12,24] as const).map(hours => <option key={hours} value={hours}>{hours} 小時</option>)}</select></label>
+          <span aria-label="Commit 活動資料狀態">{recentActivity.message}</span></div>
+        <p>僅核對 OPEN / DRAFT 的精確 HEAD Commit（committerDate），不表示 Push 時間或 Agent 執行。快照有效期 15 分鐘；Last checked {data ? formatSgt(data.fetchedAt) : 'Not checked'}。與時間軸「聚焦開發活動」分開；群組展開後顯示個別提示。</p>
+      </section>}
       {(view === 'timeline' || view === 'list') && <div className="g-lane-filter" role="group" aria-label="分支群組篩選">
         {LANES.map((l) => <button key={l.id} aria-pressed={lanes.has(l.id)} onClick={() => setLanes((s) => toggle(s, l.id))} style={{ ['--lane' as string]: l.color }}><i />{l.title}</button>)}
       </div>}
       <div className="g-layout">
         <section className="g-graph-panel" aria-label={view === 'hybrid' ? '開發全貌 / Hybrid' : view === 'topology' ? 'Git 拓樸圖' : view === 'list' ? 'PR 清單' : '開發時間軸'}>
-          {view === 'timeline' && <Timeline data={data} range={range} activityFocus={activityFocus} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
+          {view === 'timeline' && <Timeline recentActivity={recentActivity} pulseEnabled={pulseEnabled} data={data} range={range} activityFocus={activityFocus} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
           {view === 'topology' && <Topology data={data} range={range} selection={selection} select={openDetail} />}
-          {view === 'hybrid' && <HybridFlowMap data={data} range={range} stateFilter={stateFilter} query={query} focusPR={focusPR ?? (selection?.kind === 'pr' ? selection.number : null)} onFocusPR={number => { setFocusPR(number); setSelection(null); }} onClearFocus={() => setFocusPR(null)} modalOpen={selection !== null} openDetail={(number, origin) => openDetail({ kind: 'pr', number }, origin)} needsRefresh={state.status === 'error' || state.refreshing} />}
+          {view === 'hybrid' && <HybridFlowMap recentActivity={recentActivity} pulseEnabled={pulseEnabled} data={data} range={range} stateFilter={stateFilter} query={query} focusPR={focusPR ?? (selection?.kind === 'pr' ? selection.number : null)} onFocusPR={number => { setFocusPR(number); setSelection(null); }} onClearFocus={() => setFocusPR(null)} modalOpen={selection !== null} openDetail={(number, origin) => openDetail({ kind: 'pr', number }, origin)} needsRefresh={state.status === 'error' || state.refreshing} />}
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={openDetail} />}
         </section>
       </div>
@@ -292,8 +312,8 @@ function prLabel(pr: HistoryPull) {
   return `PR #${pr.number} · ${pr.title} · ${STATUS_LABEL[pr.status]} · ${pr.headRef ?? '?'} → ${pr.baseRef ?? '?'} · 建立 ${formatSgt(pr.createdAt)}${pr.mergedAt ? ` · 合併 ${formatSgt(pr.mergedAt)}` : ''}`;
 }
 
-function Timeline({ data, range, activityFocus, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
-  data: DevelopmentHistory; range: RangeId; activityFocus: boolean; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
+function Timeline({ recentActivity, pulseEnabled, data, range, activityFocus, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
+  recentActivity: RecentActivitySnapshot; pulseEnabled: boolean; data: DevelopmentHistory; range: RangeId; activityFocus: boolean; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
   fit: 'auto' | 'manual'; manualScale: number; compactLabels: boolean; onScale: (pxPerDay: number) => void; query: string; selection: Selection; select: (s: Selection, origin?: Element | null) => void;
   /** The last refresh failed: the held snapshot is historical, so it cannot support a current absence claim. */ refreshFailed?: boolean;
 }) {
@@ -410,11 +430,11 @@ function Timeline({ data, range, activityFocus, stateFilter, lanes, collapsed, t
               return merge || c.sha === data.branches.find((b) => b.name === id)?.headSha
                 ? <button key={`${id}-${c.sha}`} className={`g-commit-dot ${merge ? 'is-merge' : 'is-head'} ${selection?.kind === 'commit' && selection.sha === c.sha ? 'is-selected' : ''}`} style={{ left: x, top: y, ['--lane' as string]: laneById(id).color }} data-node={`commit-${c.sha}`} data-select aria-label={`${id} commit ${shortSha(c.sha)} · ${c.message} · commit 時間 ${formatSgt(c.committerDate)}`} title={`${shortSha(c.sha)} ${c.message}`} onClick={(e) => select({ kind: 'commit', sha: c.sha }, e.currentTarget)} />
                 : <i key={`${id}-${c.sha}`} className="g-commit-tick" style={{ left: x, top: y, background: laneById(id).color }} />; }); })}
-          {layout.items.map((item) => { const pr = item.pr; const dim = related && !related.has(pr.number);
-            return <button key={pr.number} className={`g-pr-card is-${pr.status} kind-${branchKind(pr.headRef, data.defaultBranch)} ${selection?.kind === 'pr' && selection.number === pr.number ? 'is-selected' : ''} ${dim ? 'is-dim' : ''} ${related?.has(pr.number) && selection?.kind === 'pr' && selection.number !== pr.number ? 'is-related' : ''}`}
-              style={{ left: item.cardX, top: AXIS + item.y, width: item.width, ['--lane' as string]: laneById(item.lane).color }} data-node={`pr-${pr.number}`} data-select aria-pressed={selection?.kind === 'pr' && selection.number === pr.number} aria-label={prLabel(pr)} title={pr.title} onClick={(e) => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>
+          {layout.items.map((item) => { const pr = item.pr; const dim = related && !related.has(pr.number); const activity = recentActivity.byPull.get(pr.number); const recent = pulseEnabled && activity?.state === 'recent';
+            return <button key={pr.number} className={`g-pr-card ${recent ? 'has-recent-commit' : ''} is-${pr.status} kind-${branchKind(pr.headRef, data.defaultBranch)} ${selection?.kind === 'pr' && selection.number === pr.number ? 'is-selected' : ''} ${dim ? 'is-dim' : ''} ${related?.has(pr.number) && selection?.kind === 'pr' && selection.number !== pr.number ? 'is-related' : ''}`}
+              style={{ left: item.cardX, top: AXIS + item.y, width: item.width, ['--lane' as string]: laneById(item.lane).color }} data-node={`pr-${pr.number}`} data-select aria-pressed={selection?.kind === 'pr' && selection.number === pr.number} aria-label={prLabel(pr)} aria-describedby={`timeline-commit-${pr.number}`} title={recent ? `${pr.title} · ${activity.explanation}` : pr.title} onClick={(e) => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>
               <span className="g-pr-top"><b>#{pr.number}</b><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span><span className="g-pr-branch">{pr.headRef}</span>{item.clippedStart && <small className="g-clipped">視窗外開始</small>}{item.clippedEnd && <small className="g-clipped">視窗外延續</small>}</span>
-              <span className="g-pr-title">{pr.title}</span>
+              <span className="g-pr-title">{recent && <small className="pr-recent-label">{activity.label}</small>}{pr.title}</span><span className="pr-activity-sr" id={`timeline-commit-${pr.number}`}>{activity?.explanation ?? recentActivity.message}</span>
               <span className="g-pr-track" aria-hidden="true"><i style={{ marginLeft: item.x - item.cardX, width: Math.max(2, Math.min(item.barWidth, item.width - (item.x - item.cardX))) }} className={pr.state === 'open' ? 'is-open' : ''} /></span>
             </button>; })}
       </div>
