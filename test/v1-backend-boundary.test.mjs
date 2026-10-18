@@ -699,6 +699,7 @@ const SHADOW_PUBLIC_MARK = 'SYNTH-MARK-SHADOW-PUBLIC-7c1';
 const HELPER_JS_MARK = 'SYNTHETIC-HELPER-MODULE';
 const PKG_JS_MARK = 'SYNTHETIC-NODE-MODULE';
 const DEP_JS_MARK = 'SYNTHETIC-OPTIMIZED-DEP';
+const VITE_ENV_MARK = 'SYNTHETIC-VITE-ENV-MJS';
 
 function makeSymlinkDevCwd() {
   const { cwd, outside } = makeDevCwd();
@@ -709,6 +710,14 @@ function makeSymlinkDevCwd() {
   put('src/sub/helper.js', `export const helper = '${HELPER_JS_MARK}';\n`);
   put('node_modules/synth-pkg/index.js', `export const pkg = '${PKG_JS_MARK}';\n`);
   put('node_modules/.vite/deps/synth-dep.js', `export const dep = '${DEP_JS_MARK}';\n`);
+
+  // Legitimate Vite client env.mjs (exact file allowed for Vite dev client)
+  put('node_modules/vite/dist/client/env.mjs', `export const env = '${VITE_ENV_MARK}';\n`);
+  // Neighboring unapproved files in the same directory (must remain blocked)
+  put('node_modules/vite/dist/client/client.mjs', `export const client = 'UNAPPROVED-CLIENT-MJS';\n`);
+  put('node_modules/vite/dist/client/other.js', `export const other = 'UNAPPROVED-OTHER-JS';\n`);
+  link('node_modules/vite/dist/client/evil-escape.mjs', '../../../../projects.local.json');
+  put('node_modules/vite/dist/client/.env', `SECRET=${DOT_MARK}\n`);
 
   // A. Allowed /src symlinks resolving inside /src
   link('src/alias-main.js', './main.js');
@@ -770,7 +779,8 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
     const root = '/srv/synthetic root/project';
     const c = (url) => classifyDevAssetRequest(url, { root }).action;
     for (const url of ['/src/main.tsx', '/src/main.tsx?t=1700000000', '/src/v1/ReadOnlyCommandCenter.tsx', '/src/index.css', '/@vite/client', '/@vite/env', '/@react-refresh', '/node_modules/.vite/deps/react.js?v=abc123', '/node_modules/.vite/deps/_metadata.json',
-      `/@fs/${root}/node_modules/tailwindcss/index.css`, '/@id/__x00__virtual:synthetic', '/@id/virtual:synthetic-module']) assert.equal(c(url), 'allow', url);
+      `/@fs/${root}/node_modules/tailwindcss/index.css`, '/@id/__x00__virtual:synthetic', '/@id/virtual:synthetic-module',
+      '/node_modules/vite/dist/client/env.mjs', '/node_modules/vite/dist/client/env.mjs?t=1700000000']) assert.equal(c(url), 'allow', url);
     for (const url of ['/', '/index.html', '/some/client/route', '/some/client/route?x=1', '/projects', '/NOTES', '/data/tasks']) assert.equal(c(url), 'spa', url);
     for (const url of [
       '/projects.local.json', '/projects.local.json?raw', '/data/tasks/CC-1.json', '/data/app-state.json', '/business/x.txt', '/.env', '/.env.local', '/.bridge/codex-projects.local.json', '/vite.config.ts', '/package.json', '/server.ts', '/server/v1RequestPolicy.mjs', '/test/x.mjs',
@@ -779,6 +789,7 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
       `/@fs/${root}/projects.local.json`, `/@fs/${root}/data/tasks/CC-1.json`, `/@fs/${root}/.env`, `/@fs/${root}/node_modules/../projects.local.json`, `/@fs/${root}/node_modules/%2e%2e/projects.local.json`, '/@fs/etc/synthetic', '/@fs//synthetic/secret.txt',
       `/@fs/${root}/node_modules/.env`, `/@fs/${root}/node_modules/tailwindcss/.env`, `/@fs/${root}/node_modules/tailwindcss/.hidden/x.js`, `/@fs/${root}/node_modules/.bin/vite`, `/@fs/${root}/node_modules/.cache/secret.json`, `/@fs/${root}/node_modules/.vite/metadata.json`, `/@fs/${root}/node_modules/.vite/deps/.env`,
       '/node_modules/.vite/deps/.env', '/node_modules/.vite/deps/.hidden/x.js', '/node_modules/.vite/deps/sub/.env',
+      '/node_modules/vite/dist/client/client.mjs', '/node_modules/vite/dist/client/other.js', '/node_modules/vite/dist/client/env.mjs/evil.js', '/node_modules/vite/dist/client/env.mjs.map', '/node_modules/vite/dist/client/.env',
       '/@id/@/projects.local.json', '/@id/%40/projects.local.json', '/@id/projects.local.json', '/@id/', '/@vite/../projects.local.json', '/node_modules/other/package.json', '/node_modules/../projects.local.json',
       '/__open-in-editor?file=x', '/__open-stack-frame-in-editor?file=x', '/__vite_ping', '/@vite-plugin-synthetic', 'http://evil.example/src/main.js', '*', '',
     ]) assert.equal(c(url), 'deny', JSON.stringify(url));
@@ -796,6 +807,7 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
       `/@fs/${cwd}/node_modules/synth-pkg/index.js`, `/@fs/${cwd}/node_modules/synth-alias/index.js`,
       '/node_modules/.vite/deps/synth-dep.js', '/node_modules/.vite/deps/synth-dep.js?v=123', '/node_modules/.vite/deps/synth-dep-link.js',
       '/@vite/client', '/@vite/env', '/@react-refresh',
+      '/node_modules/vite/dist/client/env.mjs', '/node_modules/vite/dist/client/env.mjs?v=123', '/node_modules/vite/dist/client/env.mjs?import',
     ]) assert.equal(c(allowed), 'allow', allowed);
 
     // B, C, D, E, F, G, H, I (negative): escaping symlinks, ancestor symlinks, hop-out-and-back, nested symlinks, dangling symlinks, encoded variants, /@fs, .vite/deps, and dotfiles
@@ -810,6 +822,9 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
       '/src/sub/.dotfile.js', '/src/sub/.dotdir/secret.js', '/src/dot-link.js', '/src/dotdir-link/secret.js',
       `/@fs/${cwd}/node_modules/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.dotdir/secret.js`, `/@fs/${cwd}/node_modules/synth-pkg/dot-link.js`,
       '/node_modules/.vite/deps/.env', '/node_modules/.vite/deps/.dotdir/secret.js', '/node_modules/.vite/deps/dot-link.js',
+      '/node_modules/vite/dist/client/client.mjs', '/node_modules/vite/dist/client/other.js',
+      '/node_modules/vite/dist/client/evil-escape.mjs', '/node_modules/vite/dist/client/.env',
+      '/node_modules/vite/dist/client/env.mjs/evil.js',
     ]) assert.equal(c(denied), 'deny', denied);
 
     // SPA entry check: normal index.html is 'spa', but a symlinked index.html fails closed as 'deny'
@@ -820,6 +835,11 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
     assert.equal(c('/'), 'deny', 'symlinked index.html must be denied');
     assert.equal(c('/index.html'), 'deny', 'symlinked index.html must be denied');
     assert.equal(c('/projects'), 'deny', 'SPA fallback with symlinked index.html must be denied');
+
+    // Escaping symlink replacement check: if env.mjs is replaced with a symlink targeting private files, it must be denied
+    fs.unlinkSync(path.join(cwd, 'node_modules/vite/dist/client/env.mjs'));
+    fs.symlinkSync(path.join(cwd, 'projects.local.json'), path.join(cwd, 'node_modules/vite/dist/client/env.mjs'));
+    assert.equal(c('/node_modules/vite/dist/client/env.mjs'), 'deny', 'symlinked env.mjs escaping to private file must be denied');
   });
 
   test('runtime dev server blocks symlink, ancestor-symlink, nested-symlink, encoded, /@fs, dependency-cache, dotfile, and public-shadow escapes before Vite, while serving legitimate frontend modules', async () => {
@@ -838,6 +858,8 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
         '/src/sub/.dotfile.js', '/src/sub/.dotdir/secret.js', '/src/dot-link.js', '/src/dotdir-link/secret.js',
         `/@fs/${cwd}/node_modules/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.env`, `/@fs/${cwd}/node_modules/synth-pkg/.dotdir/secret.js`, `/@fs/${cwd}/node_modules/synth-pkg/dot-link.js`,
         '/node_modules/.vite/deps/.env', '/node_modules/.vite/deps/.dotdir/secret.js', '/node_modules/.vite/deps/dot-link.js',
+        '/node_modules/vite/dist/client/client.mjs', '/node_modules/vite/dist/client/other.js',
+        '/node_modules/vite/dist/client/evil-escape.mjs', '/node_modules/vite/dist/client/.env',
         '/robots.txt', '/secret.txt',
       ];
       const blockedUrls = [];
@@ -868,6 +890,8 @@ describe('K. (R2) the Vite development server serves only the V1 frontend, never
         [`/@fs/${cwd}/node_modules/synth-alias/index.js`, PKG_JS_MARK],
         ['/node_modules/.vite/deps/synth-dep.js?v=123', DEP_JS_MARK],
         ['/node_modules/.vite/deps/synth-dep-link.js?v=123', DEP_JS_MARK],
+        ['/node_modules/vite/dist/client/env.mjs', VITE_ENV_MARK],
+        ['/node_modules/vite/dist/client/env.mjs?import', VITE_ENV_MARK],
       ]) {
         const res = await server.request('GET', url, { headers: { Origin: own, Referer: `${own}/` } });
         assert.equal(res.status, 200, `positive control GET ${url} (${res.text.slice(0, 120)})`);
