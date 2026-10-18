@@ -8,8 +8,10 @@ import {
   LANES, LaneId, RANGE_LABEL, RangeId, STATE_LABEL, STATUS_LABEL, StateFilter, MERGE_EVIDENCE_LABEL,
   PLOT_GUTTER_LEFT, ancestryClaim, effectiveSpanDays, timelineSpan, zoomStep, branchKind, buildTimeline, buildTopology, commitAssociations, prAbsenceVerifiable, driftedRefNames, formatSgt, identityKey, indexCommits, prHeadMismatch, reconcilePullDetail, reviewIsPartial, reviewProvenance, buildStackGraph, flattenStack, stackStatus,
   laneById, laneForBranch, liveRepositoryFor, matchesState, mergeEvidence, rangeStart, relatedPulls, shortSha,
-  stackChildren, stackParent, timelineX,
+  stackChildren, stackParent, timelineX, pullEnd,
 } from './gitHistoryModel';
+
+import { buildHybridMap } from './hybridMapModel';
 
 type LoadState = {
   key: string; status: 'loading' | 'ready' | 'error'; data?: DevelopmentHistory;
@@ -113,7 +115,7 @@ function useIsSheet() {
 }
 const TOPO_COL_W = 30;
 const TOPO_ROW_H = 30;
-type View = 'timeline' | 'topology' | 'list';
+type View = 'timeline' | 'topology' | 'list' | 'hybrid';
 type Selection = { kind: 'pr'; number: number } | { kind: 'commit'; sha: string } | null;
 export type RailEntry = { identity: LiveIdentity; label: string; tag: string };
 
@@ -204,7 +206,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
     restoreFocus.current = null;
     originRef.current = null;
     const usable = (el: HTMLElement | null) => Boolean(el && el.isConnected && !(el as HTMLButtonElement).disabled && !el.closest('[hidden],[inert]'));
-    const target = usable(origin) ? origin : (closed ? document.querySelector<HTMLElement>(`[data-node="${nodeId(closed)}"]`) : null) ?? document.querySelector<HTMLElement>('.g-frame, .g-table-wrap, .g-scroll.is-topo');
+    const target = usable(origin) ? origin : (closed ? document.querySelector<HTMLElement>(`[data-node="${nodeId(closed)}"]`) : null) ?? document.querySelector<HTMLElement>('.g-frame, .g-table-wrap, .g-scroll.is-topo, .g-hybrid');
     target?.focus({ preventScroll: true });
   }, [selection]);
   const toggle = (set: Set<LaneId>, id: LaneId) => { const next = new Set(set); next.has(id) ? next.delete(id) : next.add(id); return next; };
@@ -232,7 +234,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
       <Summary data={data} />
       <div className="g-toolbar" role="toolbar" aria-label="開發地圖控制">
         <div className="g-seg" role="tablist" aria-label="檢視">
-          {([['timeline', '開發時間軸', CalendarRange], ['topology', 'Git 拓樸', Network], ['list', '清單', List]] as const).map(([id, label, Icon]) =>
+          {([['timeline', '開發時間軸', CalendarRange], ['topology', 'Git 拓樸', Network], ['list', '清單', List], ['hybrid', '開發全貌 / Hybrid', GitBranch]] as const).map(([id, label, Icon]) =>
             <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}><Icon size={14} />{label}</button>)}
         </div>
         <div className="g-seg" role="group" aria-label="時間範圍">
@@ -251,13 +253,14 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
           <button aria-pressed={compactLabels} onClick={() => setCompactLabels((c) => !c)} title={compactLabels ? '展開分支標籤欄' : '收合分支標籤欄'}>{compactLabels ? '展開分支標籤' : '收合分支標籤'}</button>
         </div>}
       </div>
-      {view !== 'topology' && <div className="g-lane-filter" role="group" aria-label="分支群組篩選">
+      {(view === 'timeline' || view === 'list') && <div className="g-lane-filter" role="group" aria-label="分支群組篩選">
         {LANES.map((l) => <button key={l.id} aria-pressed={lanes.has(l.id)} onClick={() => setLanes((s) => toggle(s, l.id))} style={{ ['--lane' as string]: l.color }}><i />{l.title}</button>)}
       </div>}
       <div className="g-layout">
-        <section className="g-graph-panel" aria-label={view === 'topology' ? 'Git 拓樸圖' : view === 'list' ? 'PR 清單' : '開發時間軸'}>
+        <section className="g-graph-panel" aria-label={view === 'hybrid' ? '開發全貌 / Hybrid' : view === 'topology' ? 'Git 拓樸圖' : view === 'list' ? 'PR 清單' : '開發時間軸'}>
           {view === 'timeline' && <Timeline data={data} range={range} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
           {view === 'topology' && <Topology data={data} range={range} selection={selection} select={openDetail} />}
+          {view === 'hybrid' && <HybridMap data={data} range={range} stateFilter={stateFilter} query={query} selection={selection} select={openDetail} needsRefresh={state.status === 'error' || state.refreshing} />}
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={openDetail} />}
         </section>
       </div>
@@ -265,6 +268,64 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
       <BottomCards data={data} select={openDetail} />
     </>}
   </>;
+}
+
+const MAIN_LABEL = { verified: 'IN MAIN — VERIFIED', not_verified: 'NOT VERIFIED IN MAIN', unknown: 'UNKNOWN' } as const;
+function HybridMap({ data, range, stateFilter, query, selection, select, needsRefresh }: {
+  data: DevelopmentHistory; range: RangeId; stateFilter: StateFilter; query: string; selection: Selection;
+  select: (s: Selection, origin?: Element | null) => void; needsRefresh: boolean;
+}) {
+  const rows = useMemo(() => buildHybridMap(data, needsRefresh), [data, needsRefresh]);
+  const index = useMemo(() => indexCommits(data.commits), [data.commits]);
+  const selected = selection?.kind === 'pr' ? selection.number : null;
+  const selectedRow = rows.find(r => r.pr.number === selected);
+  const start = timelineSpan(data, range).start;
+  const search = query.trim().toLowerCase().replace(/^#/, '');
+  const visible = rows.filter(({ pr }) => matchesState(pr, stateFilter) && Date.parse(pullEnd(pr, data.fetchedAt)) >= start
+    && (!search || `${pr.number} ${pr.title} ${pr.headRef} ${pr.baseRef}`.toLowerCase().includes(search)));
+  return <div className="g-hybrid" tabIndex={0}>
+    <header className="g-hybrid-intro">
+      <h2>開發全貌 / Hybrid</h2>
+      <p>Git relationship：PR / Feature → Target branch / Integration → Main integration status</p>
+      <p>實線：已驗證 Git 關係 · 虛線：PR base（未驗證合併） · UNKNOWN：證據不足。點選 PR 查看詳細資訊與相關路徑。</p>
+      <p>Last checked：{formatSgt(data.fetchedAt)} · {needsRefresh ? 'Needs refresh' : data.status === 'partial' ? 'Partial history' : 'Snapshot'} · 非即時狀態</p>
+    </header>
+    <div className="g-hybrid-headings" aria-hidden="true"><span>PR / FEATURE</span><span>TARGET BRANCH / INTEGRATION</span><span>MAIN INTEGRATION STATUS · {data.defaultBranch}</span></div>
+    <div className="g-hybrid-routes">
+      {visible.map(({ pr, relationship, main }) => {
+        const active = selected === pr.number;
+        const related = selectedRow?.relationship.parent === pr.number;
+        return <article key={pr.number} data-testid={`hybrid-pr-${pr.number}`} className={`g-hybrid-row ${active ? 'is-selected' : ''} ${related ? 'is-related' : ''} ${selected !== null && !active && !related ? 'is-dim' : ''}`}>
+          <div className="g-hybrid-feature">
+            <button data-select data-node={`pr-${pr.number}`} aria-label={prLabel(pr)} aria-pressed={active} onClick={e => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>
+              <strong>#{pr.number} · {pr.title}</strong><span className={`g-status is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span>
+            </button>
+            <p>Source：<span className="g-mono">{pr.headRef ?? 'UNKNOWN'}</span></p>
+            <p>Merge evidence（已取得的 parent）：{MERGE_EVIDENCE_LABEL[mergeEvidence(pr, index)]}</p>
+            <p className="g-mono">PR merge SHA：{pr.merged ? pr.mergeCommitSha ?? 'UNKNOWN' : 'Not merged'}</p>
+          </div>
+          <div className={`g-hybrid-link is-${relationship.kind} ${active ? 'is-highlighted' : ''}`} data-kind={relationship.kind}>
+            <p>Target：<strong className="g-mono">{pr.baseRef ?? 'UNKNOWN'}</strong></p>
+            <p>{relationship.label}</p>
+            {relationship.parent !== null && <p>Reported stacked parent：PR #{relationship.parent}（metadata）</p>}
+            <p className="g-hybrid-route">{relationship.kind === 'unknown' ? `Source: ${pr.headRef ?? 'UNKNOWN'}；reported target: ${pr.baseRef ?? 'UNKNOWN'}；UNKNOWN（不繪製 Git 連線）` : `${pr.headRef} → ${pr.baseRef}（${relationship.kind === 'verified' ? 'Git evidence' : 'reported routing'}）`}</p>
+            <p>{relationship.evidence}</p>
+          </div>
+          <div className={`g-hybrid-main is-${main.state}`}>
+            <p>Main integration · <span className="g-mono">{data.defaultBranch}</span></p>
+            <strong>{MAIN_LABEL[main.state]}</strong>
+            <p>{main.evidence}</p>
+            <small>Last checked：{formatSgt(data.fetchedAt)}</small>
+          </div>
+        </article>;
+      })}
+      {!visible.length && <p className="g-muted">此篩選沒有已取得的 PR；不代表 repository 沒有開發活動。</p>}
+    </div>
+    <section className="g-hybrid-stages" aria-label="部署階段（獨立於 Git 分支）">
+      <p>Deployment stages · Git 分支 ≠ 部署環境 · 尚無權威部署來源</p>
+      <div><article aria-label="UAT"><h3>UAT</h3><p>Not checked</p></article><article aria-label="Production"><h3>Production</h3><p>Not checked</p></article></div>
+    </section>
+  </div>;
 }
 
 function Summary({ data }: { data: DevelopmentHistory }) {
