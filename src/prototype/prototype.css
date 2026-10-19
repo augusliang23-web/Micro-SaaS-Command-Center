@@ -340,3 +340,24 @@
   .hf-lanes { grid-template-columns:minmax(0,1fr); gap:20px; }
   .hf-lane.is-feature,.hf-lane.is-integration,.hf-lane.is-main,.hf-lane.is-release { grid-column:1; grid-row:auto; }
 }
+/* Recent Commit activity: fixed-size dots, never animated card borders or Agent status. */
+.pr-number-activity { display:inline-flex; align-items:center; gap:4px; flex-shrink:0; white-space:nowrap; }
+.hf-pr-top .pr-number-activity strong { font-size:12px; color:#406b5c; }
+.pr-activity-dot { position:relative; display:inline-block; width:14px; height:14px; flex:0 0 14px; vertical-align:middle; }
+.pr-activity-dot::before { content:""; position:absolute; left:2px; top:2px; width:10px; height:10px; box-sizing:border-box; border:2px solid #707b83; border-radius:50%; }
+.pr-activity-dot.is-recent::before { background:#19834b; border-color:#19834b; }
+.pr-activity-dot.is-outside::before { background:#707b83; }
+.pr-activity-dot.is-unknown::before { background:transparent; }
+.pr-activity-dot.is-recent::after { content:""; position:absolute; inset:0; border:2px solid #19834b; border-radius:50%; pointer-events:none; animation:pr-activity-dot-breathe 2.5s ease-in-out infinite; }
+@keyframes pr-activity-dot-breathe { 0%,100% { transform:scale(.75); opacity:.2; } 50% { transform:scale(1.1); opacity:.7; } }
+.hf-group-activity { color:#27623e; }
+.pr-activity-sr { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+.hf-pr .hf-pr-title { height:36px; } /* Stable title geometry across activity states. */
+.pr-activity-controls { margin:10px 0; padding:10px 12px; border:1px solid #dce6e8; border-radius:8px; background:#f7fafb; color:#536c76; }
+.pr-activity-controls > div { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:11px; }
+.pr-activity-controls label { display:inline-flex; align-items:center; gap:6px; }
+.pr-activity-controls select { min-height:36px; border:1px solid #cedce1; border-radius:5px; padding:4px 7px; background:#fff; }
+.pr-activity-controls p { font-size:10px; line-height:1.6; margin-top:6px; overflow-wrap:anywhere; }
+@media(prefers-reduced-motion:reduce) {
+  .pr-activity-dot.is-recent::after { animation:none; opacity:.35; }
+}
