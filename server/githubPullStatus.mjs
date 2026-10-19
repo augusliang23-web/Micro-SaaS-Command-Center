@@ -16,7 +16,7 @@ export function aggregateCiStatus(checkRuns) {
 }
 
 // The first check-runs page is not proof of the complete check set.
-function aggregateCiResponse(response) {
+export function aggregateCiResponse(response) {
   if (!response || !Array.isArray(response.check_runs) || !Number.isInteger(response.total_count) || response.total_count < 0) return 'unknown';
   const result = aggregateCiStatus(response.check_runs);
   if (result === 'failing') return result; // A known failure remains a blocker.
