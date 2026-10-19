@@ -104,10 +104,11 @@ describe('V1 identity isolation and live allowlist',()=>{
 });
 
 describe('V1 feature isolation and read-only frontend',()=>{
- test('G. normal navigation has only the overview and the Development Map, with no AI, Prompt or Cost Guard Demo UI',async()=>{
+ // V1.2 candidate (intentional change): navigation gains "管理專案". The overview and the Development Map stay read-only.
+ test('G. navigation is overview, 管理專案 and Development Map; overview and map have no AI, Prompt, Cost Guard, Demo or edit UI',async()=>{
   mockFetch(state([PM,OTHER]));render(<ReadOnlyCommandCenter/>);await flush();
   const names=()=>within(screen.getByRole('navigation',{name:'主要頁面'})).getAllByRole('button').map(b=>b.textContent);
-  expect(names()).toEqual(['專案總覽','開發地圖']);
+  expect(names()).toEqual(['專案總覽','管理專案','開發地圖']);
   // Negative disclaimers ("無 AI 對話、Prompt 或 agent 執行") are allowed; no control, tab or demo surface may exist.
   const forbidden=[/AI 指令/,/Prompt/,/Cost Guard/i,/DEMO/,/新增/,/進入工作區/,/執行/];
   const check=()=>{
@@ -120,6 +121,7 @@ describe('V1 feature isolation and read-only frontend',()=>{
  test('G. the V1 entry does not import or mount demo, AI or legacy-app sources',()=>{
   const files=['src/main.tsx','src/v1/ReadOnlyCommandCenter.tsx','src/prototype/GitDevelopmentMap.tsx','src/prototype/gitHistoryModel.ts','src/prototype/gitHistoryTypes.ts'];
   const imports=files.flatMap(f=>[...readFileSync(`${process.cwd()}/${f}`,'utf8').matchAll(/^\s*import[^;]*?from\s+['"]([^'"]+)['"]/gms)].map(m=>`${f} -> ${m[1]}`));
+  files.push('src/v1/ManageProjects.tsx');
   for(const banned of ['NodeCommandPanel','AiCommand','PromptHistory','CostGuard','PrototypeShell','prototype/data','mockData','/App','./App'])
    expect(imports.filter(i=>i.includes(banned)),`${banned} must not be imported`).toEqual([]);
   expect(readFileSync(`${process.cwd()}/src/main.tsx`,'utf8')).toContain('ReadOnlyCommandCenter');
@@ -198,5 +200,63 @@ describe('P2 eligibility to query is not presented as verified LIVE',()=>{
   for(const b of within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getAllByRole('button'))expect(b.getAttribute('aria-label')).not.toMatch(/LIVE/);
   expect(document.querySelector('.p-live-bar')?.textContent ?? '').not.toMatch(/LIVE/);
   expect(screen.getByLabelText('資料來源')).toHaveTextContent('Not checked');
+ });
+});
+
+// ---------------- V1.2B candidate: lifecycle-aware overview and honest status for projects added by 管理專案 ----------------
+const managed=(over:Record<string,unknown>,management:Record<string,unknown>)=>project({...over,management});
+const ADDED=managed({id:'proj-new',name:'Brand New',repository:'',health:'Attention',stage:'Prototype',currentTask:'',currentGateLabel:'Not started',lastActivity:'2026-10-19T12:00:00.000Z'},
+ {schemaVersion:1,lifecycle:'active',createdAt:'2026-10-19T12:00:00.000Z',updatedAt:'2026-10-19T12:00:00.000Z',events:[{type:'added',at:'2026-10-19T12:00:00.000Z'}]});
+const ARCHIVED_PM=managed({id:'reg-pm',name:'PM Dashboard',repository:PM_REPO},{schemaVersion:1,lifecycle:'archived',archivedAt:'2026-10-19T12:00:00.000Z',updatedAt:'2026-10-19T12:00:00.000Z',events:[{type:'archived',at:'2026-10-19T12:00:00.000Z'}]});
+
+describe('V1.2B overview lifecycle filtering and placeholder honesty',()=>{
+ test('archived projects leave the overview and the Development Map rail; a count points to 管理專案; no history request for them',async()=>{
+  const calls=mockFetch(state([ARCHIVED_PM,OTHER]));render(<ReadOnlyCommandCenter/>);await flush();
+  expect(screen.getAllByRole('article')).toHaveLength(1);expect(screen.queryByRole('article',{name:'專案 PM Dashboard'})).toBeNull();
+  expect(document.body).toHaveTextContent('另有 1 個已封存專案');
+  nav('開發地圖');await flush();
+  const rail=within(screen.getByRole('navigation',{name:'專案（開發地圖）'}));
+  expect(rail.queryAllByRole('button').some(b=>/PM Dashboard/.test(b.textContent??''))).toBe(false);
+  expect(historyCalls(calls)).toHaveLength(0);
+ });
+ test('when every project is archived the overview says so instead of claiming there is no saved data',async()=>{
+  mockFetch(state([ARCHIVED_PM]));render(<ReadOnlyCommandCenter/>);await flush();
+  expect(screen.getByRole('status')).toHaveTextContent('目前沒有使用中的專案（全部已封存）');expect(document.body).not.toHaveTextContent('本機尚無已登記專案資料');
+ });
+ test('a project added by 管理專案 shows UNKNOWN / Not checked, not its legacy health placeholder, and is Not connected',async()=>{
+  mockFetch(state([ADDED]));render(<ReadOnlyCommandCenter/>);await flush();
+  const c=card('Brand New');
+  expect(c).toHaveTextContent('健康狀態 UNKNOWN · Not checked');expect(c).toHaveTextContent('2026-10-19T12:00:00.000Z 由管理專案新增');
+  expect(c).not.toHaveTextContent('Attention');expect(c).not.toHaveTextContent(/Healthy|At Risk|LIVE|GitHub 可查詢/);
+  expect(c).toHaveTextContent('NOT CONNECTED');expect(within(c).queryByRole('button',{name:'開啟開發地圖'})).toBeNull();
+ });
+ test('a project added by 管理專案 without a repository is LOCAL · Not connected, not "identity unverifiable", and never live',async()=>{
+  const calls=mockFetch(state([ADDED]));render(<ReadOnlyCommandCenter/>);await flush();
+  const c=card('Brand New');
+  expect(c).toHaveTextContent('LOCAL · 由管理專案新增，尚未設定 repository（Not connected）');expect(c).not.toHaveTextContent('身分無法確認');
+  expect(registeredFromSavedState({projects:[ADDED]})[0].identity.source).not.toBe('REGISTERED');
+  nav('開發地圖');await flush();expect(historyCalls(calls)).toHaveLength(0);
+ });
+ test('a repository-less record NOT created by 管理專案 still fails closed as identity unverifiable',async()=>{
+  mockFetch(state([project({id:'old-norepo',name:'Old No Repo',repository:''})]));render(<ReadOnlyCommandCenter/>);await flush();
+  expect(card('Old No Repo')).toHaveTextContent('身分無法確認');expect(card('Old No Repo')).not.toHaveTextContent('LOCAL');
+ });
+ test('a legacy project without management metadata is unchanged: active, REGISTERED and still live-eligible',async()=>{
+  mockFetch(state([PM]));render(<ReadOnlyCommandCenter/>);await flush();
+  expect(card('PM Dashboard')).toHaveTextContent('REGISTERED');expect(card('PM Dashboard')).toHaveTextContent('（已儲存，未獨立驗證）');
+  expect(within(card('PM Dashboard')).getByRole('button',{name:'開啟開發地圖'})).toBeVisible();
+ });
+ test('the 管理專案 page loads GET /api/projects only; nothing is written without an explicit action',async()=>{
+  const calls=mockFetch((url)=>url==='/api/state'?{status:200,body:savedState([PM])}:url==='/api/projects'?{status:200,body:{version:'a'.repeat(64),projects:[PM],removed:[]}}:{status:500,body:{}});
+  render(<ReadOnlyCommandCenter/>);await flush();nav('管理專案');await flush();
+  expect(screen.getByRole('heading',{name:'管理專案'})).toBeVisible();expect(document.querySelector('.v1-bar')).toHaveTextContent('LOCAL WRITE');
+  expect(calls.every(c=>c.method==='GET')).toBe(true);expect(calls.map(c=>c.url)).toEqual(['/api/state','/api/projects']);
+ });
+ test('static: the only write in the V1 tree is ManageProjects POST to the exact /api/projects/commands path',()=>{
+  const strip=(f:string)=>readFileSync(`${process.cwd()}/${f}`,'utf8').replace(/\/\*[\s\S]*?\*\//g,'').replace(/^\s*\/\/.*$/gm,'');
+  const manage=strip('src/v1/ManageProjects.tsx');
+  expect(manage.match(/method:\s*['"](PUT|POST|DELETE|PATCH)/gi)).toEqual(["method: 'POST"]);
+  expect(manage).toContain("COMMAND_URL = '/api/projects/commands'");
+  expect(manage).not.toMatch(/\/api\/(state|tasks|bridge|github)|api\.github\.com/);
  });
 });

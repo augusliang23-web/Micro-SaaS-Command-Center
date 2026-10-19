@@ -3,8 +3,19 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai'; // loading the SDK constructs nothing; a client is only built by the opt-in provider bridge
-import { apiNotFound, createDevAssetGuard, createRequestPolicy, methodGate, parseTrustedOrigin, resolveCapabilities } from './server/v1RequestPolicy.mjs';
+import {
+  apiNotFound,
+  assertCapabilitiesCompatibleWithProjectWriter,
+  createDevAssetGuard,
+  createProjectWriteGate,
+  createRequestPolicy,
+  isProjectCommandPath,
+  methodGate,
+  parseTrustedOrigin,
+  resolveCapabilities,
+} from './server/v1RequestPolicy.mjs';
 import { createV1ReadOnlyRouter } from './server/v1ReadOnlyRoutes.mjs';
+import { MAX_COMMAND_BYTES, createV1ProjectManagementRouter } from './server/v1ProjectManagementRoutes.mjs';
 import { createGithubRouter } from './server/githubRoutes.mjs';
 
 const DEFAULT_PORT = 3000;
@@ -29,7 +40,7 @@ function loadCapabilitiesOrExit(): Set<string> {
     if (!parseTrustedOrigin(EXPECTED_COMMAND_CENTER_ORIGIN)) {
       throw new Error('COMMAND_CENTER_ORIGIN must be an http loopback origin such as http://127.0.0.1:3000.');
     }
-    return resolveCapabilities(process.env);
+    return assertCapabilitiesCompatibleWithProjectWriter(resolveCapabilities(process.env));
   } catch (error) {
     console.error(`Refusing to start (capability configuration): ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
@@ -508,8 +519,10 @@ ${localDiffText}`;
 }
 
 async function mountLegacy(app: ExpressApp, capabilities: Set<string>) {
-  // Legacy handlers read JSON bodies; V1 never parses a request body.
-  app.use(express.json());
+  // Legacy handlers read JSON bodies. The V1.2 project command route reads its own body with a hard cap, so the legacy parser
+  // must never consume it first.
+  const legacyJson = express.json();
+  app.use((req, res, next) => (isProjectCommandPath(req.path) ? next() : legacyJson(req, res, next)));
   if (capabilities.has('codex-handoff')) await mountCodexHandoff(app);
   // Local single-file persistence for the dashboard's own state (includes PUT)
   if (capabilities.has('state-write')) {
@@ -536,9 +549,12 @@ async function startServer() {
   app.use(createRequestPolicy({ trustedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN }));
   // 2. Opted-in legacy routers only (none by default).
   if (CAPABILITIES.size > 0) await mountLegacy(app, CAPABILITIES);
-  // 3. Everything below is V1: /api accepts GET only, exactly four GET routes exist, unknown /api paths are API 404s.
+  // 3. Everything below is V1.2: /api accepts GET only, except POST on the exact project command path, which additionally needs a
+  //    same-origin Origin, a JSON body and the size cap. The V1 GET routes plus GET /api/projects and POST /api/projects/commands
+  //    exist; unknown /api paths are API 404s. The project writer replaces legacy state-write (refused at start-up, see above).
   app.use(methodGate);
-  app.use('/api', createV1ReadOnlyRouter({ githubRouter: createGithubRouter() }));
+  app.use(createProjectWriteGate({ trustedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN, maxBytes: MAX_COMMAND_BYTES }));
+  app.use('/api', createV1ReadOnlyRouter({ githubRouter: createGithubRouter() }), createV1ProjectManagementRouter());
   app.use('/api', apiNotFound);
 
   if (process.env.NODE_ENV !== 'production') {

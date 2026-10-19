@@ -112,15 +112,65 @@ export function createRequestPolicy({ trustedOrigin }) {
   };
 }
 
-/** After legacy routers: /api accepts GET only, everything else only GET and HEAD. Refused requests reach no handler. */
+/**
+ * V1.2 candidate: the single mutating API path. Exact pathname match, case-insensitive like Express routing, with no trailing
+ * slash, extra segment or encoded variant. Every other /api path stays GET-only.
+ */
+const PROJECT_COMMAND_PATH = /^\/api\/projects\/commands$/i;
+export function isProjectCommandPath(pathname) {
+  return typeof pathname === 'string' && PROJECT_COMMAND_PATH.test(pathname);
+}
+
+/**
+ * The project writer replaces the legacy whole-state writer, which bypasses the project store's lock and version check. The two
+ * never run in one server: opting into `state-write` is a refusal to start, not a silent choice between them.
+ */
+export function assertCapabilitiesCompatibleWithProjectWriter(capabilities) {
+  if (capabilities.has('state-write')) {
+    throw new CapabilityConfigError('The legacy "state-write" capability cannot be enabled together with the V1.2 project writer (it bypasses its lock and version check).');
+  }
+  return capabilities;
+}
+
+/** After legacy routers: /api accepts GET only (POST only on the exact project command path), everything else GET and HEAD. */
 export function methodGate(req, res, next) {
-  const allowed = isApiPath(req.path) ? ['GET'] : ['GET', 'HEAD'];
+  const allowed = isApiPath(req.path) ? (isProjectCommandPath(req.path) ? ['POST'] : ['GET']) : ['GET', 'HEAD'];
   if (allowed.includes(req.method)) {
     next();
     return;
   }
   req.resume(); // discard any request body: a refused request is never parsed or buffered
   res.set('Allow', allowed.join(', ')).status(405).json({ error: 'Method not allowed.' });
+}
+
+/**
+ * Extra checks for the one mutating route, after the request policy and method gate and BEFORE any body is read:
+ *  - Origin must be PRESENT and equal the trusted origin; a write is never accepted because an Origin header is absent.
+ *    A Referer, when present, has already been checked by the request policy.
+ *  - Content-Type must be application/json (optionally ;charset=utf-8); anything else is 415, so HTML forms cannot post.
+ *  - A declared Content-Length above the cap is 413 without reading the body (the router also caps the bytes it reads).
+ * These are browser CSRF protections for a loopback single-user app, NOT caller authentication: any local process can send
+ * the same headers.
+ */
+export function createProjectWriteGate({ trustedOrigin, maxBytes }) {
+  const trusted = parseTrustedOrigin(trustedOrigin);
+  if (!trusted) throw new CapabilityConfigError('The trusted origin must be an http loopback origin such as http://127.0.0.1:3000.');
+  return function projectWriteGate(req, res, next) {
+    if (!isProjectCommandPath(req.path)) {
+      next();
+      return;
+    }
+    const refuse = (status, code, error) => {
+      req.resume();
+      res.status(status).json({ error, code });
+    };
+    if (req.headers.origin !== trusted.origin) return refuse(403, 'ORIGIN_REQUIRED', 'A same-origin Origin header is required.');
+    const type = String(req.headers['content-type'] ?? '').toLowerCase().replace(/\s+/g, '');
+    if (type !== 'application/json' && type !== 'application/json;charset=utf-8') return refuse(415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json.');
+    const declared = req.headers['content-length'];
+    if (declared !== undefined && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) return refuse(413, 'PAYLOAD_TOO_LARGE', 'The request body is too large.');
+    next();
+  };
 }
 
 /** Last API middleware: an unknown /api path is an API error, never the SPA fallback. */
