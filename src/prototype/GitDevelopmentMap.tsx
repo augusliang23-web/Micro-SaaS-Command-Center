@@ -1,3 +1,4 @@
+import { RecentActivityDot } from './RecentActivityDot';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import {
   AlertTriangle, CalendarRange, ChevronDown, ChevronRight, Database, ExternalLink, GitBranch, GitMerge,
@@ -281,9 +282,9 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
       </div>}
       <div className="g-layout">
         <section className="g-graph-panel" aria-label={view === 'hybrid' ? '開發全貌 / Hybrid' : view === 'topology' ? 'Git 拓樸圖' : view === 'list' ? 'PR 清單' : '開發時間軸'}>
-          {view === 'timeline' && <Timeline recentActivity={recentActivity} pulseEnabled={pulseEnabled} data={data} range={range} activityFocus={activityFocus} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
+          {view === 'timeline' && <Timeline recentActivity={recentActivity} pulseEnabled={pulseEnabled} commitWindowHours={commitWindowHours} data={data} range={range} activityFocus={activityFocus} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
           {view === 'topology' && <Topology data={data} range={range} selection={selection} select={openDetail} />}
-          {view === 'hybrid' && <HybridFlowMap recentActivity={recentActivity} pulseEnabled={pulseEnabled} data={data} range={range} stateFilter={stateFilter} query={query} focusPR={focusPR ?? (selection?.kind === 'pr' ? selection.number : null)} onFocusPR={number => { setFocusPR(number); setSelection(null); }} onClearFocus={() => setFocusPR(null)} modalOpen={selection !== null} openDetail={(number, origin) => openDetail({ kind: 'pr', number }, origin)} needsRefresh={state.status === 'error' || state.refreshing} />}
+          {view === 'hybrid' && <HybridFlowMap recentActivity={recentActivity} pulseEnabled={pulseEnabled} commitWindowHours={commitWindowHours} data={data} range={range} stateFilter={stateFilter} query={query} focusPR={focusPR ?? (selection?.kind === 'pr' ? selection.number : null)} onFocusPR={number => { setFocusPR(number); setSelection(null); }} onClearFocus={() => setFocusPR(null)} modalOpen={selection !== null} openDetail={(number, origin) => openDetail({ kind: 'pr', number }, origin)} needsRefresh={state.status === 'error' || state.refreshing} />}
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={openDetail} />}
         </section>
       </div>
@@ -312,8 +313,8 @@ function prLabel(pr: HistoryPull) {
   return `PR #${pr.number} · ${pr.title} · ${STATUS_LABEL[pr.status]} · ${pr.headRef ?? '?'} → ${pr.baseRef ?? '?'} · 建立 ${formatSgt(pr.createdAt)}${pr.mergedAt ? ` · 合併 ${formatSgt(pr.mergedAt)}` : ''}`;
 }
 
-function Timeline({ recentActivity, pulseEnabled, data, range, activityFocus, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
-  recentActivity: RecentActivitySnapshot; pulseEnabled: boolean; data: DevelopmentHistory; range: RangeId; activityFocus: boolean; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
+function Timeline({ recentActivity, pulseEnabled, commitWindowHours, data, range, activityFocus, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
+  recentActivity: RecentActivitySnapshot; pulseEnabled: boolean; commitWindowHours: CommitWindowHours; data: DevelopmentHistory; range: RangeId; activityFocus: boolean; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
   fit: 'auto' | 'manual'; manualScale: number; compactLabels: boolean; onScale: (pxPerDay: number) => void; query: string; selection: Selection; select: (s: Selection, origin?: Element | null) => void;
   /** The last refresh failed: the held snapshot is historical, so it cannot support a current absence claim. */ refreshFailed?: boolean;
 }) {
@@ -431,10 +432,10 @@ function Timeline({ recentActivity, pulseEnabled, data, range, activityFocus, st
                 ? <button key={`${id}-${c.sha}`} className={`g-commit-dot ${merge ? 'is-merge' : 'is-head'} ${selection?.kind === 'commit' && selection.sha === c.sha ? 'is-selected' : ''}`} style={{ left: x, top: y, ['--lane' as string]: laneById(id).color }} data-node={`commit-${c.sha}`} data-select aria-label={`${id} commit ${shortSha(c.sha)} · ${c.message} · commit 時間 ${formatSgt(c.committerDate)}`} title={`${shortSha(c.sha)} ${c.message}`} onClick={(e) => select({ kind: 'commit', sha: c.sha }, e.currentTarget)} />
                 : <i key={`${id}-${c.sha}`} className="g-commit-tick" style={{ left: x, top: y, background: laneById(id).color }} />; }); })}
           {layout.items.map((item) => { const pr = item.pr; const dim = related && !related.has(pr.number); const activity = recentActivity.byPull.get(pr.number); const recent = pulseEnabled && activity?.state === 'recent';
-            return <button key={pr.number} className={`g-pr-card ${recent ? 'has-recent-commit' : ''} is-${pr.status} kind-${branchKind(pr.headRef, data.defaultBranch)} ${selection?.kind === 'pr' && selection.number === pr.number ? 'is-selected' : ''} ${dim ? 'is-dim' : ''} ${related?.has(pr.number) && selection?.kind === 'pr' && selection.number !== pr.number ? 'is-related' : ''}`}
+            return <button key={pr.number} className={`g-pr-card is-${pr.status} kind-${branchKind(pr.headRef, data.defaultBranch)} ${selection?.kind === 'pr' && selection.number === pr.number ? 'is-selected' : ''} ${dim ? 'is-dim' : ''} ${related?.has(pr.number) && selection?.kind === 'pr' && selection.number !== pr.number ? 'is-related' : ''}`}
               style={{ left: item.cardX, top: AXIS + item.y, width: item.width, ['--lane' as string]: laneById(item.lane).color }} data-node={`pr-${pr.number}`} data-select aria-pressed={selection?.kind === 'pr' && selection.number === pr.number} aria-label={prLabel(pr)} aria-describedby={`timeline-commit-${pr.number}`} title={recent ? `${pr.title} · ${activity.explanation}` : pr.title} onClick={(e) => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>
-              <span className="g-pr-top"><b>#{pr.number}</b><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span><span className="g-pr-branch">{pr.headRef}</span>{item.clippedStart && <small className="g-clipped">視窗外開始</small>}{item.clippedEnd && <small className="g-clipped">視窗外延續</small>}</span>
-              <span className="g-pr-title">{recent && <small className="pr-recent-label">{activity.label}</small>}{pr.title}</span><span className="pr-activity-sr" id={`timeline-commit-${pr.number}`}>{activity?.explanation ?? recentActivity.message}</span>
+              <span className="g-pr-top"><span className="pr-number-activity"><RecentActivityDot activity={activity} enabled={pulseEnabled} hours={commitWindowHours} fallback={recentActivity.message} /><b>#{pr.number}</b></span><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span><span className="g-pr-branch">{pr.headRef}</span>{item.clippedStart && <small className="g-clipped">視窗外開始</small>}{item.clippedEnd && <small className="g-clipped">視窗外延續</small>}</span>
+              <span className="g-pr-title">{pr.title}</span><span className="pr-activity-sr" id={`timeline-commit-${pr.number}`}>{activity?.explanation ?? recentActivity.message}</span>
               <span className="g-pr-track" aria-hidden="true"><i style={{ marginLeft: item.x - item.cardX, width: Math.max(2, Math.min(item.barWidth, item.width - (item.x - item.cardX))) }} className={pr.state === 'open' ? 'is-open' : ''} /></span>
             </button>; })}
       </div>
