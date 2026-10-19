@@ -1,3 +1,4 @@
+import { RecentActivityDot } from './RecentActivityDot';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import {
   AlertTriangle, CalendarRange, ChevronDown, ChevronRight, Database, ExternalLink, GitBranch, GitMerge,
@@ -8,10 +9,11 @@ import {
   LANES, LaneId, RANGE_LABEL, RangeId, STATE_LABEL, STATUS_LABEL, StateFilter, MERGE_EVIDENCE_LABEL,
   PLOT_GUTTER_LEFT, ancestryClaim, effectiveSpanDays, timelineSpan, zoomStep, branchKind, buildTimeline, buildTopology, commitAssociations, prAbsenceVerifiable, driftedRefNames, formatSgt, identityKey, indexCommits, prHeadMismatch, reconcilePullDetail, reviewIsPartial, reviewProvenance, buildStackGraph, flattenStack, stackStatus,
   laneById, laneForBranch, liveRepositoryFor, matchesState, mergeEvidence, rangeStart, relatedPulls, shortSha,
-  stackChildren, stackParent, timelineX, pullEnd,
+  stackChildren, stackParent, timelineX,
 } from './gitHistoryModel';
 
-import { buildHybridMap } from './hybridMapModel';
+import { HybridFlowMap } from './HybridFlowMap';
+import { ACTIVITY_RECHECK_MS, projectRecentActivity, type CommitWindowHours, type RecentActivitySnapshot } from './recentActivityModel';
 
 type LoadState = {
   key: string; status: 'loading' | 'ready' | 'error'; data?: DevelopmentHistory;
@@ -162,7 +164,22 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
   const { state, refresh } = useDevelopmentHistory(repo, key);
   const data = state.data;
   const [view, setView] = useState<View>('timeline');
+  const [focusPR, setFocusPR] = useState<number | null>(null);
   const [range, setRange] = useState<RangeId>('6m');
+  const [activityFocus, setActivityFocus] = useState(true);
+  const [commitWindowHours, setCommitWindowHours] = useState<CommitWindowHours>(12);
+  const [pulseEnabled, setPulseEnabled] = useState(true);
+  const [activityNow, setActivityNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!data) return;
+    const tick = () => setActivityNow(Date.now());
+    tick();
+    const timer = window.setInterval(tick, ACTIVITY_RECHECK_MS);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, [data?.fetchedAt]);
+  const recentActivity = useMemo(() => projectRecentActivity(data, repo, activityNow, commitWindowHours, state.status !== 'ready' || state.refreshing), [data, repo, activityNow, commitWindowHours, state.status, state.refreshing]);
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [lanes, setLanes] = useState<Set<LaneId>>(() => new Set(LANES.map((l) => l.id)));
   const [collapsed, setCollapsed] = useState<Set<LaneId>>(() => new Set());
@@ -183,8 +200,8 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
     if (!data) return { text: 'GitHub 唯讀 · 正在查詢', read: false };
     return { text: `GitHub 唯讀 · 已讀取 · ${data.status === 'complete' ? 'Complete' : 'Partial'}`, read: true };
   })();
-  const chooseRange = (r: RangeId) => { setRange(r); setFit('auto'); }; // a new range always restarts at Auto Fit
-  const spanDays = data ? effectiveSpanDays(timelineSpan(data, range).start, timelineSpan(data, range).end) : 1;
+  const chooseRange = (r: RangeId) => { setRange(r); setActivityFocus(false); setFit('auto'); }; // a new range always restarts at Auto Fit
+  const spanDays = data ? effectiveSpanDays(timelineSpan(data, range, view === 'timeline' && activityFocus).start, timelineSpan(data, range, view === 'timeline' && activityFocus).end) : 1;
   const nextZoom = (dir: 1 | -1) => zoomStep(liveScale, dir, spanDays);
   const zoomBy = (dir: 1 | -1) => {
     const next = nextZoom(dir); // always from the CURRENT effective scale, whether it came from Auto Fit or a manual step
@@ -231,14 +248,15 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
     {state.status === 'loading' && !data && <p className="g-banner" role="status">正在從 GitHub 讀取 {repo} 的分支、PR 與 commit 歷史…</p>}
     {data && data.warnings.length > 0 && <p className="g-banner is-warn"><AlertTriangle size={15} />Partial history：{data.warnings.join(' ')}</p>}
     {data && <>
-      <Summary data={data} />
+      {view !== 'hybrid' && <Summary data={data} />}
       <div className="g-toolbar" role="toolbar" aria-label="開發地圖控制">
         <div className="g-seg" role="tablist" aria-label="檢視">
           {([['timeline', '開發時間軸', CalendarRange], ['topology', 'Git 拓樸', Network], ['list', '清單', List], ['hybrid', '開發全貌 / Hybrid', GitBranch]] as const).map(([id, label, Icon]) =>
-            <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}><Icon size={14} />{label}</button>)}
+            <button key={id} role="tab" aria-selected={view === id} onClick={() => { if (id === 'hybrid' && selection?.kind === 'pr') setFocusPR(selection.number); setView(id); }}><Icon size={14} />{label}</button>)}
         </div>
         <div className="g-seg" role="group" aria-label="時間範圍">
-          {(Object.keys(RANGE_LABEL) as RangeId[]).map((r) => <button key={r} aria-pressed={range === r} onClick={() => chooseRange(r)}>{RANGE_LABEL[r]}</button>)}
+          {view === 'timeline' && <button aria-pressed={activityFocus} onClick={() => { setActivityFocus(true); setFit('auto'); }}>聚焦開發活動</button>}
+          {(Object.keys(RANGE_LABEL) as RangeId[]).map((r) => <button key={r} aria-pressed={range === r && (view !== 'timeline' || !activityFocus)} onClick={() => chooseRange(r)}>{RANGE_LABEL[r]}</button>)}
         </div>
         {view !== 'topology' && <label className="g-select">狀態<select aria-label="PR 狀態篩選" value={stateFilter} onChange={(e) => setStateFilter(e.target.value as StateFilter)}>
           {(Object.keys(STATE_LABEL) as StateFilter[]).map((s) => <option key={s} value={s}>{STATE_LABEL[s]}</option>)}
@@ -253,79 +271,27 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
           <button aria-pressed={compactLabels} onClick={() => setCompactLabels((c) => !c)} title={compactLabels ? '展開分支標籤欄' : '收合分支標籤欄'}>{compactLabels ? '展開分支標籤' : '收合分支標籤'}</button>
         </div>}
       </div>
+      {(view === 'timeline' || view === 'hybrid') && <section className="pr-activity-controls" aria-label="近期 HEAD Commit 提示">
+        <div><button className="p-secondary" aria-label="近期 Commit 提示" aria-pressed={pulseEnabled} onClick={() => { setPulseEnabled(value => !value); setActivityNow(Date.now()); }}>{pulseEnabled ? '近期 Commit 提示：開啟' : '近期 Commit 提示：關閉'}</button>
+          <label>Commit 時窗<select aria-label="近期 Commit 時窗" value={commitWindowHours} onChange={event => { setCommitWindowHours(Number(event.target.value) as CommitWindowHours); setActivityNow(Date.now()); }}>{([6,12,24] as const).map(hours => <option key={hours} value={hours}>{hours} 小時</option>)}</select></label>
+          <span aria-label="Commit 活動資料狀態">{recentActivity.message}</span></div>
+        <p>僅核對 OPEN / DRAFT 的精確 HEAD Commit（committerDate），不表示 Push 時間或 Agent 執行。快照有效期 15 分鐘；Last checked {data ? formatSgt(data.fetchedAt) : 'Not checked'}。與時間軸「聚焦開發活動」分開；群組展開後顯示個別提示。</p>
+      </section>}
       {(view === 'timeline' || view === 'list') && <div className="g-lane-filter" role="group" aria-label="分支群組篩選">
         {LANES.map((l) => <button key={l.id} aria-pressed={lanes.has(l.id)} onClick={() => setLanes((s) => toggle(s, l.id))} style={{ ['--lane' as string]: l.color }}><i />{l.title}</button>)}
       </div>}
       <div className="g-layout">
         <section className="g-graph-panel" aria-label={view === 'hybrid' ? '開發全貌 / Hybrid' : view === 'topology' ? 'Git 拓樸圖' : view === 'list' ? 'PR 清單' : '開發時間軸'}>
-          {view === 'timeline' && <Timeline data={data} range={range} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
+          {view === 'timeline' && <Timeline recentActivity={recentActivity} pulseEnabled={pulseEnabled} commitWindowHours={commitWindowHours} data={data} range={range} activityFocus={activityFocus} stateFilter={stateFilter} lanes={lanes} collapsed={collapsed} toggleCollapsed={(id) => setCollapsed((s) => toggle(s, id))} fit={fit} manualScale={manualScale} compactLabels={compactLabels} onScale={setLiveScale} query={query} selection={selection} select={openDetail} refreshFailed={state.status === 'error'} />}
           {view === 'topology' && <Topology data={data} range={range} selection={selection} select={openDetail} />}
-          {view === 'hybrid' && <HybridMap data={data} range={range} stateFilter={stateFilter} query={query} selection={selection} select={openDetail} needsRefresh={state.status === 'error' || state.refreshing} />}
+          {view === 'hybrid' && <HybridFlowMap recentActivity={recentActivity} pulseEnabled={pulseEnabled} commitWindowHours={commitWindowHours} data={data} range={range} stateFilter={stateFilter} query={query} focusPR={focusPR ?? (selection?.kind === 'pr' ? selection.number : null)} onFocusPR={number => { setFocusPR(number); setSelection(null); }} onClearFocus={() => setFocusPR(null)} modalOpen={selection !== null} openDetail={(number, origin) => openDetail({ kind: 'pr', number }, origin)} needsRefresh={state.status === 'error' || state.refreshing} />}
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={openDetail} />}
         </section>
       </div>
       {selection && <DetailOverlay data={data} repo={repo} scopeKey={key} selection={selection} select={openDetail} close={closeDetail} refresh={refresh} cache={detailCache} />}
-      <BottomCards data={data} select={openDetail} />
+      {view !== 'hybrid' && <BottomCards data={data} select={openDetail} />}
     </>}
   </>;
-}
-
-const MAIN_LABEL = { verified: 'IN MAIN — VERIFIED', not_verified: 'NOT VERIFIED IN MAIN', unknown: 'UNKNOWN' } as const;
-function HybridMap({ data, range, stateFilter, query, selection, select, needsRefresh }: {
-  data: DevelopmentHistory; range: RangeId; stateFilter: StateFilter; query: string; selection: Selection;
-  select: (s: Selection, origin?: Element | null) => void; needsRefresh: boolean;
-}) {
-  const rows = useMemo(() => buildHybridMap(data, needsRefresh), [data, needsRefresh]);
-  const index = useMemo(() => indexCommits(data.commits), [data.commits]);
-  const selected = selection?.kind === 'pr' ? selection.number : null;
-  const selectedRow = rows.find(r => r.pr.number === selected);
-  const start = timelineSpan(data, range).start;
-  const search = query.trim().toLowerCase().replace(/^#/, '');
-  const visible = rows.filter(({ pr }) => matchesState(pr, stateFilter) && Date.parse(pullEnd(pr, data.fetchedAt)) >= start
-    && (!search || `${pr.number} ${pr.title} ${pr.headRef} ${pr.baseRef}`.toLowerCase().includes(search)));
-  return <div className="g-hybrid" tabIndex={0}>
-    <header className="g-hybrid-intro">
-      <h2>開發全貌 / Hybrid</h2>
-      <p>Git relationship：PR / Feature → Target branch / Integration → Main integration status</p>
-      <p>實線：已驗證 Git 關係 · 虛線：PR base（未驗證合併） · UNKNOWN：證據不足。點選 PR 查看詳細資訊與相關路徑。</p>
-      <p>Last checked：{formatSgt(data.fetchedAt)} · {needsRefresh ? 'Needs refresh' : data.status === 'partial' ? 'Partial history' : 'Snapshot'} · 非即時狀態</p>
-    </header>
-    <div className="g-hybrid-headings" aria-hidden="true"><span>PR / FEATURE</span><span>TARGET BRANCH / INTEGRATION</span><span>MAIN INTEGRATION STATUS · {data.defaultBranch}</span></div>
-    <div className="g-hybrid-routes">
-      {visible.map(({ pr, relationship, main }) => {
-        const active = selected === pr.number;
-        const related = selectedRow?.relationship.parent === pr.number;
-        return <article key={pr.number} data-testid={`hybrid-pr-${pr.number}`} className={`g-hybrid-row ${active ? 'is-selected' : ''} ${related ? 'is-related' : ''} ${selected !== null && !active && !related ? 'is-dim' : ''}`}>
-          <div className="g-hybrid-feature">
-            <button data-select data-node={`pr-${pr.number}`} aria-label={prLabel(pr)} aria-pressed={active} onClick={e => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>
-              <strong>#{pr.number} · {pr.title}</strong><span className={`g-status is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span>
-            </button>
-            <p>Source：<span className="g-mono">{pr.headRef ?? 'UNKNOWN'}</span></p>
-            <p>Merge evidence（已取得的 parent）：{MERGE_EVIDENCE_LABEL[mergeEvidence(pr, index)]}</p>
-            <p className="g-mono">PR merge SHA：{pr.merged ? pr.mergeCommitSha ?? 'UNKNOWN' : 'Not merged'}</p>
-          </div>
-          <div className={`g-hybrid-link is-${relationship.kind} ${active ? 'is-highlighted' : ''}`} data-kind={relationship.kind}>
-            <p>Target：<strong className="g-mono">{pr.baseRef ?? 'UNKNOWN'}</strong></p>
-            <p>{relationship.label}</p>
-            {relationship.parent !== null && <p>Reported stacked parent：PR #{relationship.parent}（metadata）</p>}
-            <p className="g-hybrid-route">{relationship.kind === 'unknown' ? `Source: ${pr.headRef ?? 'UNKNOWN'}；reported target: ${pr.baseRef ?? 'UNKNOWN'}；UNKNOWN（不繪製 Git 連線）` : `${pr.headRef} → ${pr.baseRef}（${relationship.kind === 'verified' ? 'Git evidence' : 'reported routing'}）`}</p>
-            <p>{relationship.evidence}</p>
-          </div>
-          <div className={`g-hybrid-main is-${main.state}`}>
-            <p>Main integration · <span className="g-mono">{data.defaultBranch}</span></p>
-            <strong>{MAIN_LABEL[main.state]}</strong>
-            <p>{main.evidence}</p>
-            <small>Last checked：{formatSgt(data.fetchedAt)}</small>
-          </div>
-        </article>;
-      })}
-      {!visible.length && <p className="g-muted">此篩選沒有已取得的 PR；不代表 repository 沒有開發活動。</p>}
-    </div>
-    <section className="g-hybrid-stages" aria-label="部署階段（獨立於 Git 分支）">
-      <p>Deployment stages · Git 分支 ≠ 部署環境 · 尚無權威部署來源</p>
-      <div><article aria-label="UAT"><h3>UAT</h3><p>Not checked</p></article><article aria-label="Production"><h3>Production</h3><p>Not checked</p></article></div>
-    </section>
-  </div>;
 }
 
 function Summary({ data }: { data: DevelopmentHistory }) {
@@ -347,8 +313,8 @@ function prLabel(pr: HistoryPull) {
   return `PR #${pr.number} · ${pr.title} · ${STATUS_LABEL[pr.status]} · ${pr.headRef ?? '?'} → ${pr.baseRef ?? '?'} · 建立 ${formatSgt(pr.createdAt)}${pr.mergedAt ? ` · 合併 ${formatSgt(pr.mergedAt)}` : ''}`;
 }
 
-function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
-  data: DevelopmentHistory; range: RangeId; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
+function Timeline({ recentActivity, pulseEnabled, commitWindowHours, data, range, activityFocus, stateFilter, lanes, collapsed, toggleCollapsed, fit, manualScale, compactLabels, onScale, query, selection, select, refreshFailed = false }: {
+  recentActivity: RecentActivitySnapshot; pulseEnabled: boolean; commitWindowHours: CommitWindowHours; data: DevelopmentHistory; range: RangeId; activityFocus: boolean; stateFilter: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; toggleCollapsed: (id: LaneId) => void;
   fit: 'auto' | 'manual'; manualScale: number; compactLabels: boolean; onScale: (pxPerDay: number) => void; query: string; selection: Selection; select: (s: Selection, origin?: Element | null) => void;
   /** The last refresh failed: the held snapshot is historical, so it cannot support a current absence claim. */ refreshFailed?: boolean;
 }) {
@@ -370,18 +336,20 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
     return () => ro.disconnect();
   }, [compactLabels]);
   const plotWidth = box.frame > 0 ? Math.max(0, box.frame - box.labels) : 0;
-  const layout = useMemo(() => buildTimeline(data, { range, state: stateFilter, lanes, collapsed, pxPerDay: fit === 'manual' ? manualScale : undefined, plotWidth, query }), [data, range, stateFilter, lanes, collapsed, fit, manualScale, plotWidth, query]);
+  const layout = useMemo(() => buildTimeline(data, { range, activityFocus, state: stateFilter, lanes, collapsed, pxPerDay: fit === 'manual' ? manualScale : undefined, plotWidth, query }), [data, range, activityFocus, stateFilter, lanes, collapsed, fit, manualScale, plotWidth, query]);
   useLayoutEffect(() => { onScale(layout.pxPerDay); }, [layout.pxPerDay, onScale]);
   const index = useMemo(() => indexCommits(data.commits), [data]);
   const lastScroll = useRef(0);
   const prevScale = useRef<{ ppd: number; start: number } | null>(null);
-  useLayoutEffect(() => { if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth; }, [range]);
+  useLayoutEffect(() => { if (scroller.current) { scroller.current.scrollLeft = activityFocus ? 0 : scroller.current.scrollWidth; lastScroll.current = scroller.current.scrollLeft; } }, [range, activityFocus]);
   // Keep the same moment centred when the scale changes (zoom, resize, rail collapse) instead of jumping.
   useLayoutEffect(() => {
     const el = scroller.current;
     const prev = prevScale.current;
     prevScale.current = { ppd: layout.pxPerDay, start: layout.start };
-    if (!el || !prev || prev.start !== layout.start || prev.ppd === layout.pxPerDay) return;
+    if (!el || !prev) return;
+    if (prev.start !== layout.start) { if (activityFocus && fit === 'auto') { el.scrollLeft = 0; lastScroll.current = 0; } return; }
+    if (prev.ppd === layout.pxPerDay) return;
     const view = Math.max(0, el.clientWidth - (labelsRef.current?.offsetWidth ?? 0));
     const centreMs = prev.start + ((lastScroll.current + view / 2 - PLOT_GUTTER_LEFT) / prev.ppd) * 86_400_000;
     const next = PLOT_GUTTER_LEFT + ((centreMs - layout.start) / 86_400_000) * layout.pxPerDay - view / 2;
@@ -397,7 +365,7 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
   const ppShas = new Set(data.comparisons.find((c) => c.head === 'production-pages')?.commitShas ?? []);
   const laneCommits = (id: 'main' | 'production-pages') => {
     const shas = id === 'main' ? data.defaultBranchShas : [...ppShas];
-    return shas.map((s) => index.get(s)).filter((c): c is HistoryCommit => Boolean(c?.committerDate && Date.parse(c.committerDate) >= layout.start));
+    return shas.map((s) => index.get(s)).filter((c): c is HistoryCommit => Boolean(c?.committerDate && Date.parse(c.committerDate) >= layout.start && Date.parse(c.committerDate) <= layout.end));
   };
   const connectors: { d: string; kind: 'verified-merge' | 'pr-record' | 'reported-base'; label: string; color: string; dim: boolean; focus: boolean }[] = [];
   for (const item of layout.items) {
@@ -411,7 +379,7 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
       const parentItem = stackParent(pr, data.pulls) ? byNumber.get(stackParent(pr, data.pulls)!.number) : undefined;
       const ty = laneLineY(laneForBranch(pr.baseRef, data.defaultBranch)) ?? (parentItem ? AXIS + parentItem.y + 44 : null);
       if (ty !== null) {
-        const sx = item.x + item.barWidth; const tx = xOf(pr.mergedAt);
+        const sx = item.x + item.barWidth; const tx = xOf(new Date(Math.min(layout.end, Date.parse(pr.mergedAt))).toISOString());
         connectors.push({ d: `M ${sx} ${sy} C ${sx + 30} ${sy}, ${tx} ${(sy + ty) / 2}, ${tx} ${ty}`, kind: evidence === 'verified_merge_commit' ? 'verified-merge' : 'pr-record', label: `PR #${pr.number} 合併到 ${pr.baseRef}：${MERGE_EVIDENCE_LABEL[evidence]}`, color, dim, focus });
       }
     } else if (pr.state === 'open') {
@@ -424,7 +392,8 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
       }
     }
   }
-  const fetchedX = xOf(data.fetchedAt);
+  const fetchedX = xOf(new Date(layout.end).toISOString());
+  const checkedInWindow = Date.parse(data.fetchedAt) >= layout.start && Date.parse(data.fetchedAt) <= layout.end;
   // Months in range in which GitHub shows no PR created (a source fact). Months are SGT calendar months.
   const emptyMonths = useMemo(() => {
     const createdMonths = new Set(data.pulls.map((p) => formatSgt(p.createdAt, false).slice(0, 7)));
@@ -439,7 +408,7 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
     return out;
   }, [data.pulls, data.fetchedAt, layout.start]);
   return <>
-    <div className="g-graph-top"><strong>開發時間軸 · {RANGE_LABEL[range]}</strong><span>橫軸：實際日期（Asia/Singapore，UTC+8）· {layout.fit ? 'Auto Fit' : `手動縮放 ${layout.pxPerDay} px/天`}（{layout.pxPerDay.toFixed(1)} px/天）· 顯示 {layout.items.length} / {layout.total} 個 PR{layout.hiddenByRange ? ` · ${layout.hiddenByRange} 個在範圍外` : ''}</span>{range === 'all' && <span data-testid="all-history-scope">{data.status === 'complete' ? '全部歷史＝已取得快照內最早的 commit／PR 起算（all fetched history）。' : 'Partial / UNKNOWN：全部歷史只涵蓋已取得的資料，不代表完整 repository 歷史。'}</span>}</div>
+    <div className="g-graph-top"><strong>開發時間軸 · {activityFocus ? '聚焦開發活動' : RANGE_LABEL[range]}</strong><span>橫軸：實際日期（Asia/Singapore，UTC+8）· {layout.fit ? 'Auto Fit' : `手動縮放 ${layout.pxPerDay} px/天`}（{layout.pxPerDay.toFixed(1)} px/天）· 顯示 {layout.items.length} / {layout.total} 個 PR{layout.hiddenByRange ? ` · ${layout.hiddenByRange} 個未定位（範圍外或日期不完整）` : ''}</span>{activityFocus && <span>視窗：{layout.activityAvailable ? `${formatSgt(new Date(layout.start).toISOString())} → ${formatSgt(new Date(layout.end).toISOString())}` : '沒有可用的 PR 活動日期'} · Last checked {formatSgt(data.fetchedAt)} · 依已取得 PR 事件聚焦，非完整歷史</span>}{!activityFocus && range === 'all' && <span data-testid="all-history-scope">{data.status === 'complete' ? '全部歷史＝已取得快照內最早的 commit／PR 起算（all fetched history）。' : 'Partial / UNKNOWN：全部歷史只涵蓋已取得的資料，不代表完整 repository 歷史。'}</span>}</div>
     <div className="g-frame" ref={scroller} tabIndex={0} role="region" aria-label="可捲動的開發時間軸（水平：日期；垂直：分支群組）" onScroll={(e) => { lastScroll.current = e.currentTarget.scrollLeft; }}>
       <div className={`g-lane-labels ${compactLabels ? 'is-compact' : ''}`} ref={labelsRef} style={{ height: layout.height + AXIS }}>
         {layout.lanes.map((lane) => { const meta = laneById(lane.id); const fixed = lane.id === 'main' || lane.id === 'production-pages';
@@ -448,30 +417,30 @@ function Timeline({ data, range, stateFilter, lanes, collapsed, toggleCollapsed,
             <small>{fixed ? meta.note : `${lane.count} PR · ${meta.note}`}</small>
           </div>; })}
       </div>
-      <div className="g-canvas" data-fit={layout.fit ? 'auto' : 'manual'} data-px-per-day={layout.pxPerDay} style={{ width: layout.width, height: layout.height + AXIS }}>
-          <div className="g-axis" style={{ width: layout.width }}>{layout.ticks.map((t) => <span key={t.x} className="g-tick-label" style={{ left: t.x }}>{t.label}</span>)}<span className="g-now" style={{ left: timelineX(layout, data.fetchedAt) }}>Last checked {formatSgt(data.fetchedAt, false)}</span></div>
+      <div className="g-canvas" data-range-mode={activityFocus ? 'activity' : 'calendar'} data-start={layout.start} data-end={layout.end} data-fit={layout.fit ? 'auto' : 'manual'} data-px-per-day={layout.pxPerDay} style={{ width: layout.width, height: layout.height + AXIS }}>
+          <div className="g-axis" style={{ width: layout.width }}>{(layout.activityAvailable === false ? [] : layout.ticks).map((t) => <span key={t.x} className="g-tick-label" style={{ left: t.x }}>{t.label}</span>)}{checkedInWindow && <span className="g-now" style={{ left: timelineX(layout, data.fetchedAt) }}>Last checked {formatSgt(data.fetchedAt, false)}</span>}</div>
           {layout.ticks.map((t) => <i key={t.x} className="g-tick" style={{ left: t.x }} />)}
           {layout.lanes.map((lane, i) => <div key={lane.id} className={`g-band ${i % 2 ? 'is-alt' : ''}`} style={{ top: AXIS + lane.y, height: lane.height }} />)}
           <svg className="g-lines" width={layout.width} height={layout.height + AXIS} aria-hidden={false} role="img" aria-label="PR 與分支關係連線">
             {(['main', 'production-pages'] as const).map((id) => { const y = laneLineY(id); return y === null ? null : <line key={id} x1={8} x2={fetchedX} y1={y} y2={y} stroke={laneById(id).color} strokeWidth={id === 'main' ? 5 : 4} strokeLinecap="round" />; })}
             {connectors.map((c, i) => <path key={i} d={c.d} data-kind={c.kind} aria-label={c.label} stroke={c.kind === 'pr-record' ? '#94a3b8' : c.color} strokeWidth={(c.kind === 'verified-merge' ? 2.4 : 1.8) + (c.focus ? 1.2 : 0)} strokeDasharray={c.kind === 'verified-merge' ? undefined : c.kind === 'reported-base' ? '6 5' : '2 4'} fill="none" opacity={c.focus ? 1 : c.dim ? 0.08 : c.kind === 'reported-base' ? 0.75 : 0.28}><title>{c.label}</title></path>)}
-            <line x1={fetchedX} x2={fetchedX} y1={AXIS - 6} y2={layout.height + AXIS} stroke="#0f172a" strokeDasharray="3 4" opacity={0.35} />
+            {checkedInWindow && <line x1={fetchedX} x2={fetchedX} y1={AXIS - 6} y2={layout.height + AXIS} stroke="#0f172a" strokeDasharray="3 4" opacity={0.35} />}
           </svg>
           {(['main', 'production-pages'] as const).map((id) => { const y = laneLineY(id); if (y === null) return null;
             return laneCommits(id).map((c) => { const merge = c.parents.length > 1; const x = xOf(c.committerDate!);
               return merge || c.sha === data.branches.find((b) => b.name === id)?.headSha
                 ? <button key={`${id}-${c.sha}`} className={`g-commit-dot ${merge ? 'is-merge' : 'is-head'} ${selection?.kind === 'commit' && selection.sha === c.sha ? 'is-selected' : ''}`} style={{ left: x, top: y, ['--lane' as string]: laneById(id).color }} data-node={`commit-${c.sha}`} data-select aria-label={`${id} commit ${shortSha(c.sha)} · ${c.message} · commit 時間 ${formatSgt(c.committerDate)}`} title={`${shortSha(c.sha)} ${c.message}`} onClick={(e) => select({ kind: 'commit', sha: c.sha }, e.currentTarget)} />
                 : <i key={`${id}-${c.sha}`} className="g-commit-tick" style={{ left: x, top: y, background: laneById(id).color }} />; }); })}
-          {layout.items.map((item) => { const pr = item.pr; const dim = related && !related.has(pr.number);
+          {layout.items.map((item) => { const pr = item.pr; const dim = related && !related.has(pr.number); const activity = recentActivity.byPull.get(pr.number); const recent = pulseEnabled && activity?.state === 'recent';
             return <button key={pr.number} className={`g-pr-card is-${pr.status} kind-${branchKind(pr.headRef, data.defaultBranch)} ${selection?.kind === 'pr' && selection.number === pr.number ? 'is-selected' : ''} ${dim ? 'is-dim' : ''} ${related?.has(pr.number) && selection?.kind === 'pr' && selection.number !== pr.number ? 'is-related' : ''}`}
-              style={{ left: item.cardX, top: AXIS + item.y, width: item.width, ['--lane' as string]: laneById(item.lane).color }} data-node={`pr-${pr.number}`} data-select aria-pressed={selection?.kind === 'pr' && selection.number === pr.number} aria-label={prLabel(pr)} title={pr.title} onClick={(e) => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>
-              <span className="g-pr-top"><b>#{pr.number}</b><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span><span className="g-pr-branch">{pr.headRef}</span></span>
-              <span className="g-pr-title">{pr.title}</span>
+              style={{ left: item.cardX, top: AXIS + item.y, width: item.width, ['--lane' as string]: laneById(item.lane).color }} data-node={`pr-${pr.number}`} data-select aria-pressed={selection?.kind === 'pr' && selection.number === pr.number} aria-label={prLabel(pr)} aria-describedby={`timeline-commit-${pr.number}`} title={recent ? `${pr.title} · ${activity.explanation}` : pr.title} onClick={(e) => select({ kind: 'pr', number: pr.number }, e.currentTarget)}>
+              <span className="g-pr-top"><span className="pr-number-activity"><RecentActivityDot activity={activity} enabled={pulseEnabled} hours={commitWindowHours} fallback={recentActivity.message} /><b>#{pr.number}</b></span><span className={`g-chip is-${pr.status}`}>{STATUS_LABEL[pr.status]}</span><span className="g-pr-branch">{pr.headRef}</span>{item.clippedStart && <small className="g-clipped">視窗外開始</small>}{item.clippedEnd && <small className="g-clipped">視窗外延續</small>}</span>
+              <span className="g-pr-title">{pr.title}</span><span className="pr-activity-sr" id={`timeline-commit-${pr.number}`}>{activity?.explanation ?? recentActivity.message}</span>
               <span className="g-pr-track" aria-hidden="true"><i style={{ marginLeft: item.x - item.cardX, width: Math.max(2, Math.min(item.barWidth, item.width - (item.x - item.cardX))) }} className={pr.state === 'open' ? 'is-open' : ''} /></span>
             </button>; })}
       </div>
     </div>
-    <div className="g-legend"><span data-testid="no-pr-months">main／production-pages 上的圓點是 commit，不是 PR，兩者沒有推定關聯；PR 卡片只代表 GitHub PR 的建立到合併／關閉期間。{refreshFailed ? '最近一次重新整理失敗（Needs refresh）：目前顯示的是上一次成功讀取的資料，無法確認目前此範圍內是否有月份沒有 PR。' : prAbsenceVerifiable(data) ? (emptyMonths.length ? `此範圍內沒有建立任何 PR 的月份：${emptyMonths.join('、')}（來源事實，並非資料缺漏）。` : '') : 'GitHub 歷史資料不完整，無法確認此範圍內是否有月份沒有 PR。'}</span><span><i className="is-solid" />實線：已驗證 merge commit（parent 含 PR head）</span><span><i className="is-dashed" />虛線：PR 回報的 base（PR metadata，非 fork point）</span><span><i className="is-dotted" />點線：僅 PR 合併紀錄，無 Git parent 證據</span><span>卡片底部條＝實際 PR 期間（建立 → 合併／關閉／Last checked）</span></div>
+    <div className="g-legend"><span data-testid="no-pr-months">main／production-pages 上的圓點是 commit，不是 PR，兩者沒有推定關聯；PR 卡片只代表 GitHub PR 的建立到合併／關閉期間。{activityFocus ? '活動聚焦僅顯示視窗內期間；視窗外開始／延續保留原始日期，不代表 PR 在裁切處建立或結束。缺少有效建立／結束日期者無法定位；可選明確日曆範圍查看。' : refreshFailed ? '最近一次重新整理失敗（Needs refresh）：目前顯示的是上一次成功讀取的資料，無法確認目前此範圍內是否有月份沒有 PR。' : prAbsenceVerifiable(data) ? (emptyMonths.length ? `此範圍內沒有建立任何 PR 的月份：${emptyMonths.join('、')}（來源事實，並非資料缺漏）。` : '') : 'GitHub 歷史資料不完整，無法確認此範圍內是否有月份沒有 PR。'}</span><span><i className="is-solid" />實線：已驗證 merge commit（parent 含 PR head）</span><span><i className="is-dashed" />虛線：PR 回報的 base（PR metadata，非 fork point）</span><span><i className="is-dotted" />點線：僅 PR 合併紀錄，無 Git parent 證據</span><span>卡片底部條＝實際 PR 期間（建立 → 合併／關閉／Last checked）</span></div>
   </>;
 }
 
