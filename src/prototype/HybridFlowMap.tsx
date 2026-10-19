@@ -1,14 +1,15 @@
+import { RecentActivityDot } from './RecentActivityDot';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { DevelopmentHistory } from './gitHistoryTypes';
 import { branchKind, formatSgt, indexCommits, matchesState, mergeEvidence, MERGE_EVIDENCE_LABEL, pullEnd, STATUS_LABEL, timelineSpan, type RangeId, type StateFilter } from './gitHistoryModel';
 import { buildHybridMap, type HybridRow } from './hybridMapModel';
 import { flowPath } from './hybridFlowLayout';
-import type { RecentActivitySnapshot } from './recentActivityModel';
+import type { CommitWindowHours, RecentActivitySnapshot } from './recentActivityModel';
 
 type Stage = 'feature' | 'integration' | 'main' | 'release';
 type Edge = { id: string; from: string; to: string; kind: 'verified' | 'reported'; label: string; members: number[]; count: number };
 type Props = {
-  recentActivity: RecentActivitySnapshot; pulseEnabled: boolean;
+  recentActivity: RecentActivitySnapshot; pulseEnabled: boolean; commitWindowHours: CommitWindowHours;
   data: DevelopmentHistory; range: RangeId; stateFilter: StateFilter; query: string; needsRefresh: boolean;
   focusPR: number | null; onFocusPR: (number: number) => void; onClearFocus: () => void;
   modalOpen: boolean; openDetail: (number: number, origin: HTMLElement) => void;
@@ -46,7 +47,7 @@ function usePaths(root: RefObject<HTMLDivElement>, edges: Edge[], layoutKey: str
   return paths;
 }
 
-export function HybridFlowMap({ recentActivity, pulseEnabled, data, range, stateFilter, query, needsRefresh, focusPR, onFocusPR, onClearFocus, modalOpen, openDetail }: Props) {
+export function HybridFlowMap({ recentActivity, pulseEnabled, commitWindowHours, data, range, stateFilter, query, needsRefresh, focusPR, onFocusPR, onClearFocus, modalOpen, openDetail }: Props) {
   const rows = useMemo(() => buildHybridMap(data, needsRefresh), [data, needsRefresh]);
   const index = useMemo(() => indexCommits(data.commits), [data.commits]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -152,12 +153,12 @@ export function HybridFlowMap({ recentActivity, pulseEnabled, data, range, state
                     const isExpanded = !grouped || expanded.has(key) || relatedGroup;
                     return <div className={`hf-cluster ${grouped ? 'is-grouped' : ''}`} key={key}>
                       {grouped ? <button className="hf-cluster-toggle" data-flow-node={!isExpanded ? `group:${target}` : undefined} aria-expanded={isExpanded} onClick={() => { if (relatedGroup) onClearFocus(); toggleGroup(key, isExpanded); }} aria-label={`${isExpanded ? '收折' : '展開'} ${target} 的 ${group.length} 個 PR`}>
-                        <span aria-hidden="true">{isExpanded ? '−' : '+'}</span><strong>{group.length} PR</strong><span>目標：{target}</span><small>Git evidence {group.filter(r => r.relationship.kind === 'verified').length} · PR base {group.filter(r => r.relationship.kind === 'reported').length} · UNKNOWN {group.filter(r => r.relationship.kind === 'unknown').length}</small>
+                        <span aria-hidden="true">{isExpanded ? '−' : '+'}</span><strong>{group.length} PR</strong><span>目標：{target}</span><small>Git evidence {group.filter(r => r.relationship.kind === 'verified').length} · PR base {group.filter(r => r.relationship.kind === 'reported').length} · UNKNOWN {group.filter(r => r.relationship.kind === 'unknown').length}</small>{pulseEnabled && group.some(row => recentActivity.byPull.get(row.pr.number)?.state === 'recent') && <small className="hf-group-activity">最近 {commitWindowHours} 小時有 HEAD Commit：{group.filter(row => recentActivity.byPull.get(row.pr.number)?.state === 'recent').length} PR</small>}
                       </button> : null}
-                      {isExpanded && group.map(row => <button key={row.pr.number} data-select data-flow-node={prNode(row.pr.number)} data-node={`pr-${row.pr.number}`} data-testid={`hybrid-pr-${row.pr.number}`} className={`hf-pr ${pulseEnabled && recentActivity.byPull.get(row.pr.number)?.state === 'recent' ? 'has-recent-commit' : ''} ${emphasis(prNode(row.pr.number))}`}
+                      {isExpanded && group.map(row => <button key={row.pr.number} data-select data-flow-node={prNode(row.pr.number)} data-node={`pr-${row.pr.number}`} data-testid={`hybrid-pr-${row.pr.number}`} className={`hf-pr ${emphasis(prNode(row.pr.number))}`}
                         aria-label={`PR #${row.pr.number} · ${row.pr.title} · ${STATUS_LABEL[row.pr.status]}`} aria-describedby={`hybrid-commit-${row.pr.number}`} title={pulseEnabled && recentActivity.byPull.get(row.pr.number)?.state === 'recent' ? recentActivity.byPull.get(row.pr.number)?.explanation : row.pr.title} aria-pressed={row.pr.number === focusPR} aria-controls={focused ? inspectorId : undefined} onClick={() => onFocusPR(row.pr.number)}>
-                        <span className="hf-pr-top"><strong>#{row.pr.number}</strong><span className={`hf-status is-${row.pr.status}`}>{STATUS_LABEL[row.pr.status]}</span></span>
-                        <span className="hf-pr-title" title={row.pr.title}>{pulseEnabled && recentActivity.byPull.get(row.pr.number)?.state === 'recent' && <small className="pr-recent-label">{recentActivity.byPull.get(row.pr.number)!.label}</small>}{row.pr.title}</span><span className="pr-activity-sr" id={`hybrid-commit-${row.pr.number}`}>{recentActivity.byPull.get(row.pr.number)?.explanation ?? recentActivity.message}</span><small className="hf-source-name">{row.pr.headRef ?? 'UNKNOWN source'}</small>
+                        <span className="hf-pr-top"><span className="pr-number-activity"><RecentActivityDot activity={recentActivity.byPull.get(row.pr.number)} enabled={pulseEnabled} hours={commitWindowHours} fallback={recentActivity.message} /><strong>#{row.pr.number}</strong></span><span className={`hf-status is-${row.pr.status}`}>{STATUS_LABEL[row.pr.status]}</span></span>
+                        <span className="hf-pr-title" title={row.pr.title}>{row.pr.title}</span><span className="pr-activity-sr" id={`hybrid-commit-${row.pr.number}`}>{recentActivity.byPull.get(row.pr.number)?.explanation ?? recentActivity.message}</span><small className="hf-source-name">{row.pr.headRef ?? 'UNKNOWN source'}</small>
                         <small className={`hf-inclusion is-${row.main.state}`}>{mainLabel(row, data.defaultBranch)}</small>
                       </button>)}
                     </div>;

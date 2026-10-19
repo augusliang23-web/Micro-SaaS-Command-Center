@@ -9,7 +9,7 @@ const NOW=Date.parse('2026-10-19T00:00:00Z'), HOUR=3600000, repo='augusliang23-w
 const sha=(n:number)=>n.toString(16).padStart(40,'0');
 const iso=(ms:number)=>new Date(ms).toISOString();
 function fixture(count=8):DevelopmentHistory {
- const ages=[2,8,18,1,1,1,25,1];
+ const ages=[2,8,18,1,1,1,48,1];
  const pulls:HistoryPull[]=Array.from({length:count},(_,i)=>{const n=i+1,closed=n===4||n===5;return {number:n,title:`Synthetic PR ${n}`,url:`https://example.test/pr/${n}`,author:'synthetic',state:closed?'closed':'open',isDraft:n===2,merged:n===4,status:n===4?'merged':n===5?'closed_unmerged':n===2?'draft':'open',createdAt:iso(NOW-48*HOUR),updatedAt:iso(NOW),mergedAt:n===4?iso(NOW-HOUR):null,closedAt:closed?iso(NOW-HOUR):null,baseRef:'main',baseSha:sha(100),headRef:`feature/${n}`,headSha:sha(n),headRepo:repo,mergeCommitSha:n===4?sha(104):null};});
  const commits=[{sha:sha(100),parents:[],message:'synthetic root',authorDate:iso(NOW-HOUR),committerDate:iso(NOW-HOUR),author:null,url:null},...pulls.filter(p=>p.number!==6).map(p=>({sha:p.headSha!,parents:[sha(100)],message:'synthetic head',authorDate:iso(NOW),committerDate:p.number===8?'bad':iso(NOW-(ages[p.number-1]??25)*HOUR),author:null,url:null}))];
  return {source:'GitHub',repository:repo,repositoryUrl:`https://github.com/${repo}`,defaultBranch:'main',startedAt:iso(NOW),fetchedAt:iso(NOW),status:'complete',warnings:[],coverage:{branches:{count:count+1,pages:1,complete:true},pulls:{count,open:count-2,draft:1,merged:1,closedUnmerged:1,pages:1,complete:true},commits:{count:commits.length,defaultBranchCommits:1,defaultBranchComplete:true},focusRefs:{compared:0,requested:0,truncated:false},localWorktrees:'not_checked',deployments:'not_checked',ci:'not_checked'},consistency:{atomic:false,status:'consistent',rereadAt:iso(NOW),driftedRefs:[],prHeadMismatches:[]},branches:[{name:'main',headSha:sha(100),protected:true},...pulls.map(p=>({name:p.headRef!,headSha:p.headSha,protected:false}))],pulls,commits,defaultBranchShas:[sha(100)],refs:{},comparisons:[]};
@@ -70,46 +70,63 @@ async function mount(h=fixture()){
  return fetcher;
 }
 const card=(n:number)=>screen.getByRole('button',{name:new RegExp(`^PR #${n} ·`)});
+const dot=(n:number)=>within(card(n)).getByRole('img');
 const switchHybrid=()=>fireEvent.click(screen.getByRole('tab',{name:'開發全貌 / Hybrid'}));
 test('Timeline/Hybrid share the enabled 12h default, selectors, accessible timestamp and separate viewport controls',async()=>{
- await mount();expect(card(1)).toHaveClass('has-recent-commit');expect(card(2)).toHaveClass('has-recent-commit');expect(card(3)).not.toHaveClass('has-recent-commit');
+ await mount();expect(dot(1)).toHaveAttribute('data-activity-state','recent');expect(dot(2)).toHaveAttribute('data-activity-state','recent');expect(dot(3)).not.toHaveAttribute('data-activity-state','recent');
  expect(card(1)).toHaveAccessibleDescription(/Head Commit.*2026-10-19 06:00 SGT.*Last checked/);
  expect(screen.getByRole('button',{name:'聚焦開發活動'})).toHaveAttribute('aria-pressed','true');
- fireEvent.change(screen.getByRole('combobox',{name:'近期 Commit 時窗'}),{target:{value:'6'}});expect(card(2)).not.toHaveClass('has-recent-commit');
- switchHybrid();expect(card(1)).toHaveClass('has-recent-commit');expect(screen.getByRole('combobox',{name:'近期 Commit 時窗'})).toHaveValue('6');
- fireEvent.change(screen.getByRole('combobox',{name:'近期 Commit 時窗'}),{target:{value:'24'}});expect(card(3)).toHaveClass('has-recent-commit');
+ fireEvent.change(screen.getByRole('combobox',{name:'近期 Commit 時窗'}),{target:{value:'6'}});expect(dot(2)).not.toHaveAttribute('data-activity-state','recent');
+ switchHybrid();expect(dot(1)).toHaveAttribute('data-activity-state','recent');expect(screen.getByRole('combobox',{name:'近期 Commit 時窗'})).toHaveValue('6');
+ fireEvent.change(screen.getByRole('combobox',{name:'近期 Commit 時窗'}),{target:{value:'24'}});expect(dot(3)).toHaveAttribute('data-activity-state','recent');
  fireEvent.click(card(1));expect(card(1)).toHaveClass('is-selected');expect(screen.getByRole('complementary')).toHaveTextContent('Head Commit');
  const full=screen.getByRole('button',{name:'開啟完整 PR 詳情'});full.focus();await act(async()=>{fireEvent.click(full);});expect(screen.getByRole('dialog',{name:'PR 詳細資訊'})).toBeInTheDocument();
- fireEvent.keyDown(window,{key:'Escape'});expect(full).toHaveFocus();expect(card(1)).toHaveClass('has-recent-commit');
- fireEvent.click(screen.getByRole('button',{name:'近期 Commit 提示'}));expect(card(1)).not.toHaveClass('has-recent-commit');
- fireEvent.click(screen.getByRole('tab',{name:'開發時間軸'}));expect(screen.getByRole('combobox',{name:'近期 Commit 時窗'})).toHaveValue('24');expect(card(1)).not.toHaveClass('has-recent-commit');
+ fireEvent.keyDown(window,{key:'Escape'});expect(full).toHaveFocus();expect(dot(1)).toHaveAttribute('data-activity-state','recent');
+ fireEvent.click(screen.getByRole('button',{name:'近期 Commit 提示'}));expect(dot(1)).not.toHaveAttribute('data-activity-state','recent');
+ fireEvent.click(screen.getByRole('tab',{name:'開發時間軸'}));expect(screen.getByRole('combobox',{name:'近期 Commit 時窗'})).toHaveValue('24');expect(dot(1)).not.toHaveAttribute('data-activity-state','recent');
 });
 test('mounted pulse expires with real-clock recency and snapshot freshness, without fetching in its timer',async()=>{
  const h=fixture();h.commits[1].committerDate=iso(NOW-12*HOUR+60000);const fetcher=await mount(h);
- expect(card(1)).toHaveClass('has-recent-commit');await act(async()=>{await vi.advanceTimersByTimeAsync(2*60000);});expect(card(1)).not.toHaveClass('has-recent-commit');
- expect(card(2)).toHaveClass('has-recent-commit');await act(async()=>{await vi.advanceTimersByTimeAsync(14*60000);});expect(card(2)).not.toHaveClass('has-recent-commit');
- expect(screen.getByLabelText('Commit 活動資料狀態')).toHaveTextContent('Needs refresh');expect(fetcher).toHaveBeenCalledTimes(1);
+ expect(dot(1)).toHaveAttribute('data-activity-state','recent');await act(async()=>{await vi.advanceTimersByTimeAsync(2*60000);});expect(dot(1)).not.toHaveAttribute('data-activity-state','recent');
+ expect(dot(2)).toHaveAttribute('data-activity-state','recent');await act(async()=>{await vi.advanceTimersByTimeAsync(14*60000);});expect(dot(2)).not.toHaveAttribute('data-activity-state','recent');
+ expect(screen.getByLabelText('Commit 活動資料狀態')).toHaveTextContent('Needs refresh');for(let n=1;n<=8;n++)expect(dot(n)).toHaveAttribute('data-activity-state','unknown');expect(fetcher).toHaveBeenCalledTimes(1);
  cleanup();expect(vi.getTimerCount()).toBe(0);
 });
 test('foreground/visibility changes and failed refresh remove pulse immediately, without automatic API polling',async()=>{
- const fetcher=await mount();expect(card(1)).toHaveClass('has-recent-commit');
- vi.setSystemTime(NOW+16*60000);fireEvent(document,new Event('visibilitychange'));expect(card(1)).not.toHaveClass('has-recent-commit');expect(fetcher).toHaveBeenCalledTimes(1);
- vi.setSystemTime(NOW);fireEvent(window,new Event('focus'));expect(card(1)).toHaveClass('has-recent-commit');
+ const fetcher=await mount();expect(dot(1)).toHaveAttribute('data-activity-state','recent');
+ vi.setSystemTime(NOW+16*60000);fireEvent(document,new Event('visibilitychange'));expect(dot(1)).not.toHaveAttribute('data-activity-state','recent');expect(fetcher).toHaveBeenCalledTimes(1);
+ vi.setSystemTime(NOW);fireEvent(window,new Event('focus'));expect(dot(1)).toHaveAttribute('data-activity-state','recent');
  fetcher.mockResolvedValueOnce(new Response('{}',{status:503}));await act(async()=>{fireEvent.click(screen.getByRole('button',{name:'重新整理 GitHub 資料'}));});
- expect(card(1)).not.toHaveClass('has-recent-commit');expect(screen.getByLabelText('Commit 活動資料狀態')).toHaveTextContent('Needs refresh');
+ expect(dot(1)).not.toHaveAttribute('data-activity-state','recent');expect(screen.getByLabelText('Commit 活動資料狀態')).toHaveTextContent('Needs refresh');
 });
 test('20-PR grouping keeps routes; pulse is individually shown after expansion, never inferred for a group',async()=>{
- await mount(fixture(20));switchHybrid();const graph=screen.getByRole('region',{name:'Git 視覺流程圖'});
- expect(graph.querySelector('.has-recent-commit')).toBeNull();expect(graph.querySelector('[data-edge-count]')).not.toBeNull();
- fireEvent.click(within(graph).getByRole('button',{name:/展開 main.*20.*PR/}));expect(card(1)).toHaveClass('has-recent-commit');expect(graph.querySelectorAll('.has-recent-commit')).toHaveLength(2);
+ await mount(fixture(20));for(let n=1;n<=20;n++)expect(within(card(n)).getAllByRole('img')).toHaveLength(1);switchHybrid();const graph=screen.getByRole('region',{name:'Git 視覺流程圖'});
+ expect(graph.querySelector('.pr-activity-dot')).toBeNull();expect(graph.querySelector('[data-edge-count]')).not.toBeNull();expect(graph).toHaveTextContent('最近 12 小時有 HEAD Commit：2 PR');
+ fireEvent.click(within(graph).getByRole('button',{name:/展開 main.*20.*PR/}));expect(dot(1)).toHaveAttribute('data-activity-state','recent');expect(graph.querySelectorAll('[data-activity-state=recent]')).toHaveLength(2);for(let n=1;n<=20;n++)expect(within(card(n)).getAllByRole('img')).toHaveLength(1);
  expect(screen.getByRole('region',{name:'部署 / 驗收'})).not.toHaveTextContent('Commit');
 });
-test('pulse CSS uses slow non-layout animation and a static reduced-motion alternative',()=>{
+test.each(['timeline','hybrid'])('every rendered %s PR card has exactly one accessible dot, including unknown and closed',async(view)=>{
+ await mount();if(view==='hybrid')switchHybrid();
+ for(let n=1;n<=8;n++)expect(within(card(n)).getAllByRole('img')).toHaveLength(1);
+ expect(dot(1)).toHaveAttribute('data-activity-state','recent');expect(dot(1)).toHaveAccessibleName(/最近 12 小時有 HEAD Commit.*Last checked/);
+ for(const n of [3,7])expect(dot(n)).toHaveAttribute('data-activity-state','outside');
+ for(const n of [4,5,6,8])expect(dot(n)).toHaveAttribute('data-activity-state','unknown');
+ expect(dot(3)).toHaveAccessibleName(/已核對：HEAD Commit 在 12 小時前/);
+ fireEvent.click(screen.getByRole('button',{name:'近期 Commit 提示'}));
+ for(let n=1;n<=8;n++){expect(dot(n)).toHaveAttribute('data-activity-state','unknown');expect(dot(n)).toHaveAccessibleName(/提示關閉/);}
+});
+test('dot CSS keeps visible fixed geometry, only a 2–3 second green halo, and static reduced motion',()=>{
  const css=readFileSync('src/prototype/prototype.css','utf8');const style=document.createElement('style');
  style.textContent=css.slice(css.indexOf('/* Recent Commit activity'));document.head.appendChild(style);
- try {const rules=[...style.sheet!.cssRules];const normal=rules.find(r=>r instanceof CSSStyleRule&&r.selectorText==='.has-recent-commit::after') as CSSStyleRule;
- const seconds=Number(normal.style.animation.match(/([\d.]+)s/)?.[1]);expect(seconds).toBeGreaterThanOrEqual(3);expect(seconds).toBeLessThanOrEqual(5);expect(normal.style.position).toBe('absolute');expect(normal.style['pointer-events']).toBe('none');
+ try {const rules=[...style.sheet!.cssRules];const rule=(selector:string)=>rules.find(r=>r instanceof CSSStyleRule&&r.selectorText===selector) as CSSStyleRule;
+ const normal=rule('.pr-activity-dot.is-recent::after');const seconds=Number(normal.style.animation.match(/([\d.]+)s/)?.[1]);expect(seconds).toBeGreaterThanOrEqual(2);expect(seconds).toBeLessThanOrEqual(3);expect(normal.style.position).toBe('absolute');expect(normal.style['pointer-events']).toBe('none');
+ expect(rule('.pr-activity-dot').style.width).toBe('14px');expect(rule('.pr-activity-dot').style.height).toBe('14px');
+ expect(rule('.pr-activity-dot::before').style.width).toBe('10px');expect(rule('.pr-activity-dot.is-unknown::before').style.background).toBe('transparent');
+ expect(rule('.pr-activity-dot.is-outside::before').style.getPropertyValue('animation')).toBe('');
+ expect(rule('.has-recent-commit::after')).toBeUndefined();
  const reduced=rules.find(r=>r instanceof CSSMediaRule&&r.conditionText.includes('prefers-reduced-motion')) as CSSMediaRule;
- const reducedPulse=[...reduced.cssRules].find(r=>r instanceof CSSStyleRule&&r.selectorText==='.has-recent-commit::after') as CSSStyleRule;expect(reducedPulse.style.animation).toBe('none');
+ const reducedPulse=[...reduced.cssRules].find(r=>r instanceof CSSStyleRule&&r.selectorText==='.pr-activity-dot.is-recent::after') as CSSStyleRule;expect(reducedPulse.style.animation).toBe('none');
+ // The filled green core is independent of the halo and therefore survives animation being disabled.
+ expect(rule('.pr-activity-dot.is-recent::before').style.background).toBeTruthy();
  } finally {style.remove();}
 });
