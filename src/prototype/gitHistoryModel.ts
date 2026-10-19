@@ -3,6 +3,8 @@
 // parents; PR base/head refs stay labelled as reported PR metadata.
 import type { DevelopmentHistory, HistoryCommit, HistoryPull, LiveIdentity, PullDetail, ReviewerDecision } from './gitHistoryTypes';
 
+import { activityWindow } from './activityTimelineModel';
+
 export const LIVE_HISTORY_REPOS = ['augusliang23-web/pm-dashboard'] as const;
 const SGT_OFFSET_MS = 8 * 3600_000;
 const DAY_MS = 86_400_000;
@@ -250,12 +252,12 @@ export const MERGE_EVIDENCE_LABEL: Record<MergeEvidence, string> = {
 };
 
 // ---------- Timeline (View A) ----------
-export type TimelineItem = { pr: HistoryPull; lane: LaneId; /** true date position of the PR's creation */ x: number; /** card left edge; shifted left only to keep the card inside the plot */ cardX: number; barWidth: number; width: number; row: number; y: number; endIso: string };
+export type TimelineItem = { pr: HistoryPull; lane: LaneId; /** true date position of the PR's creation */ x: number; /** card left edge; shifted left only to keep the card inside the plot */ cardX: number; barWidth: number; width: number; row: number; y: number; endIso: string; clippedStart?: boolean; clippedEnd?: boolean };
 export type TimelineLane = { id: LaneId; y: number; height: number; rows: number; count: number; collapsed: boolean };
 export type TimelineLayout = {
   start: number; end: number; pxPerDay: number; fit: boolean; width: number; height: number;
   lanes: TimelineLane[]; items: TimelineItem[]; ticks: { x: number; label: string }[];
-  hiddenByRange: number; total: number;
+  hiddenByRange: number; total: number; activityAvailable?: boolean;
 };
 export const LANE_BASE_HEIGHT = 56;
 export const ROW_HEIGHT = 58;
@@ -314,7 +316,7 @@ export function earliestFetchedTimestamp(history: Pick<DevelopmentHistory, 'pull
   for (const commit of history.commits) consider(commit.committerDate);
   return (best as { iso: string } | null)?.iso ?? null;
 }
-export const timelineSpan = (history: DevelopmentHistory, range: RangeId) => ({
+export const timelineSpan = (history: DevelopmentHistory, range: RangeId, activityFocus = false) => activityFocus ? activityWindow(history) : ({
   start: rangeStart(range, history.fetchedAt, earliestFetchedTimestamp(history)),
   end: Date.parse(history.fetchedAt),
 });
@@ -353,9 +355,10 @@ export function timelineTicks(start: number, end: number, pxPerDay: number, x: (
   }
   return ticks;
 }
-export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeId; state: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; /** manual zoom; omit for Auto Fit */ pxPerDay?: number; /** drawable plot width used by Auto Fit */ plotWidth?: number; query?: string }): TimelineLayout {
+export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeId; activityFocus?: boolean; state: StateFilter; lanes: Set<LaneId>; collapsed: Set<LaneId>; /** manual zoom; omit for Auto Fit */ pxPerDay?: number; /** drawable plot width used by Auto Fit */ plotWidth?: number; query?: string }): TimelineLayout {
   const fetchedAt = history.fetchedAt;
-  const { start, end } = timelineSpan(history, opts.range);
+  const span = timelineSpan(history, opts.range, opts.activityFocus);
+  const { start, end } = span;
   const fit = opts.pxPerDay === undefined;
   const pxPerDay = opts.pxPerDay ?? fitPxPerDay({ start, end, plotWidth: opts.plotWidth ?? 0 });
   const x = (ms: number) => PLOT_GUTTER_LEFT + ((ms - start) / DAY_MS) * pxPerDay;
@@ -363,7 +366,10 @@ export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeI
   const width = Math.ceil(Math.max(fit && opts.plotWidth && opts.plotWidth > 0 ? opts.plotWidth : 0, x(end) + PLOT_GUTTER_RIGHT));
   const q = (opts.query ?? '').trim().toLowerCase();
   const stateMatches = history.pulls.filter((p) => matchesState(p, opts.state) && (!q || `${p.number} ${p.title} ${p.headRef} ${p.baseRef}`.toLowerCase().includes(q)));
-  const inRange = stateMatches.filter((p) => p.createdAt && Date.parse(pullEnd(p, fetchedAt)) >= start);
+  const inRange = stateMatches.filter((p) => {
+    const created = Date.parse(p.createdAt ?? ''), ended = Date.parse(pullEnd(p, fetchedAt));
+    return Number.isFinite(created) && Number.isFinite(ended) && ended >= created && ended >= start && created <= end;
+  });
   const lanes: TimelineLane[] = [];
   const items: TimelineItem[] = [];
   let y = 0;
@@ -376,14 +382,14 @@ export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeI
     for (const pr of lanePulls) {
       const left = x(Math.max(start, Date.parse(pr.createdAt!)));
       const endIso = pullEnd(pr, fetchedAt);
-      const barWidth = Math.max(6, x(Date.parse(endIso)) - left);
+      const barWidth = Math.max(6, x(Math.min(end, Date.parse(endIso))) - left);
       const w = Math.max(CARD_MIN_WIDTH, barWidth);
       // A card near the right edge slides left to stay inside the plot; its duration bar keeps the true date position.
       const cardX = Math.max(0, Math.min(left, width - w - 2));
       let row = rowEnds.findIndex((e) => e + 10 <= cardX);
       if (row < 0) { row = rowEnds.length; rowEnds.push(0); }
       rowEnds[row] = cardX + w;
-      laneItems.push({ pr, lane: lane.id, x: left, cardX, barWidth, width: w, row, y: 0, endIso });
+      laneItems.push({ pr, lane: lane.id, x: left, cardX, barWidth, width: w, row, y: 0, endIso, clippedStart: Date.parse(pr.createdAt!) < start, clippedEnd: Date.parse(endIso) > end });
     }
     const rows = collapsed ? 0 : rowEnds.length;
     const height = LANE_BASE_HEIGHT + rows * ROW_HEIGHT;
@@ -392,7 +398,7 @@ export function buildTimeline(history: DevelopmentHistory, opts: { range: RangeI
     lanes.push({ id: lane.id, y, height, rows, count: lanePulls.length, collapsed });
     y += height;
   }
-  return { start, end, pxPerDay, fit, width, height: y, lanes, items, ticks: timelineTicks(start, end, pxPerDay, x), hiddenByRange: stateMatches.length - inRange.length, total: history.pulls.length };
+  return { start, end, pxPerDay, fit, width, height: y, lanes, items, ticks: timelineTicks(start, end, pxPerDay, x), hiddenByRange: stateMatches.length - inRange.length, total: history.pulls.length, activityAvailable: opts.activityFocus ? ('available' in span && span.available === true) : undefined };
 }
 export function timelineX(layout: Pick<TimelineLayout, 'start' | 'pxPerDay'>, iso: string) {
   return PLOT_GUTTER_LEFT + ((Date.parse(iso) - layout.start) / DAY_MS) * layout.pxPerDay;
