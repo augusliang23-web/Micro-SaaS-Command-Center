@@ -515,16 +515,27 @@ describe('E. the V1 read-only server is unchanged and cannot reach the new modul
   const sourceFiles = (dir) => fs.readdirSync(path.join(REPO_ROOT, dir), { recursive: true })
     .filter((f) => /\.(mjs|ts|tsx|js)$/.test(f) && !f.includes('node_modules')).map((f) => path.join(dir, f));
 
-  test('no existing server or src file imports the project management modules', () => {
+  // V1.2B (Issue #90 V1_2B_TEST_CONTRACT_AMENDMENT): exactly these two files may use the foundation modules. Any other
+  // importer, including server.ts or the V1 app, is still a failure.
+  const AUTHORIZED_IMPORTERS = ['server/v1ProjectManagementRoutes.mjs', 'src/v1/ManageProjects.test.tsx'];
+
+  test('only the explicitly authorized V1.2B files import the project management modules', () => {
     const importers = [...sourceFiles('server'), ...sourceFiles('src'), 'server.ts']
       .filter((f) => !NEW.includes(f) && /projectManagement(Schema|Commands|Store)/.test(read(f)));
-    assert.deepEqual(importers, []);
+    assert.deepEqual(importers.filter((f) => !AUTHORIZED_IMPORTERS.includes(f)), [], 'unexpected importer of the project management modules');
+    assert.deepEqual([...importers].sort(), [...AUTHORIZED_IMPORTERS].sort(), 'the authorized importers are exactly the expected ones');
   });
 
-  test('the V1 router still registers only its read routes and server.ts mounts no new writer', () => {
+  test('the V1 read-only router keeps its original routes; server.ts mounts only the scoped V1.2 project router', () => {
     const v1 = read('server/v1ReadOnlyRoutes.mjs');
     assert.deepEqual([...v1.matchAll(/router\.(get|post|put|patch|delete|all|use)\(\s*'([^']*)'/g)].map((m) => `${m[1]} ${m[2]}`), ['get /health', 'get /state', 'use /github']);
-    assert.doesNotMatch(read('server.ts'), /projectManagement/);
+    assert.doesNotMatch(v1, /projectManagement/i, 'the V1 read-only router does not reach the project writer');
+    const server = read('server.ts');
+    assert.doesNotMatch(server, /projectManagement(Schema|Commands|Store)/, 'server.ts never uses the foundation modules directly');
+    assert.equal([...server.matchAll(/createV1ProjectManagementRouter\(/g)].length, 1, 'exactly one project router is mounted');
+    assert.match(server, /from '\.\/server\/v1ProjectManagementRoutes\.mjs'/);
+    const router = read('server/v1ProjectManagementRoutes.mjs');
+    assert.deepEqual([...router.matchAll(/router\.(get|post|put|patch|delete|all|use)\(\s*'([^']*)'/g)].map((m) => `${m[1]} ${m[2]}`), ['get /projects', 'post /projects/commands'], 'the single scoped writer and its read model');
   });
 
   test('the new modules use no network, child process, provider, git or gh facility', () => {

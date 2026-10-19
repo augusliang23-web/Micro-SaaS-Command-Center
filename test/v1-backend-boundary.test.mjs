@@ -501,9 +501,24 @@ describe('H. capability selection fails closed and legacy capabilities need expl
     }
   });
 
-  test('each legacy capability is its own opt-in and only enables its own routes', async () => {
+  test('each legacy capability is its own opt-in and only enables its own routes; state-write fails closed (V1.2)', async () => {
+    // V1.2B (Issue #90 V1_2B_TEST_CONTRACT_AMENDMENT): the legacy whole-state writer bypasses the V1.2 project store's lock and
+    // version check, so opting into it is a refusal to start. The refusal must be that specific conflict, not a generic crash,
+    // and no writer may ever become reachable.
+    for (const value of ['state-write', 'tasks,state-write']) {
+      const cwd = makeCwd({ state: true, activeTask: true });
+      const before = snapshotTree(cwd);
+      const stateBefore = fs.readFileSync(path.join(cwd, 'data', 'app-state.json'));
+      const server = await startServer({ cwd, env: { COMMAND_CENTER_LEGACY_CAPABILITIES: value } });
+      assert.notEqual(server.earlyExit, undefined, `${value} must refuse to start`);
+      assert.notEqual(server.earlyExit, 0);
+      assert.match(server.stderr(), /Refusing to start \(capability configuration\): The legacy "state-write" capability cannot be enabled together with the V1\.2 project writer/, server.stderr());
+      assert.doesNotMatch(server.stdout(), /running at/);
+      assert.deepEqual(writesIn(server.spy()), []);
+      assert.deepEqual(snapshotTree(cwd), before);
+      assert.deepEqual(fs.readFileSync(path.join(cwd, 'data', 'app-state.json')), stateBefore);
+    }
     const cases = [
-      ['state-write', async (s) => { assert.equal((await s.request('PUT', '/api/state', { body: syntheticState() })).status, 200); assert.equal((await s.request('GET', '/api/tasks')).status, 404); assert.equal((await s.request('GET', '/api/local-git/status?path=%2Ftmp')).status, 404); }],
       ['tasks', async (s) => { assert.equal((await s.request('GET', '/api/tasks')).status, 200); assert.equal((await s.request('PUT', '/api/state', { body: syntheticState() })).status, 405); }],
       ['local-git', async (s) => { assert.notEqual((await s.request('GET', '/api/local-git/status?path=%2Ftmp')).status, 404); assert.ok(processesIn(s.spy()).length > 0, 'git execution is attempted only when this capability is enabled'); assert.equal((await s.request('GET', '/api/tasks')).status, 404); }],
       ['github-legacy', async (s) => { assert.notEqual((await s.request('GET', '/api/github/repos')).status, 404); assert.equal((await s.request('PUT', '/api/state', { body: syntheticState() })).status, 405); }],
