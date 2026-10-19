@@ -1,7 +1,9 @@
 // V1.2A project management commands: pure transforms of a saved state. No filesystem, network or clock access; the input is
 // never mutated (unrelated projects and top-level fields are carried over by reference, so they serialise identically).
 // Every command validates the whole input first and the whole result last (assertUsableState); any doubt is refused with a
-// ProjectDataError, never resolved by guessing. Not imported by server.ts; nothing here is reachable from the V1 server.
+// ProjectDataError, never resolved by guessing. Reached only through the V1.2 project command route.
+// V1.2C adds connect / disconnect / change for the GitHub connection. Those three need a `verified` repository identity that
+// ONLY the server adds after its own read-only GitHub metadata check; a client cannot supply it (the route allowlist refuses it).
 
 import {
   EDITABLE_FIELDS,
@@ -15,11 +17,14 @@ import {
   cleanStage,
   cleanTags,
   cleanText,
+  CONNECTION_STATUS,
+  connectionOf,
   lifecycleOf,
   nextManagement,
   removedOf,
   repositoryKey,
 } from './projectManagementSchema.mjs';
+import { legacyCompatProjectId } from './githubConnectionRegistry.mjs';
 
 const fail = (code, message, details) => { throw new ProjectDataError(code, message, details); };
 const isRecord = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -62,6 +67,49 @@ function replaceAt(projects, index, project) {
   next[index] = project;
   return next;
 }
+
+/** Connected now: a saved `connected` record, or the strict legacy PM Dashboard rule (which has no saved record). */
+function isEffectivelyConnected(state, project) {
+  const c = connectionOf(project);
+  if (c) return c.status === CONNECTION_STATUS.CONNECTED;
+  return project.id === legacyCompatProjectId(state);
+}
+
+/** The connection record a write must carry so that authority never silently changes as a side effect. */
+function connectionRecord(previous, fields) {
+  return {
+    status: fields.status,
+    repository: fields.repository,
+    generation: (previous?.generation ?? 0) + 1,
+    source: fields.source,
+    connectedAt: fields.connectedAt ?? null,
+    verifiedRepositoryId: fields.verifiedRepositoryId ?? null,
+    revokedAt: fields.revokedAt ?? null,
+    revokedReason: fields.revokedReason ?? null,
+  };
+}
+
+/** Archive/remove revoke an effective connection (including the legacy rule); restore/recover never bring it back. */
+function revokedConnectionFor(state, project, reason, now) {
+  if (!isEffectivelyConnected(state, project)) return undefined;
+  const previous = connectionOf(project);
+  return connectionRecord(previous, {
+    status: CONNECTION_STATUS.DISCONNECTED, repository: previous?.repository ?? project.repository,
+    source: previous?.source ?? 'legacy-pm-dashboard-compat', connectedAt: previous?.connectedAt ?? null,
+    verifiedRepositoryId: previous?.verifiedRepositoryId ?? null, revokedAt: now, revokedReason: reason,
+  });
+}
+
+/**
+ * Decision B: the first write that gives the legacy PM Dashboard record a `management` object would otherwise end its legacy
+ * authority silently. An Edit keeps it by persisting the same authority as an auditable record (source legacy-pm-dashboard-compat).
+ */
+function persistedLegacyConnection(state, project, now) {
+  if (project.management !== undefined || project.id !== legacyCompatProjectId(state)) return undefined;
+  return connectionRecord(null, { status: CONNECTION_STATUS.CONNECTED, repository: project.repository, source: 'legacy-pm-dashboard-compat', connectedAt: now });
+}
+
+const withConnection = (management, connection) => (connection === undefined ? management : { ...management, githubConnection: connection });
 
 /**
  * Add a project. `newId()` must return a fresh opaque id (the store passes a random UUID based one); a collision with any
@@ -109,7 +157,8 @@ export function editProject(state, { id, patch }, { now }) {
   if ('tags' in patch) clean.tags = cleanTags(patch.tags);
   const changed = Object.keys(clean).filter((k) => !sameJson(current[k], clean[k]));
   if (changed.length === 0) return { state, result: { projectId: id, changed: false } };
-  const project = { ...current, ...Object.fromEntries(changed.map((k) => [k, clean[k]])), management: nextManagement(current, { now, event: 'edited' }) };
+  const management = withConnection(nextManagement(current, { now, event: 'edited' }), persistedLegacyConnection(state, current, now));
+  const project = { ...current, ...Object.fromEntries(changed.map((k) => [k, clean[k]])), management };
   return { state: withProjects(state, replaceAt(state.projects, index, project)), result: { projectId: id, changed: true, fields: changed } };
 }
 
@@ -120,7 +169,8 @@ export function archiveProject(state, { id }, { now }) {
   const index = locate(state, id);
   const current = state.projects[index];
   if (lifecycleOf(current) !== LIFECYCLE.ACTIVE) fail('ILLEGAL_TRANSITION', 'Only an active project can be archived.', { projectId: id });
-  const project = { ...current, management: nextManagement(current, { now, event: 'archived', lifecycle: LIFECYCLE.ARCHIVED }) };
+  const management = withConnection(nextManagement(current, { now, event: 'archived', lifecycle: LIFECYCLE.ARCHIVED }), revokedConnectionFor(state, current, 'archived', now));
+  const project = { ...current, management };
   return { state: withProjects(state, replaceAt(state.projects, index, project)), result: { projectId: id, changed: true } };
 }
 
@@ -146,7 +196,7 @@ export function removeProject(state, { id }, { now }) {
   const index = locate(state, id);
   const current = state.projects[index];
   const lifecycle = lifecycleOf(current);
-  const project = { ...current, management: nextManagement(current, { now, event: 'removed', lifecycle }) };
+  const project = { ...current, management: withConnection(nextManagement(current, { now, event: 'removed', lifecycle }), revokedConnectionFor(state, current, 'removed', now)) };
   const entry = { project, removedAt: now, previousIndex: index, previousLifecycle: lifecycle };
   const projects = state.projects.filter((_, i) => i !== index);
   return { state: withProjects(state, projects, [...removedOf(state), entry]), result: { projectId: id, changed: true } };
@@ -173,6 +223,80 @@ export function recoverRemovedProject(state, { id }, { now }) {
   return { state: withProjects(state, projects, removed.filter((_, i) => i !== matches[0])), result: { projectId: id, changed: true } };
 }
 
+// ------------------------------------------------------------------------------------------------ V1.2C GitHub connection
+
+/**
+ * Shared checks for connect/change, run BEFORE any GitHub request (the route calls it as a pre-check) and again inside the
+ * command. Returns the target project and the canonical repository the server must verify.
+ */
+export function prepareConnection(state, command) {
+  assertUsableState(state);
+  const { type, id } = command;
+  const index = locate(state, id);
+  const current = state.projects[index];
+  if (removedOf(state).some((e) => e.project.id === id)) fail('AMBIGUOUS_ID', 'A removed project uses the same id; refusing to guess.', { projectId: id });
+  if (current.dataMode !== undefined) fail('UNTRUSTED_IDENTITY', 'Only a registered project (no dataMode) can be connected to GitHub.', { projectId: id });
+  if (lifecycleOf(current) !== LIFECYCLE.ACTIVE) fail('ILLEGAL_TRANSITION', 'Restore the project before connecting it to GitHub.', { projectId: id });
+  const repository = canonicalRepository(command.repository);
+  if (type === 'connect') {
+    if (isEffectivelyConnected(state, current)) fail('ALREADY_CONNECTED', 'This project is already connected. Disconnect or change the repository instead.', { projectId: id });
+    if (current.repository && repositoryKey(current.repository) !== repositoryKey(repository)) {
+      fail('REPOSITORY_MISMATCH', 'This project already names another repository. Use "change repository" to switch.', { projectId: id });
+    }
+  } else {
+    if (!current.repository) fail('NOT_CONNECTED', 'This project has no repository to change. Use "connect" instead.', { projectId: id });
+    if (command.confirmPreviousRepository !== current.repository) fail('INVALID_INPUT', 'Confirm the current repository exactly to change it.', { field: 'confirmPreviousRepository' });
+    if (repositoryKey(repository) === repositoryKey(current.repository)) fail('INVALID_INPUT', 'The new repository is the same as the current one.', { field: 'repository' });
+  }
+  const key = repositoryKey(repository);
+  const others = [...state.projects.filter((_, i) => i !== index), ...removedOf(state).map((e) => e.project)];
+  const clash = others.find((p) => repositoryKey(p.repository) === key || repositoryKey(connectionOf(p)?.repository) === key);
+  if (clash) fail('DUPLICATE_REPOSITORY', 'Another current or removed project already uses this repository.', { projectId: clash.id });
+  return { index, current, repository };
+}
+
+/** The server's verified identity must name the same repository; GitHub's exact full_name becomes the stored spelling. */
+function verifiedRepository(verified, repository) {
+  if (!isRecord(verified) || typeof verified.fullName !== 'string' || !Number.isInteger(verified.id) || verified.id < 1) {
+    fail('INVALID_INPUT', 'The repository has not been verified by the server.');
+  }
+  let fullName;
+  try { fullName = canonicalRepository(verified.fullName); } catch { fail('INVALID_INPUT', 'The verified repository name is invalid.'); }
+  if (fullName !== verified.fullName || repositoryKey(fullName) !== repositoryKey(repository)) fail('REPOSITORY_MISMATCH', 'GitHub reported a different repository (renamed or redirected); not connected.');
+  return { fullName, id: verified.id };
+}
+
+function applyConnection(state, command, { now }, event) {
+  assertNow(now);
+  const { index, current, repository } = prepareConnection(state, command);
+  const v = verifiedRepository(command.verified, repository);
+  const githubConnection = connectionRecord(connectionOf(current), { status: CONNECTION_STATUS.CONNECTED, repository: v.fullName, source: 'user-verified', connectedAt: now, verifiedRepositoryId: v.id });
+  const project = { ...current, repository: v.fullName, management: { ...nextManagement(current, { now, event }), githubConnection } };
+  return { state: withProjects(state, replaceAt(state.projects, index, project)), result: { projectId: current.id, changed: true, repository: v.fullName } };
+}
+
+/** Not connected -> connected for the server-verified repository. The project id never changes. */
+export function connectGithub(state, command, ctx) {
+  return applyConnection(state, { ...command, type: 'connect' }, ctx, 'github-connected');
+}
+
+/** Switches to another server-verified repository; the old authority ends in the same atomic write. */
+export function changeGithubRepository(state, command, ctx) {
+  return applyConnection(state, { ...command, type: 'change' }, ctx, 'github-repository-changed');
+}
+
+/** Connected (saved record or legacy rule) -> disconnected. History reads stop on the next request. */
+export function disconnectGithub(state, { id }, { now }) {
+  assertUsableState(state);
+  assertNow(now);
+  const index = locate(state, id);
+  const current = state.projects[index];
+  if (!isEffectivelyConnected(state, current)) fail('NOT_CONNECTED', 'This project is not connected to GitHub.', { projectId: id });
+  const githubConnection = revokedConnectionFor(state, current, 'disconnected', now);
+  const project = { ...current, management: { ...nextManagement(current, { now, event: 'github-disconnected' }), githubConnection } };
+  return { state: withProjects(state, replaceAt(state.projects, index, project)), result: { projectId: id, changed: true } };
+}
+
 export const PROJECT_COMMANDS = Object.freeze({
   add: addProject,
   edit: editProject,
@@ -180,6 +304,9 @@ export const PROJECT_COMMANDS = Object.freeze({
   restore: restoreProject,
   remove: removeProject,
   recover: recoverRemovedProject,
+  connect: connectGithub,
+  disconnect: disconnectGithub,
+  change: changeGithubRepository,
 });
 
 /** Dispatch by name; an unknown command is refused. */

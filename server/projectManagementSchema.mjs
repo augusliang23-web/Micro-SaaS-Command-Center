@@ -105,6 +105,34 @@ export function lifecycleOf(project) {
   return lifecycle;
 }
 
+// V1.2C: per-project GitHub connection intent, stored as management.githubConnection in the same versioned file. It records
+// what the owner approved; it is never evidence that a GitHub read succeeded. Authority is derived from it (and the narrow
+// legacy rule) by server/githubConnectionRegistry.mjs on every request.
+export const CONNECTION_STATUS = Object.freeze({ CONNECTED: 'connected', DISCONNECTED: 'disconnected' });
+export const CONNECTION_SOURCES = Object.freeze(['user-verified', 'legacy-pm-dashboard-compat']);
+export const REVOKE_REASONS = Object.freeze(['disconnected', 'archived', 'removed']);
+const isTimestamp = (v) => typeof v === 'string' && Number.isFinite(Date.parse(v));
+
+/** The validated connection record, or null when the project has none. A malformed record fails closed (INVALID_STATE). */
+export function connectionOf(project) {
+  const management = project?.management;
+  if (!isRecord(management) || management.githubConnection === undefined) return null;
+  const c = management.githubConnection;
+  const bad = () => fail('INVALID_STATE', 'A project has a malformed GitHub connection record.', { projectId: project?.id });
+  if (!isRecord(c)) bad();
+  const known = ['status', 'repository', 'generation', 'source', 'connectedAt', 'verifiedRepositoryId', 'revokedAt', 'revokedReason'];
+  if (Object.keys(c).some((k) => !known.includes(k))) bad();
+  if (c.status !== CONNECTION_STATUS.CONNECTED && c.status !== CONNECTION_STATUS.DISCONNECTED) bad();
+  try { if (canonicalRepository(c.repository) !== c.repository) bad(); } catch { bad(); }
+  if (!Number.isInteger(c.generation) || c.generation < 1) bad();
+  if (!CONNECTION_SOURCES.includes(c.source)) bad();
+  if (!(c.connectedAt === null || isTimestamp(c.connectedAt))) bad();
+  if (!(c.verifiedRepositoryId === null || (Number.isInteger(c.verifiedRepositoryId) && c.verifiedRepositoryId > 0))) bad();
+  if (c.status === CONNECTION_STATUS.CONNECTED && (c.revokedAt !== null || c.revokedReason !== null || !isTimestamp(c.connectedAt))) bad();
+  if (c.status === CONNECTION_STATUS.DISCONNECTED && (!isTimestamp(c.revokedAt) || !REVOKE_REASONS.includes(c.revokedReason))) bad();
+  return c;
+}
+
 /** Returns the management record with one appended event (bounded history) and the given field overrides. */
 export function nextManagement(project, { now, event, lifecycle }) {
   const previous = isRecord(project?.management) ? project.management : {};
@@ -177,8 +205,8 @@ export function removedOf(state) {
 export function assertUsableState(state) {
   if (!isValidState(state) || !isUsableSavedState(state)) fail('INVALID_STATE', 'Saved state does not match the V1 saved-state contract.');
   const removed = removedOf(state);
-  for (const project of state.projects) lifecycleOf(project);
-  for (const entry of removed) lifecycleOf(entry.project);
+  for (const project of state.projects) { lifecycleOf(project); connectionOf(project); }
+  for (const entry of removed) { lifecycleOf(entry.project); connectionOf(entry.project); }
   if (!isUsableSavedState({ ...state, projects: removed.map((e) => e.project) })) fail('INVALID_STATE', 'A removed project does not match the saved-project contract.');
   if (state.projects.length + removed.length > LIMITS.maxProjects) fail('LIMIT_EXCEEDED', `More than ${LIMITS.maxProjects} projects.`);
   return state;

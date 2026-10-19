@@ -15,8 +15,21 @@ import {
   resolveCapabilities,
 } from './server/v1RequestPolicy.mjs';
 import { createV1ReadOnlyRouter } from './server/v1ReadOnlyRoutes.mjs';
-import { MAX_COMMAND_BYTES, createV1ProjectManagementRouter } from './server/v1ProjectManagementRoutes.mjs';
+import { MAX_COMMAND_BYTES, createV1ProjectManagementRouter, defaultStoreFactory } from './server/v1ProjectManagementRoutes.mjs';
 import { createGithubRouter } from './server/githubRoutes.mjs';
+import { issueHistoryAuthorization } from './server/githubConnectionRegistry.mjs';
+
+// V1.2C: GitHub history authority is re-derived from the validated saved state on EVERY history or PR-detail request (no second
+// registry, no cache of authority). A missing, unreadable or invalid state authorizes nothing.
+function authorizeHistory({ repo, projectId }: { repo: string; projectId?: string }) {
+  try {
+    const store = defaultStoreFactory();
+    const snapshot = store ? store.read() : null;
+    return snapshot && snapshot.state ? issueHistoryAuthorization(snapshot.state, { repo, projectId }) : null;
+  } catch {
+    return null;
+  }
+}
 
 const DEFAULT_PORT = 3000;
 // An explicit PORT must be a plain decimal 1-65535. An invalid explicit value fails closed instead of falling back to 3000.
@@ -531,7 +544,7 @@ async function mountLegacy(app: ExpressApp, capabilities: Set<string>) {
   }
   if (capabilities.has('tasks')) await mountTasks(app);
   // Server-side proxy over the local `gh` CLI session (all legacy GitHub routes); the token never reaches the browser
-  if (capabilities.has('github-legacy')) app.use('/api/github', createGithubRouter());
+  if (capabilities.has('github-legacy')) app.use('/api/github', createGithubRouter({ authorizeHistory }));
   // Runs `git status` (with `git fetch`) against a local clone path the owner typed in himself
   if (capabilities.has('local-git')) {
     const { createLocalGitRouter } = await import('./server/localGitRoutes.mjs');
@@ -554,7 +567,7 @@ async function startServer() {
   //    exist; unknown /api paths are API 404s. The project writer replaces legacy state-write (refused at start-up, see above).
   app.use(methodGate);
   app.use(createProjectWriteGate({ trustedOrigin: EXPECTED_COMMAND_CENTER_ORIGIN, maxBytes: MAX_COMMAND_BYTES }));
-  app.use('/api', createV1ReadOnlyRouter({ githubRouter: createGithubRouter() }), createV1ProjectManagementRouter());
+  app.use('/api', createV1ReadOnlyRouter({ githubRouter: createGithubRouter({ authorizeHistory }) }), createV1ProjectManagementRouter());
   app.use('/api', apiNotFound);
 
   if (process.env.NODE_ENV !== 'production') {

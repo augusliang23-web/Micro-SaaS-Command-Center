@@ -146,7 +146,18 @@ after(() => {
   fs.rmSync(work, { recursive: true, force: true });
 });
 
-const syntheticState = () => ({ projects: [{ id: 'reg-pm', name: 'SYNTHETIC PM', repository: PM }], attentionItems: [], nba: {}, snapshot: {} });
+// V1.2C (Issue #91): GitHub history authority is derived from VALIDATED saved state, so the synthetic PM record is a complete
+// saved project (still the unique legacy PM Dashboard record: no dataMode, no management). Everything else is unchanged.
+const syntheticState = () => ({
+  projects: [{
+    id: 'reg-pm', name: 'SYNTHETIC PM', repository: PM, tagline: 's', stage: 'Beta', health: 'Healthy', workflowType: 'standard', currentTask: 't',
+    currentGate: 'IMPLEMENT', currentGateLabel: 'I', testOutcome: 'PASS', reviewOutcome: 'PENDING', nextAction: 'n', blocker: null, waitingState: 'WAITING_FOR_HUMAN',
+    model: 'Terra', reasoningEffort: 'Medium', routingReason: 'r', lastActivity: 'x', tags: [], gates: [], activityHistory: [],
+    executionContext: { branch: 'main', model: 'Terra', reasoningEffort: 'Medium', risk: 'Low', routingReason: 'r', bridgeRunId: 'b' },
+    environment: { production: { status: 'Live', lastDeployed: 'x' }, staging: { status: 'Healthy', lastRefreshed: 'x' } },
+  }],
+  attentionItems: [], nba: {}, snapshot: {},
+});
 const registryJson = () => ({ projects: [{ projectId: 'demo', repository: 'me/demo', localPath: '/srv/repos/demo', defaultBranch: 'main', worktreeRoot: '/srv/worktrees/demo', allowedAgents: ['codex'], allowedActions: ['READ_REPO'], verifyCommands: { test: { command: 'npm', args: ['test'] } }, protectedPaths: [], agentBinaries: {} }] });
 function activeTaskJson() {
   const task = createDraftTask({
@@ -351,7 +362,13 @@ describe('B. the V1 API surface is exactly four GET routes', () => {
   });
 
   test('the allowlist still applies to the history routes (GET only)', async () => {
+    // V1.2C: with NO saved state nothing is authorized, not even the legacy PM Dashboard (no fallback), and no gh call is made.
     await withServer({ cwd: makeCwd({}) }, async (server) => {
+      assert.equal((await server.request('GET', `/api/github/development-history?repo=${encodeURIComponent(PM)}`)).status, 403);
+      assert.equal((await server.request('GET', `/api/github/development-history/pull?repo=${encodeURIComponent(PM)}&number=7`)).status, 403);
+      assert.deepEqual(ghIn(server.spy()), [], 'no saved state: no GitHub read');
+    });
+    await withServer({ cwd: makeCwd({ state: true }) }, async (server) => {
       assert.equal((await server.request('GET', '/api/github/development-history?repo=someone%2Felse')).status, 403);
       assert.equal((await server.request('GET', '/api/github/development-history')).status, 403);
       assert.equal((await server.request('GET', `/api/github/development-history/pull?repo=${encodeURIComponent(PM)}&number=abc`)).status, 400);
@@ -465,7 +482,8 @@ describe('G. positive controls: V1 still works', () => {
   });
 
   test('allowlisted history and PR detail GET return real response shapes (from the FAKE GitHub CLI)', async () => {
-    await withServer({ cwd: makeCwd({}) }, async (server) => {
+    // V1.2C: authority comes from the validated saved state (the unique legacy PM record), so this positive control has state.
+    await withServer({ cwd: makeCwd({ state: true }) }, async (server) => {
       const hist = await server.request('GET', `/api/github/development-history?repo=${encodeURIComponent(PM)}`);
       assert.equal(hist.status, 200);
       assert.equal(hist.json.repository, PM);

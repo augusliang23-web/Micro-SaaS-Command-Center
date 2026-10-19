@@ -93,7 +93,11 @@ test('B1 J/K: only an explicit REGISTERED identity with the exact repository is 
  expect(liveRepositoryFor({...LIVE_PM_DASHBOARD,projectId:undefined})).toBeNull();
  expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',repository:'augusliang23-web/pm-dashboard-uat',displayName:'PM Dashboard'})).toBeNull();
  expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',displayName:'PM Dashboard'})).toBeNull();
- expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',repository:'github.com/augusliang23-web/pm-dashboard',displayName:'Any'})).toBe(PM);
+ // V1.2C: no URL/prefix normalisation; the server matches the exact owner/repo string, so a URL-like spelling is never live.
+ expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',repository:'github.com/augusliang23-web/pm-dashboard',displayName:'Any'})).toBeNull();
+ expect(liveRepositoryFor({...LIVE_PM_DASHBOARD,authorization:null})).toBeNull(); // projected and not authorized (e.g. disconnected)
+ expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',repository:'someone/app',displayName:'Any'})).toBeNull(); // no projection: only the legacy repository
+ expect(liveRepositoryFor({source:'REGISTERED',projectId:'x',repository:'someone/app',displayName:'Any',authorization:{source:'user-verified',generation:1}})).toBe('someone/app');
 });
 
 test('B1 F/T: timeline range is anchored to the verified fetch time and open PRs end at Last checked',()=>{
@@ -114,7 +118,7 @@ test('B1 F/T: timeline range is anchored to the verified fetch time and open PRs
 test('B1: live view reads only the allowlisted repo and shows provenance, counts and Not checked boundaries',async()=>{
  const {spy,pending}=mockFetch();render(<Harness/>);openLive();
  expect(screen.getByTestId('g-source-badge')).toHaveTextContent('GitHub 唯讀 · 正在查詢'); // allowlisted, not yet fetched
- expect(pending).toHaveLength(1);expect(pending[0].url).toBe(`/api/github/development-history?repo=${encodeURIComponent(PM)}`);
+ expect(pending).toHaveLength(1);expect(pending[0].url).toBe(`/api/github/development-history?repo=${encodeURIComponent(PM)}&projectId=registered-pm-dashboard`); // V1.2C: bound to the project
  expect(screen.getByRole('status')).toHaveTextContent('正在從 GitHub 讀取');
  pending[0].resolve(makeHistory());await flush();
  const prov=screen.getByLabelText('資料來源');
@@ -1427,8 +1431,8 @@ test('B1.4 P2-2 model: stackParent/stackChildren keep their original meaning for
 test('B1.4 identity: only the exact allowlisted repository qualifies — look-alikes never do, and accepted spellings resolve to the exact slug',()=>{
  const id=(repository:string|undefined,over:Partial<LiveIdentity>={}):LiveIdentity=>({source:'REGISTERED',projectId:'p1',repository,displayName:'PM Dashboard',...over});
  expect(liveRepositoryFor(id(PM))).toBe(PM); // positive control: the exact string still works
- // The viewer's existing normalisation (whitespace, github.com URL prefix, one trailing slash) still resolves to the EXACT slug, and that slug is what is requested.
- for(const same of [`${PM}/`,`https://github.com/${PM}`,` ${PM} `,`github.com/${PM}`])expect(liveRepositoryFor(id(same)),JSON.stringify(same)).toBe(PM);
+ // V1.2C: no normalisation at all. The server authorizes the EXACT saved owner/repo, so whitespace, URL prefixes and trailing slashes are never live.
+ for(const same of [`${PM}/`,`https://github.com/${PM}`,` ${PM} `,`github.com/${PM}`])expect(liveRepositoryFor(id(same)),JSON.stringify(same)).toBeNull();
  for(const variant of ['AugusLiang23-Web/PM-Dashboard',`/${PM}`,`${PM}.git`,`${PM}-fork`,`other/${PM}`,`${PM}//`,`${PM}/..`,`${PM}?x=1`,'pm-dashboard','augusliang23-web','',`http://evil.example/${PM}`])expect(liveRepositoryFor(id(variant)),JSON.stringify(variant)).toBeNull();
  expect(liveRepositoryFor(id(undefined))).toBeNull();
  expect(liveRepositoryFor(id(PM,{projectId:undefined}))).toBeNull(); // no stable id: never inferred from the name

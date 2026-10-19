@@ -76,7 +76,7 @@ describe('V1 identity isolation and live allowlist',()=>{
  });
  test('D. registered identity is built from id + repository only, REGISTERED, and a display name cannot confer a repository',()=>{
   const [a,b]=registeredFromSavedState({projects:[{id:'  ',name:PM_REPO,repository:'someone/x'},{id:'ok',name:PM_REPO,repository:''}]});
-  expect(a.identity).toEqual({source:'REGISTERED',projectId:undefined,repository:'someone/x',displayName:PM_REPO});
+  expect(a.identity).toEqual({source:'REGISTERED',projectId:undefined,repository:'someone/x',displayName:PM_REPO,authorization:null}); // V1.2C: always projected
   expect(b.identity.source).not.toBe('REGISTERED'); // no usable repository: identity cannot be established, fail closed
  });
  test('E. only the exact allowlisted registered PM Dashboard opens the live viewer (one GET for that repository)',async()=>{

@@ -3,7 +3,7 @@ import { AlertTriangle, FolderCog, LayoutGrid, Network, ShieldCheck } from 'luci
 import { isUsableSavedState } from '../savedState.mjs';
 import { isRealProject } from '../verdict.mjs';
 import { GitDevelopmentMap, type RailEntry } from '../prototype/GitDevelopmentMap';
-import { identityKey, liveRepositoryFor } from '../prototype/gitHistoryModel';
+import { githubAuthorizationsFor, identityKey, liveRepositoryFor } from '../prototype/gitHistoryModel';
 import type { LiveIdentity } from '../prototype/gitHistoryTypes';
 import { ManageProjects } from './ManageProjects';
 import '../prototype/prototype.css';
@@ -31,7 +31,8 @@ type IdentityKind = 'registered' | 'demo' | 'unverified';
 type Lifecycle = 'active' | 'archived';
 /** Set only for projects created by "管理專案": their legacy status fields are placeholders, never evidence. */
 type ManagedCreation = { createdAt: string } | null;
-type Registered = { identity: LiveIdentity; saved: SavedProject; kind: IdentityKind; lifecycle: Lifecycle; created: ManagedCreation; localOnly: boolean };
+type Revocation = 'disconnected' | 'archived' | 'removed' | null;
+type Registered = { identity: LiveIdentity; saved: SavedProject; kind: IdentityKind; lifecycle: Lifecycle; created: ManagedCreation; localOnly: boolean; revoked: Revocation };
 type SavedLoad =
   | { status: 'loading' }
   | { status: 'ready'; projects: Registered[]; readAt: string }
@@ -60,6 +61,18 @@ export function isLocalOnly(p: Record<string, unknown>): boolean {
   return managedCreationOf(p) !== null && (p.dataMode === undefined || p.dataMode === null) && !text(p.repository).trim();
 }
 export const LOCAL_TEXT = 'LOCAL · 由管理專案新增，尚未設定 repository（Not connected）';
+/** Why a saved connection is no longer active (it is never silently restored). */
+export function revocationOf(p: Record<string, unknown>): Revocation {
+  const m = p.management;
+  if (!record(m) || !record(m.githubConnection) || m.githubConnection.status !== 'disconnected') return null;
+  const reason = m.githubConnection.revokedReason;
+  return reason === 'disconnected' || reason === 'archived' || reason === 'removed' ? reason : null;
+}
+const REVOKED_TEXT: Record<Exclude<Revocation, null>, string> = {
+  disconnected: 'Not connected · 已中斷 GitHub 連線（需在「管理專案」重新連線）',
+  archived: 'Not connected · 封存時已撤銷 GitHub 連線（還原後需重新連線）',
+  removed: 'Not connected · 移除時已撤銷 GitHub 連線（救回後需重新連線）',
+};
 
 /**
  * Saved state has no authoritative "registered" marker. Following the existing isRealProject contract, an ABSENT `dataMode`
@@ -77,10 +90,14 @@ export function identityKindOf(p: Record<string, unknown>): IdentityKind {
  * Registered identities come only from validated saved state. A blank or duplicated project id yields NO stable id, which keeps
  * the project out of the live viewer (liveRepositoryFor requires one); a name or repository is never used to guess identity.
  */
-export function registeredFromSavedState(saved: { projects: Array<Record<string, unknown>> }): Registered[] {
+export function registeredFromSavedState(saved: { projects: Array<Record<string, unknown>>; projectManagement?: unknown }): Registered[] {
+  // V1.2C: GitHub eligibility mirrors the server registry (connection record or the strict legacy PM rule); the server enforces it.
+  const area = record(saved.projectManagement) && Array.isArray(saved.projectManagement.removed) ? saved.projectManagement.removed : [];
+  const removed = area.filter(record).map((e) => e.project).filter(record);
+  const authorizations = githubAuthorizationsFor(saved.projects, removed);
   const counts = new Map<string, number>();
   for (const p of saved.projects) { const id = text(p.id).trim(); if (id) counts.set(id, (counts.get(id) ?? 0) + 1); }
-  return saved.projects.map((p) => {
+  return saved.projects.map((p, index) => {
     const id = text(p.id).trim();
     const stable = id && counts.get(id) === 1 ? id : undefined;
     const repository = text(p.repository).trim() || undefined;
@@ -90,8 +107,12 @@ export function registeredFromSavedState(saved: { projects: Array<Record<string,
       lifecycle: lifecycleOf(p),
       created: managedCreationOf(p),
       localOnly: isLocalOnly(p),
-      // Only a `registered` project may carry the REGISTERED source; liveRepositoryFor refuses everything else.
-      identity: { source: kind === 'registered' ? 'REGISTERED' : 'DEMO', projectId: stable, repository, displayName: text(p.name) || 'Unnamed project' },
+      revoked: revocationOf(p),
+      // Only a `registered` project may carry the REGISTERED source; liveRepositoryFor also requires an authorization.
+      identity: {
+        source: kind === 'registered' ? 'REGISTERED' : 'DEMO', projectId: stable, repository, displayName: text(p.name) || 'Unnamed project',
+        authorization: kind === 'registered' ? authorizations[index] : null, // always projected: never the no-projection fallback
+      },
       saved: {
         id, name: text(p.name), repository: text(p.repository), stage: text(p.stage), health: text(p.health),
         currentTask: text(p.currentTask), currentGateLabel: text(p.currentGateLabel),
@@ -155,7 +176,9 @@ function ProjectCard({ entry, open }: { entry: Registered; open: () => void }) {
       <div><dt>已儲存任務</dt><dd>{saved.currentTask || 'Not available'}{saved.currentGateLabel ? ` · ${saved.currentGateLabel}` : ''}</dd></div>
       <div><dt>已儲存 blocker</dt><dd>{saved.blocker ? `${saved.blocker}（已儲存，未獨立驗證）` : '未記錄（不代表目前沒有 blocker）'}</dd></div>
       <div><dt>已儲存最近活動</dt><dd>{saved.lastActivity ?? 'Not available'}</dd></div>
-      <div><dt>GitHub 資料</dt><dd>{live ? 'Not checked · 開啟開發地圖後才會讀取，並顯示 Last checked' : 'Not connected · 此專案沒有唯讀 GitHub 歷史來源'}</dd></div>
+      <div><dt>GitHub 資料</dt><dd>{live
+        ? `${identity.authorization?.source === 'legacy-pm-dashboard-compat' ? 'Connected（V1.1 相容：PM Dashboard）' : 'Connected（已核准連線）'} · Not checked · 開啟開發地圖後才會讀取，並顯示 Last checked`
+        : entry.revoked ? REVOKED_TEXT[entry.revoked] : 'Not connected · 此專案沒有唯讀 GitHub 歷史來源'}</dd></div>
     </dl>
     {live
       ? <button type="button" className="p-primary" onClick={open}><Network size={14} />開啟開發地圖</button>

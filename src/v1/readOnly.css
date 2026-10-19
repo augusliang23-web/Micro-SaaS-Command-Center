@@ -52,3 +52,6 @@
 .v1m-archived-note { margin-top:16px; }
 .v1m-toolbar button:focus-visible, .v1m-row button:focus-visible, .v1m-dialog button:focus-visible, .v1m-form input:focus-visible, .v1m-form select:focus-visible, .v1m-dialog input:focus-visible { outline:3px solid #6c9b82; outline-offset:2px; }
 @media(max-width:760px) { .v1m-row { padding:14px; } .v1m-toolbar > button { width:100%; justify-content:center; } }
+/* V1.2C: GitHub connection controls inside a 管理專案 row. */
+.v1m-github { flex:1 1 100%; display:flex; flex-direction:column; gap:6px; border-top:1px dashed #dfe6df; padding-top:10px; }
+.v1m-github .v1-muted svg { display:inline; vertical-align:-1px; margin-right:4px; }

@@ -1,8 +1,13 @@
 import { execFile } from 'node:child_process';
 import { GithubCliError } from './githubRepos.mjs';
+import { isHistoryAuthorizationFor } from './githubConnectionRegistry.mjs';
 
 /**
- * Read-only development-history snapshot for ONE allowlisted repository.
+ * Read-only development-history snapshot for ONE authorized repository.
+ *
+ * V1.2C: there is no hard-coded repository list. Every history or PR-detail read REQUIRES an `authorization` object issued by
+ * server/githubConnectionRegistry.mjs for that exact repository (derived from validated saved state on each request); without
+ * it the read is refused before any `gh` call, so a direct caller cannot bypass the route's gate.
  *
  * Every GitHub call is a `gh api <GET path>` through the user's existing
  * authenticated GitHub CLI. Nothing here writes to GitHub, reads tokens, or
@@ -10,8 +15,6 @@ import { GithubCliError } from './githubRepos.mjs';
  * (source, repository, fetchedAt) and completeness flags so the UI can label
  * partial data instead of presenting it as the whole history.
  */
-
-export const DEVELOPMENT_HISTORY_REPOS = Object.freeze(['augusliang23-web/pm-dashboard']);
 
 export const HISTORY_LIMITS = Object.freeze({
   perPage: 100,
@@ -25,8 +28,11 @@ export const HISTORY_LIMITS = Object.freeze({
   cacheTtlMs: 5 * 60_000,
 });
 
-export function isAllowlistedHistoryRepo(repo) {
-  return typeof repo === 'string' && DEVELOPMENT_HISTORY_REPOS.includes(repo);
+/** Refuses any read that does not carry a registry-issued authorization for exactly this repository. */
+export function assertHistoryAuthorized(repo, authorization) {
+  if (!isHistoryAuthorizationFor(authorization, repo)) {
+    throw new GithubCliError('Repository is not authorized for development history.', 'forbidden');
+  }
 }
 
 /** Parses an RFC 5988 Link header into { next, last, ... } URLs. */
@@ -217,10 +223,8 @@ export function selectFocusRefs({ defaultBranch, branches, pulls, limit = HISTOR
   return { refs: wanted.slice(0, limit), truncated: wanted.length > limit, requested: wanted.length };
 }
 
-export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, signal, now = () => new Date() } = {}) {
-  if (!isAllowlistedHistoryRepo(repo)) {
-    throw new GithubCliError(`Repository is not allowlisted for development history: ${repo}`, 'forbidden');
-  }
+export async function fetchDevelopmentHistory(repo, { authorization, execFileFn = execFile, signal, now = () => new Date() } = {}) {
+  assertHistoryAuthorized(repo, authorization);
   const opts = { execFileFn, signal };
   const startedAt = now().toISOString();
   const warnings = [];
@@ -403,10 +407,8 @@ export async function assessConsistency({ repo, opts, branches, pulls, defaultBr
  * check runs for its head SHA and submitted reviews (with each review's commit_id). All GET; never comments,
  * approves, merges or re-runs checks.
  */
-export async function fetchPullDetail(repo, number, { execFileFn = execFile, signal, now = () => new Date(), aggregateCi } = {}) {
-  if (!isAllowlistedHistoryRepo(repo)) {
-    throw new GithubCliError(`Repository is not allowlisted for development history: ${repo}`, 'forbidden');
-  }
+export async function fetchPullDetail(repo, number, { authorization, execFileFn = execFile, signal, now = () => new Date(), aggregateCi } = {}) {
+  assertHistoryAuthorized(repo, authorization);
   if (!Number.isInteger(number) || number < 1) throw new GithubCliError('PR number must be a positive integer.', 'failed');
   const opts = { execFileFn, signal };
   const pr = (await ghApiPage(`repos/${repo}/pulls/${number}`, opts)).data;

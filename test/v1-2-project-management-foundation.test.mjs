@@ -517,7 +517,8 @@ describe('E. the V1 read-only server is unchanged and cannot reach the new modul
 
   // V1.2B (Issue #90 V1_2B_TEST_CONTRACT_AMENDMENT): exactly these two files may use the foundation modules. Any other
   // importer, including server.ts or the V1 app, is still a failure.
-  const AUTHORIZED_IMPORTERS = ['server/v1ProjectManagementRoutes.mjs', 'src/v1/ManageProjects.test.tsx'];
+  // V1.2C (Issue #91): the read-only GitHub connection registry derives authority from the validated schema.
+  const AUTHORIZED_IMPORTERS = ['server/v1ProjectManagementRoutes.mjs', 'src/v1/ManageProjects.test.tsx', 'server/githubConnectionRegistry.mjs'];
 
   test('only the explicitly authorized V1.2B files import the project management modules', () => {
     const importers = [...sourceFiles('server'), ...sourceFiles('src'), 'server.ts']

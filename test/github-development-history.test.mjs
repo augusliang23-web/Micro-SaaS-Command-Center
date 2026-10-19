@@ -3,14 +3,12 @@ import test from 'node:test';
 import express from 'express';
 
 import {
-  DEVELOPMENT_HISTORY_REPOS,
   HISTORY_LIMITS,
   classifyGhFailure,
   createHistoryCache,
   fetchDevelopmentHistory,
   fetchPaginated,
   fetchPullDetail,
-  isAllowlistedHistoryRepo,
   nextPageNumber,
   normalizeBranch,
   normalizePull,
@@ -22,8 +20,24 @@ import {
 import { aggregateCiResponse } from '../server/githubPullStatus.mjs';
 import { createGithubRouter } from '../server/githubRoutes.mjs';
 import { GithubCliError } from '../server/githubRepos.mjs';
+import { LEGACY_COMPAT_REPOSITORY, issueHistoryAuthorization } from '../server/githubConnectionRegistry.mjs';
 
 const REPO = 'augusliang23-web/pm-dashboard';
+
+// V1.2C: every history read needs a registry-issued authorization. These SYNTHETIC saved states hold one complete legacy PM
+// Dashboard record (no dataMode, no management), the only record the strict legacy rule authorizes.
+function syntheticProject(id, over = {}) {
+  return {
+    id, name: `SYN ${id}`, tagline: 's', repository: `synthetic-owner/${id}`, stage: 'Beta', health: 'Healthy', workflowType: 'standard',
+    currentTask: 't', currentGate: 'IMPLEMENT', currentGateLabel: 'I', testOutcome: 'PASS', reviewOutcome: 'PENDING', nextAction: 'n', blocker: null,
+    waitingState: 'WAITING_FOR_HUMAN', model: 'Terra', reasoningEffort: 'Medium', routingReason: 'r', lastActivity: 'x', tags: [], gates: [], activityHistory: [],
+    executionContext: { branch: 'main', model: 'Terra', reasoningEffort: 'Medium', risk: 'Low', routingReason: 'r', bridgeRunId: 'b' },
+    environment: { production: { status: 'Live', lastDeployed: 'x' }, staging: { status: 'Healthy', lastRefreshed: 'x' } }, ...over,
+  };
+}
+const pmState = (projects = [syntheticProject('reg-pm', { repository: REPO })]) => ({ projects, attentionItems: [], nba: {}, snapshot: {} });
+const AUTH = issueHistoryAuthorization(pmState(), { repo: REPO });
+const authorizeFrom = (state) => ({ repo, projectId }) => issueHistoryAuthorization(state, { repo, projectId });
 
 // Versioned fixture: PR fields copied from a read-only GitHub snapshot of
 // augusliang23-web/pm-dashboard taken 2026-10-15T23:57:20Z (67 branches,
@@ -110,12 +124,23 @@ function standardRoutes(overrides = []) {
   ];
 }
 
-test('allowlist is exactly the PM Dashboard repository', () => {
-  assert.deepEqual([...DEVELOPMENT_HISTORY_REPOS], [REPO]);
-  assert.equal(isAllowlistedHistoryRepo(REPO), true);
-  for (const bad of ['augusliang23-web/pm-dashboard-uat', 'augusliang23-web/Micro-SaaS-Command-Center', 'github.com/augusliang23-web/pm-dashboard', 'PM Dashboard', '', undefined]) {
-    assert.equal(isAllowlistedHistoryRepo(bad), false, String(bad));
+test('V1.2C: history authority comes only from the registry; the legacy rule covers exactly the unique PM Dashboard record', async () => {
+  assert.equal(LEGACY_COMPAT_REPOSITORY, REPO);
+  assert.ok(AUTH, 'the unique legacy PM record is authorized');
+  assert.equal(AUTH.projectId, 'reg-pm');
+  for (const bad of ['augusliang23-web/pm-dashboard-uat', 'augusliang23-web/Micro-SaaS-Command-Center', 'github.com/augusliang23-web/pm-dashboard', 'Augusliang23-web/PM-Dashboard', 'PM Dashboard', '', undefined]) {
+    assert.equal(issueHistoryAuthorization(pmState(), { repo: bad }), null, String(bad));
   }
+  assert.equal(issueHistoryAuthorization(pmState(), { repo: REPO, projectId: 'other' }), null, 'another project id is refused');
+  assert.equal(issueHistoryAuthorization(null, { repo: REPO }), null, 'no saved state authorizes nothing');
+  // a direct call without (or with a forged) authorization never spawns gh
+  const { execFileFn, calls } = fakeGh(standardRoutes());
+  for (const authorization of [undefined, null, { repository: REPO }, Object.freeze({ ...AUTH })]) {
+    await assert.rejects(fetchDevelopmentHistory(REPO, { authorization, execFileFn }), (e) => e.kind === 'forbidden');
+    await assert.rejects(fetchPullDetail(REPO, 55, { authorization, execFileFn, aggregateCi: aggregateCiResponse }), (e) => e.kind === 'forbidden');
+  }
+  await assert.rejects(fetchDevelopmentHistory('someone/else', { authorization: AUTH, execFileFn }), (e) => e.kind === 'forbidden', 'an authorization is bound to its repository');
+  assert.equal(calls.length, 0);
 });
 
 test('A/D/E/F: real PR normalization keeps created/merged/closed distinct and OPEN has no merge date', () => {
@@ -183,7 +208,7 @@ test('every request is GET-only, repo-bound, and next links cannot redirect to a
 
 test('L/T: pagination beyond the bound is reported as Partial, never Complete', async () => {
   const { execFileFn } = fakeGh(standardRoutes([[/\/branches\?/, (path) => ghOutput(BRANCHES, { headers: { Link: `<https://api.github.com/repositories/1/branches?page=${Number((path.match(/page=(\d+)/) || [0, 1])[1]) + 1}>; rel="next"` } })]]));
-  const history = await fetchDevelopmentHistory(REPO, { execFileFn });
+  const history = await fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn });
   assert.equal(history.coverage.branches.complete, false);
   assert.equal(history.coverage.branches.pages, HISTORY_LIMITS.maxBranchPages);
   assert.equal(history.status, 'partial');
@@ -192,7 +217,7 @@ test('L/T: pagination beyond the bound is reported as Partial, never Complete', 
 
 test('full snapshot read: provenance, counts derived from data, verified DAG inputs, out-of-scope fields not checked', async () => {
   const { execFileFn, calls } = fakeGh(standardRoutes());
-  const history = await fetchDevelopmentHistory(REPO, { execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
+  const history = await fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
   assert.equal(history.source, 'GitHub');
   assert.equal(history.repository, REPO);
   assert.equal(history.fetchedAt, '2026-10-16T00:00:00.000Z');
@@ -245,7 +270,7 @@ test('M/N: authorization, rate-limit, timeout, abort and 404 are classified dist
 
 test('auth failure aborts the whole read instead of returning partial or fixture data', async () => {
   const { execFileFn } = fakeGh([[/./, () => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: ghOutput({}, { status: 401 }), stderr: 'gh: Bad credentials (HTTP 401)' })]]);
-  await assert.rejects(fetchDevelopmentHistory(REPO, { execFileFn }), (e) => e instanceof GithubCliError && e.kind === 'not_authenticated');
+  await assert.rejects(fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn }), (e) => e instanceof GithubCliError && e.kind === 'not_authenticated');
   await assert.rejects(fetchDevelopmentHistory('augusliang23-web/other', { execFileFn }), (e) => e.kind === 'forbidden');
 });
 
@@ -253,7 +278,7 @@ test('a pre-aborted request never spawns gh', async () => {
   const { execFileFn, calls } = fakeGh(standardRoutes());
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(fetchDevelopmentHistory(REPO, { execFileFn, signal: controller.signal }), (e) => e.kind === 'aborted');
+  await assert.rejects(fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn, signal: controller.signal }), (e) => e.kind === 'aborted');
   assert.equal(calls.length, 0);
 });
 
@@ -263,11 +288,11 @@ test('R: PR detail distinguishes Not checked, No CI checks and CI passed', async
     [/\/check-runs/, checks],
     [/\/reviews/, () => ghOutput([])],
   ]);
-  const none = await fetchPullDetail(REPO, 55, { execFileFn: base(() => ghOutput({ total_count: 0, check_runs: [] })).execFileFn, aggregateCi: aggregateCiResponse });
+  const none = await fetchPullDetail(REPO, 55, { authorization: AUTH, execFileFn: base(() => ghOutput({ total_count: 0, check_runs: [] })).execFileFn, aggregateCi: aggregateCiResponse });
   assert.equal(none.ci.status, 'none');
-  const passed = await fetchPullDetail(REPO, 55, { execFileFn: base(() => ghOutput({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] })).execFileFn, aggregateCi: aggregateCiResponse });
+  const passed = await fetchPullDetail(REPO, 55, { authorization: AUTH, execFileFn: base(() => ghOutput({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] })).execFileFn, aggregateCi: aggregateCiResponse });
   assert.equal(passed.ci.status, 'passing');
-  const failedRead = await fetchPullDetail(REPO, 55, { execFileFn: base(() => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' })).execFileFn, aggregateCi: aggregateCiResponse });
+  const failedRead = await fetchPullDetail(REPO, 55, { authorization: AUTH, execFileFn: base(() => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' })).execFileFn, aggregateCi: aggregateCiResponse });
   assert.equal(failedRead.ci.status, 'not_checked');
   assert.equal(none.reviews.status, 'no_reviews');
   assert.equal(none.pull.changedFiles, 12);
@@ -288,7 +313,7 @@ test('cache is per repository, expires, and is cleared on demand', () => {
 
 async function withRouter(deps, fn) {
   const app = express();
-  app.use('/api/github', createGithubRouter(deps));
+  app.use('/api/github', createGithubRouter({ authorizeHistory: authorizeFrom(pmState()), ...deps }));
   const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   try {
     await fn(`http://127.0.0.1:${server.address().port}/api/github`);
@@ -379,14 +404,14 @@ test('P2-2 negative control: a truncated review history is Partial, never a veri
     const page = Number((path.match(/page=(\d+)/) || [0, 1])[1]);
     return ghOutput(reviewPage(page), { headers: { Link: `<https://api.github.com/repositories/1/pulls/55/reviews?per_page=100&page=${page + 1}>; rel="next"` } });
   };
-  const detail = await fetchPullDetail(REPO, 55, { execFileFn: fakeGh(detailRoutes({ reviews })).execFileFn, aggregateCi: aggregateCiResponse });
+  const detail = await fetchPullDetail(REPO, 55, { authorization: AUTH, execFileFn: fakeGh(detailRoutes({ reviews })).execFileFn, aggregateCi: aggregateCiResponse });
   assert.equal(detail.reviews.complete, false);
   assert.equal(detail.reviews.status, 'partial');
   assert.equal(detail.reviews.count, 300);
 });
 
 test('P2-2: review states stay distinct — none, partial, approved, changes requested', async () => {
-  const run = async (items, link) => (await fetchPullDetail(REPO, 55, {
+  const run = async (items, link) => (await fetchPullDetail(REPO, 55, { authorization: AUTH,
     execFileFn: fakeGh(detailRoutes({ reviews: () => ghOutput(items, link ? { headers: { Link: '<https://api.github.com/repositories/1/pulls/55/reviews?page=2>; rel="next"' } } : {}) })).execFileFn,
     aggregateCi: aggregateCiResponse,
   })).reviews;
@@ -397,13 +422,13 @@ test('P2-2: review states stay distinct — none, partial, approved, changes req
   assert.equal((await run([review('a', 'APPROVED', '2026-10-01T00:00:00Z')])).status, 'review_head_unknown');
   assert.equal((await run([review('a', 'CHANGES_REQUESTED', '2026-10-01T00:00:00Z')])).status, 'changes_requested');
   assert.equal((await run([review('a', 'APPROVED', '2026-10-01T00:00:00Z')], true)).status, 'partial');
-  const failed = (await fetchPullDetail(REPO, 55, { execFileFn: fakeGh(detailRoutes({ reviews: () => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' }) })).execFileFn, aggregateCi: aggregateCiResponse })).reviews;
+  const failed = (await fetchPullDetail(REPO, 55, { authorization: AUTH, execFileFn: fakeGh(detailRoutes({ reviews: () => ({ error: Object.assign(new Error('x'), { code: 1 }), stdout: '', stderr: 'gh: Server Error (HTTP 502)' }) })).execFileFn, aggregateCi: aggregateCiResponse })).reviews;
   assert.equal(failed.status, 'not_checked');
 });
 
 test('P2-2: an observed CHANGES_REQUESTED stays visible even when the list is incomplete', async () => {
   const items = [review('a', 'CHANGES_REQUESTED', '2026-10-01T00:00:00Z')];
-  const reviews = (await fetchPullDetail(REPO, 55, {
+  const reviews = (await fetchPullDetail(REPO, 55, { authorization: AUTH,
     execFileFn: fakeGh(detailRoutes({ reviews: () => ghOutput(items, { headers: { Link: '<https://api.github.com/repositories/1/pulls/55/reviews?page=2>; rel="next"' } }) })).execFileFn,
     aggregateCi: aggregateCiResponse,
   })).reviews;
@@ -412,7 +437,7 @@ test('P2-2: an observed CHANGES_REQUESTED stays visible even when the list is in
 });
 
 test('P2-1: CI is reported with the exact head SHA it was read for', async () => {
-  const detail = await fetchPullDetail(REPO, 55, { execFileFn: fakeGh(detailRoutes({ reviews: () => ghOutput([]) })).execFileFn, aggregateCi: aggregateCiResponse });
+  const detail = await fetchPullDetail(REPO, 55, { authorization: AUTH, execFileFn: fakeGh(detailRoutes({ reviews: () => ghOutput([]) })).execFileFn, aggregateCi: aggregateCiResponse });
   assert.equal(detail.ci.headSha, detail.pull.headSha);
   assert.equal(detail.pull.headSha, PULLS.find((p) => p.number === 55).head.sha);
 });
@@ -441,7 +466,7 @@ test('Snapshot: compare and main history are pinned to the exact SHAs observed i
   const compareLog = [];
   const mainLog = [];
   const { execFileFn } = fakeGh(movingRoutes({ branchReads: () => ({}), compareLog, mainCommits: mainLog }));
-  await fetchDevelopmentHistory(REPO, { execFileFn });
+  await fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn });
   assert.ok(compareLog.length > 0);
   for (const path of compareLog) { assert.match(path, /compare\/m3\.\.\.[\w.-]+\?/, `unpinned compare: ${path}`); assert.doesNotMatch(path, /%2F/, `compare uses a branch name: ${path}`); }
   assert.ok(compareLog.some((p) => p.includes('m3...pp1')));
@@ -452,7 +477,7 @@ test('Snapshot: a branch that moves during the read makes the snapshot Partial /
   const compareLog = [];
   // First branch read sees the observed heads; the re-read sees production-pages and a V2.3 branch moved.
   const { execFileFn } = fakeGh(movingRoutes({ compareLog, branchReads: (n) => (n === 0 ? {} : { 'production-pages': 'pp2', 'claude/v23-product-integration': 'moved-head' }) }));
-  const history = await fetchDevelopmentHistory(REPO, { execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
+  const history = await fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
   assert.equal(history.status, 'partial');
   assert.equal(history.consistency.atomic, false);
   assert.equal(history.consistency.status, 'inconsistent');
@@ -464,7 +489,7 @@ test('Snapshot: a branch that moves during the read makes the snapshot Partial /
 
 test('Snapshot: a stable read reports consistent but still never claims to be atomic', async () => {
   const { execFileFn } = fakeGh(movingRoutes({ compareLog: [], branchReads: () => ({}) }));
-  const history = await fetchDevelopmentHistory(REPO, { execFileFn });
+  const history = await fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn });
   assert.equal(history.status, 'complete');
   assert.equal(history.consistency.status, 'consistent');
   assert.equal(history.consistency.atomic, false);
@@ -475,7 +500,7 @@ test('Snapshot: a stable read reports consistent but still never claims to be at
 test('Snapshot: an OPEN PR whose head differs from its branch head is flagged and the snapshot is Partial', async () => {
   // PR list says #55 head = 669ab…; branch list already shows a newer head.
   const { execFileFn } = fakeGh(movingRoutes({ compareLog: [], branchReads: () => ({ 'claude/v23-browser-e2e-hardening': 'newer-head' }) }));
-  const history = await fetchDevelopmentHistory(REPO, { execFileFn });
+  const history = await fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn });
   assert.equal(history.status, 'partial');
   const mismatch = history.consistency.prHeadMismatches.find((m) => m.number === 55);
   assert.deepEqual(mismatch, { number: 55, headRef: 'claude/v23-browser-e2e-hardening', prHeadSha: PULLS.find((p) => p.number === 55).head.sha, branchHeadSha: 'newer-head' });
@@ -486,7 +511,7 @@ test('Snapshot: an OPEN PR whose head differs from its branch head is flagged an
 // refs did not move keeps its own pinned, complete status (edge proof != snapshot completeness).
 const drift = (reads) => async () => {
   const { execFileFn } = fakeGh(movingRoutes({ compareLog: [], branchReads: reads }));
-  return fetchDevelopmentHistory(REPO, { execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
+  return fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn, now: () => new Date('2026-10-16T00:00:00Z') });
 };
 const refsOf = (h) => h.consistency.driftedRefs.map((r) => `${r.ref}:${r.relevant}`).sort();
 
@@ -552,7 +577,7 @@ const rv = (id, login, state, at, commitId) => ({ id, user: login === null ? nul
 function detailAt(headSha, reviewRoute, { checks } = {}) {
   const pull = { ...PULLS.find((p) => p.number === 55), changed_files: 1, additions: 1, deletions: 0, commits: 1 };
   pull.head = { ...pull.head, sha: headSha };
-  return fetchPullDetail(REPO, 55, {
+  return fetchPullDetail(REPO, 55, { authorization: AUTH,
     execFileFn: fakeGh([
       [/\/pulls\/55$/, () => ghOutput(pull)],
       [/\/check-runs/, checks ?? (() => ghOutput({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] }))],
@@ -702,7 +727,7 @@ test('B1.4 server: every history route is GET-only and no write verb is routed a
   for (const r of routes) assert.deepEqual(r.methods, ['get'], `${r.path} must be GET only`);
 });
 
-test('B1.4 server: the repository allowlist is exact — arrays, case, slashes, traversal and look-alikes are all refused before any read', async () => {
+test('B1.4 server (V1.2C registry): the repository authorization is exact — arrays, case, slashes, traversal and look-alikes are all refused before any read', async () => {
   let calls = 0;
   await withRouter({ fetchHistory: async (repo) => { calls += 1; return { repository: repo }; }, fetchHistoryPull: async () => { calls += 1; return {}; } }, async (base) => {
     // positive control: the exact repository still works
@@ -741,8 +766,8 @@ test('B1.4 server: query parameters cannot turn a read into a mutation — every
     [/\/check-runs/, () => ghOutput({ total_count: 0, check_runs: [] })],
     [/\/reviews/, () => ghOutput([])],
   ]);
-  await fetchDevelopmentHistory(REPO, { execFileFn });
-  await fetchPullDetail(REPO, 55, { execFileFn, aggregateCi: aggregateCiResponse });
+  await fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn });
+  await fetchPullDetail(REPO, 55, { authorization: AUTH, execFileFn, aggregateCi: aggregateCiResponse });
   assert.ok(calls.length > 5);
   for (const { cmd, args, opts } of calls) {
     assert.equal(cmd, 'gh');
@@ -764,7 +789,11 @@ test('B1.4 server: ghApiPage refuses anything that is not a plain repos/ path', 
 test('B1.4 server: the history module has no filesystem, shell, process-spawn or agent capability (static inspection)', () => {
   const src = readFileSync(new URL('../server/githubDevelopmentHistory.mjs', import.meta.url), 'utf8');
   const imports = [...src.matchAll(/^import .* from '([^']+)';/gm)].map((m) => m[1]).sort();
-  assert.deepEqual(imports, ['./githubRepos.mjs', 'node:child_process']);
+  assert.deepEqual(imports, ['./githubConnectionRegistry.mjs', './githubRepos.mjs', 'node:child_process']);
+  // V1.2C: the registry it now depends on is a pure projection: no filesystem, process, network or environment access.
+  const registry = readFileSync(new URL('../server/githubConnectionRegistry.mjs', import.meta.url), 'utf8');
+  assert.deepEqual([...registry.matchAll(/^import .* from '([^']+)';/gm)].map((m) => m[1]), ['./projectManagementSchema.mjs']);
+  assert.doesNotMatch(registry, /node:|\bfetch\(|execFile|spawn|writeFile|process\.env|require\(/);
   assert.match(src, /import \{ execFile \} from 'node:child_process'/);
   assert.doesNotMatch(src, /\b(spawn|spawnSync|execSync|execFileSync|fork)\s*\(/);
   assert.doesNotMatch(src, /shell\s*:\s*true/);
@@ -887,3 +916,63 @@ test('B1.4 server: the history module has no filesystem, shell, process-spawn or
     assert.doesNotMatch(src.slice(start, end), /execFile|ghApi|fetch\(|spawn|process\.env/); // no GitHub, process or environment access
   });
 }
+
+// ------------------------------------------------------------------------------------------------ V1.2C authorization gate
+test('V1.2C route: a router without the server authorizer reads nothing', async () => {
+  let calls = 0;
+  const app = express();
+  app.use('/api/github', createGithubRouter({ fetchHistory: async (repo) => { calls += 1; return { repository: repo }; }, fetchHistoryPull: async () => { calls += 1; return {}; } }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/api/github`;
+    assert.equal((await fetch(`${base}/development-history?repo=${REPO}`)).status, 403);
+    assert.equal((await fetch(`${base}/development-history/pull?repo=${REPO}&number=5`)).status, 403);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+  assert.equal(calls, 0);
+});
+
+test('V1.2C route: projectId must match the authorized project when given', async () => {
+  let calls = 0;
+  await withRouter({ fetchHistory: async (repo) => { calls += 1; return { repository: repo }; } }, async (base) => {
+    assert.equal((await fetch(`${base}/development-history?repo=${REPO}&projectId=reg-pm`)).status, 200);
+    assert.equal((await fetch(`${base}/development-history?repo=${REPO}&projectId=someone-else`)).status, 403);
+    assert.equal((await fetch(`${base}/development-history?repo=${REPO}&projectId=a&projectId=b`)).status, 403, 'a repeated projectId is refused');
+  });
+  assert.equal(calls, 1);
+});
+
+test('V1.2C route: authority revoked or changed DURING a read discards the result and never caches it', async () => {
+  let state = pmState();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  let calls = 0;
+  const fetchHistory = async (repo, { authorization }) => { calls += 1; assert.ok(authorization); await gate; return { repository: repo, fetchedAt: `t${calls}` }; };
+  await withRouter({ fetchHistory, authorizeHistory: ({ repo, projectId }) => issueHistoryAuthorization(state, { repo, projectId }) }, async (base) => {
+    const pending = fetch(`${base}/development-history?repo=${REPO}`);
+    await new Promise((r) => setTimeout(r, 30));
+    state = pmState([syntheticProject('reg-pm', { repository: REPO, management: { lifecycle: 'archived' } })]); // archived meanwhile
+    release();
+    const res = await pending;
+    assert.deepEqual([res.status, (await res.json()).kind], [409, 'authorization_changed']);
+    assert.equal((await fetch(`${base}/development-history?repo=${REPO}`)).status, 403, 'archived: no further reads');
+  });
+  assert.equal(calls, 1);
+});
+
+test('V1.2C route: the cache is keyed by authority, so a reconnect (new generation) never serves the old snapshot', async () => {
+  const connected = (generation) => pmState([syntheticProject('p1', { repository: 'synthetic-owner/app', management: { lifecycle: 'active', githubConnection: {
+    status: 'connected', repository: 'synthetic-owner/app', generation, source: 'user-verified', connectedAt: '2026-10-19T00:00:00.000Z', verifiedRepositoryId: 7, revokedAt: null, revokedReason: null } } })]);
+  let state = connected(1);
+  let calls = 0;
+  await withRouter({ fetchHistory: async (repo) => { calls += 1; return { repository: repo, fetchedAt: `t${calls}` }; }, authorizeHistory: ({ repo, projectId }) => issueHistoryAuthorization(state, { repo, projectId }) }, async (base) => {
+    const url = `${base}/development-history?repo=synthetic-owner/app&projectId=p1`;
+    assert.equal((await (await fetch(url)).json()).cache, 'miss');
+    assert.equal((await (await fetch(url)).json()).cache, 'hit');
+    state = connected(3); // disconnected and reconnected: a new authority
+    const after = await (await fetch(url)).json();
+    assert.deepEqual([after.cache, after.fetchedAt], ['miss', 't2']);
+    assert.equal((await fetch(`${base}/development-history?repo=${REPO}`)).status, 403, 'the legacy PM is not in this state');
+  });
+});

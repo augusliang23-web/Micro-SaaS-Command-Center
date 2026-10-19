@@ -1,21 +1,67 @@
 // Pure presentation model for the read-only GitHub development history.
 // Nothing here invents Git facts: verified edges come only from commit
 // parents; PR base/head refs stay labelled as reported PR metadata.
-import type { DevelopmentHistory, HistoryCommit, HistoryPull, LiveIdentity, PullDetail, ReviewerDecision } from './gitHistoryTypes';
+import type { DevelopmentHistory, HistoryAuthorization, HistoryCommit, HistoryPull, LiveIdentity, PullDetail, ReviewerDecision } from './gitHistoryTypes';
 
 import { activityWindow } from './activityTimelineModel';
 
-export const LIVE_HISTORY_REPOS = ['augusliang23-web/pm-dashboard'] as const;
+/** V1.2C: the only repository the strict legacy rule can grant (no hard-coded allowlist otherwise). */
+export const LEGACY_COMPAT_REPOSITORY = 'augusliang23-web/pm-dashboard';
+const CANONICAL_REPO = /^(?!-)(?!.*--)[A-Za-z0-9-]{1,39}(?<!-)\/[A-Za-z0-9._-]{1,100}$/;
 const SGT_OFFSET_MS = 8 * 3600_000;
 const DAY_MS = 86_400_000;
 
-/** Exact allowlist match; a repository-like display name never qualifies. */
-export function liveRepositoryFor(identity: LiveIdentity | null | undefined): string | null {
-  if (!identity || identity.source !== 'REGISTERED' || !identity.projectId?.trim()) return null; // a blank id is no stable identity
-  const repo = (identity.repository ?? '').trim().replace(/^(?:https?:\/\/)?(?:github\.com\/)/, '').replace(/\/$/, '');
-  return (LIVE_HISTORY_REPOS as readonly string[]).includes(repo) ? repo : null;
+type SavedRecord = Record<string, unknown>;
+const recordOf = (v: unknown): v is SavedRecord => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = (v: unknown) => (typeof v === 'string' ? v : '');
+
+/**
+ * Mirror of server/githubConnectionRegistry.mjs, used only to decide what the UI offers and requests. Returns one entry per
+ * project (same order), null when the project must not be read. The server independently refuses anything not authorized.
+ * Rules: trusted provenance (no dataMode), active lifecycle, id non-blank and unique across current AND removed projects, and
+ * EITHER a saved `connected` record for exactly its repository OR the single legacy PM Dashboard record (no dataMode, no
+ * management, exact repository). A repository claimed by two projects is denied for both.
+ */
+export function githubAuthorizationsFor(projects: SavedRecord[], removed: SavedRecord[] = []): (HistoryAuthorization | null)[] {
+  const counts = new Map<string, number>();
+  for (const p of [...projects, ...removed]) { const id = str(p.id); if (id.trim()) counts.set(id, (counts.get(id) ?? 0) + 1); }
+  const legacy = projects.filter((p) => p.dataMode === undefined && p.management === undefined && p.repository === LEGACY_COMPAT_REPOSITORY);
+  const legacyId = legacy.length === 1 && str(legacy[0].id).trim() && counts.get(str(legacy[0].id)) === 1 ? str(legacy[0].id) : null;
+  const entries = projects.map((p): HistoryAuthorization | null => {
+    const id = str(p.id);
+    if (p.dataMode !== undefined || !id.trim() || id !== id.trim() || counts.get(id) !== 1) return null;
+    const m = recordOf(p.management) ? p.management : undefined;
+    if (m && m.lifecycle !== undefined && m.lifecycle !== 'active') return null;
+    const c = m && recordOf(m.githubConnection) ? m.githubConnection : undefined;
+    if (c) {
+      const ok = c.status === 'connected' && c.repository === p.repository && CANONICAL_REPO.test(str(p.repository)) && Number.isInteger(c.generation)
+        && (c.source === 'user-verified' || c.source === 'legacy-pm-dashboard-compat');
+      return ok ? { source: c.source as HistoryAuthorization['source'], generation: c.generation as number } : null;
+    }
+    if (m && m.githubConnection !== undefined) return null; // malformed record: fail closed
+    return id === legacyId ? { source: 'legacy-pm-dashboard-compat', generation: 0 } : null;
+  });
+  const claims = new Map<string, number>();
+  projects.forEach((p, i) => { if (entries[i]) { const k = str(p.repository).toLowerCase(); claims.set(k, (claims.get(k) ?? 0) + 1); } });
+  return entries.map((e, i) => (e && claims.get(str(projects[i].repository).toLowerCase()) === 1 ? e : null));
 }
-export const identityKey = (identity: LiveIdentity) => JSON.stringify([identity.source, identity.projectId ?? null, identity.repository ?? null]);
+
+/**
+ * The repository to request for a REGISTERED identity with a stable id and an exact canonical `owner/repo` (no URL, prefix or
+ * whitespace normalisation: the server matches the exact string, so the UI does too).
+ * - `authorization` object: the caller projected saved state (the shell always does) and this project is authorized.
+ * - `authorization: null`: projected and NOT authorized (disconnected, archived, duplicate, ...).
+ * - `authorization` absent: the caller supplied no projection; only the strict legacy repository is treated as readable.
+ * Whatever the UI decides, the server re-derives and enforces authority on every request.
+ */
+export function liveRepositoryFor(identity: LiveIdentity | null | undefined): string | null {
+  if (!identity || identity.source !== 'REGISTERED' || !identity.projectId?.trim() || identity.authorization === null) return null;
+  const repo = identity.repository ?? '';
+  if (!CANONICAL_REPO.test(repo)) return null;
+  return identity.authorization || repo === LEGACY_COMPAT_REPOSITORY ? repo : null;
+}
+/** Includes the authorization, so a reconnect (new generation) remounts the viewer and drops every cached result. */
+export const identityKey = (identity: LiveIdentity) => JSON.stringify([identity.source, identity.projectId ?? null, identity.repository ?? null, identity.authorization?.source ?? null, identity.authorization?.generation ?? null]);
 
 const pad = (n: number) => String(n).padStart(2, '0');
 function sgtParts(iso: string) {

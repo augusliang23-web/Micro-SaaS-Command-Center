@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { AlertTriangle, Archive, ArchiveRestore, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Archive, ArchiveRestore, Github, Pencil, Plus, RotateCcw, Trash2, Unlink } from 'lucide-react';
 import { isUsableSavedState } from '../savedState.mjs';
 
 /**
  * V1.2 candidate "管理專案" page. Reads GET /api/projects (versioned) and sends exactly one kind of write: POST
  * /api/projects/commands with the version it last read. It never retries a refused command, never invents projects when saved
- * state is missing or invalid, and never makes a GitHub request. Repository identity cannot be changed here (Phase C).
+ * state is missing or invalid, and never makes a GitHub request itself. V1.2C: Connect / Change send a command; the SERVER then
+ * performs one read-only GitHub metadata check before saving. The connection status shown here is the server's own projection.
  */
 
 type Project = Record<string, unknown> & { id: string; name: string; repository: string; stage: string; tagline: string; tags: string[] };
 type RemovedEntry = { project: Project; removedAt: string; previousLifecycle: string | null };
+export type ServerAuthorization = { projectId: string; repository: string; source: string; generation: number };
 type Load =
   | { status: 'loading' }
-  | { status: 'ready'; version: string; projects: Project[]; removed: RemovedEntry[] }
+  | { status: 'ready'; version: string; projects: Project[]; removed: RemovedEntry[]; authorizations: ServerAuthorization[] }
   | { status: 'empty' }
   | { status: 'unavailable'; reason: string };
 type Tab = 'active' | 'archived' | 'removed';
@@ -21,7 +23,10 @@ type Command =
   | { type: 'add'; input: Record<string, unknown> }
   | { type: 'edit'; id: string; patch: Record<string, unknown> }
   | { type: 'archive' | 'restore' | 'recover'; id: string }
-  | { type: 'remove'; id: string; confirmProjectId: string };
+  | { type: 'remove'; id: string; confirmProjectId: string }
+  | { type: 'connect'; id: string; repository: string }
+  | { type: 'disconnect'; id: string }
+  | { type: 'change'; id: string; repository: string; confirmPreviousRepository: string };
 
 export const STAGES = ['Prototype', 'Alpha', 'Beta', 'Production'] as const;
 export const COMMAND_URL = '/api/projects/commands';
@@ -40,7 +45,10 @@ export function parseProjectsResponse(body: unknown): Load {
   if (!usableProjects(body.projects) || !removed.every((e) => isRecord(e) && typeof e.removedAt === 'string') || !usableProjects(removed.map((e) => (e as RemovedEntry).project))) {
     return { status: 'unavailable', reason: '專案資料格式無效' };
   }
-  return { status: 'ready', version: body.version, projects: body.projects as Project[], removed: removed as RemovedEntry[] };
+  const auth = body.githubAuthorizations ?? [];
+  const validAuth = Array.isArray(auth) && auth.every((a) => isRecord(a) && typeof a.projectId === 'string' && typeof a.repository === 'string' && typeof a.source === 'string' && Number.isInteger(a.generation));
+  if (!validAuth) return { status: 'unavailable', reason: '專案資料格式無效' };
+  return { status: 'ready', version: body.version, projects: body.projects as Project[], removed: removed as RemovedEntry[], authorizations: auth as ServerAuthorization[] };
 }
 
 const MESSAGES: Record<string, string> = {
@@ -62,13 +70,22 @@ const MESSAGES: Record<string, string> = {
   INVALID_STATE: '已儲存的資料格式不符合規則，沒有做任何變更。不會用範例資料代替。',
   UNSAFE_TARGET: '存檔位置未通過安全檢查，沒有做任何變更。',
   NO_STATE: '本機尚無已儲存的專案資料，無法管理專案。',
+  GITHUB_VERIFICATION_FAILED: '無法在 GitHub 驗證這個 repository（可能不存在、這個帳號沒有讀取權限、gh 未登入、速率限制或逾時）。沒有連線，資料沒有變更。',
+  ALREADY_CONNECTED: '這個專案已經連線。請先中斷，或使用「更換 repository」。資料沒有變更。',
+  NOT_CONNECTED: '這個專案目前沒有連線。資料沒有變更。',
+  REPOSITORY_MISMATCH: 'Repository 與專案記錄或 GitHub 回報的名稱不一致（可能已改名或轉移）。沒有連線，資料沒有變更。',
+  UNTRUSTED_IDENTITY: '只有已登記專案可以連線 GitHub（DEMO 或身分無法確認的紀錄不行）。資料沒有變更。',
 };
 const INPUT_CODES = new Set(['INVALID_INPUT', 'INVALID_ID', 'FIELD_NOT_EDITABLE', 'INVALID_COMMAND', 'INVALID_REQUEST']);
 const RELOAD_CODES = new Set(['CONFLICT', 'ILLEGAL_TRANSITION', 'NOT_FOUND', 'DURABILITY_UNCONFIRMED']);
 const SUCCESS: Record<Command['type'], string> = {
   add: '已新增專案並儲存。', edit: '已儲存變更。', archive: '已封存專案（紀錄與 ID 都保留）。', restore: '已還原專案。',
   remove: '已移除專案（只影響本機資料，可在「已移除」救回）。', recover: '已救回專案。',
+  connect: '已連線 GitHub（伺服器已驗證此 repository；開發地圖讀取時才會查詢歷史）。',
+  disconnect: '已中斷 GitHub 連線。這個專案不會再讀取 GitHub 歷史。',
+  change: '已更換 repository。舊 repository 的讀取權限已撤銷，新的 repository 已由伺服器驗證。',
 };
+const REVOKED: Record<string, string> = { disconnected: '已中斷', archived: '封存時已撤銷', removed: '移除時已撤銷' };
 
 export function ManageProjects({ onChanged, identityLabel }: { onChanged: () => void; identityLabel: (p: Record<string, unknown>) => string }) {
   const [load, setLoad] = useState<Load>({ status: 'loading' });
@@ -78,6 +95,8 @@ export function ManageProjects({ onChanged, identityLabel }: { onChanged: () => 
   const [editing, setEditing] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Project | null>(null);
   const [adding, setAdding] = useState(false);
+  const [connecting, setConnecting] = useState<{ id: string; mode: 'connect' | 'change' } | null>(null);
+  const [disconnecting, setDisconnecting] = useState<Project | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -128,6 +147,7 @@ export function ManageProjects({ onChanged, identityLabel }: { onChanged: () => 
   const active = ready ? ready.projects.filter((p) => lifecycleOf(p) === 'active') : [];
   const archived = ready ? ready.projects.filter((p) => lifecycleOf(p) === 'archived') : [];
   const removed = ready ? ready.removed : [];
+  const authorizationOf = (p: Project) => ready?.authorizations.find((a) => a.projectId === p.id && a.repository === p.repository) ?? null;
 
   return <main className="v1-main" aria-busy={busy}>
     <div className="v1-title">
@@ -165,6 +185,10 @@ export function ManageProjects({ onChanged, identityLabel }: { onChanged: () => 
                     : <button type="button" disabled={busy} onClick={() => void send({ type: 'restore', id: p.id })}><ArchiveRestore size={13} />還原</button>}
                   <button type="button" className="is-danger" disabled={busy} onClick={() => setRemoving(p)}><Trash2 size={13} />移除…</button>
                 </div>}
+            {editing !== p.id && <GithubControls project={p} archived={tab === 'archived'} authorization={authorizationOf(p)} busy={busy}
+              open={connecting?.id === p.id ? connecting.mode : null}
+              onOpen={(mode) => setConnecting({ id: p.id, mode })} onCancel={() => setConnecting(null)} onDisconnect={() => setDisconnecting(p)}
+              onSubmit={async (command) => { if (await send(command)) setConnecting(null); }} />}
           </ProjectRow>)}
         {tab === 'removed' && removed.map((e) =>
           <ProjectRow key={e.project.id} project={e.project} label={identityLabel(e.project)} note={`移除時間：${e.removedAt}`}>
@@ -172,6 +196,9 @@ export function ManageProjects({ onChanged, identityLabel }: { onChanged: () => 
           </ProjectRow>)}
       </section>
     </>}
+    {disconnecting && <DisconnectDialog project={disconnecting} busy={busy} onCancel={() => setDisconnecting(null)} onConfirm={async () => {
+      if (await send({ type: 'disconnect', id: disconnecting.id })) setDisconnecting(null);
+    }} />}
     {removing && <RemoveDialog project={removing} busy={busy} onCancel={() => setRemoving(null)} onConfirm={async () => {
       if (await send({ type: 'remove', id: removing.id, confirmProjectId: removing.id })) setRemoving(null);
     }} />}
@@ -263,6 +290,82 @@ function RemoveDialog({ project, busy, onCancel, onConfirm }: { project: Project
       <input id="v1m-remove-confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus autoComplete="off" />
       <div className="v1m-actions">
         <button type="button" className="is-danger" disabled={busy || typed !== project.name} onClick={() => void onConfirm()}>{busy ? '移除中…' : '確認移除'}</button>
+        <button type="button" disabled={busy} onClick={onCancel}>取消</button>
+      </div>
+    </div>
+  </div>;
+}
+
+/** V1.2C GitHub connection status and controls. Status comes from the server's projection; nothing here contacts GitHub. */
+function GithubControls({ project, archived, authorization, busy, open, onOpen, onCancel, onDisconnect, onSubmit }: {
+  project: Project; archived: boolean; authorization: ServerAuthorization | null; busy: boolean; open: 'connect' | 'change' | null;
+  onOpen: (mode: 'connect' | 'change') => void; onCancel: () => void; onDisconnect: () => void; onSubmit: (command: Command) => Promise<void>;
+}) {
+  const management = isRecord(project.management) ? project.management : null;
+  const saved = management && isRecord(management.githubConnection) ? management.githubConnection : null;
+  const trusted = project.dataMode === undefined;
+  const status = authorization
+    ? `Connected · ${authorization.repository}${authorization.source === 'legacy-pm-dashboard-compat' ? '（V1.1 相容規則）' : '（已由伺服器驗證）'} · 尚未讀取歷史（開發地圖讀取時才會查詢）`
+    : saved && saved.status === 'disconnected' ? `Not connected · ${REVOKED[String(saved.revokedReason)] ?? '已中斷'}（${String(saved.repository)}）`
+    : 'Not connected';
+  return <div className="v1m-github" aria-label={`GitHub 連線 ${project.name}`}>
+    <p className="v1-muted"><Github size={12} /> GitHub：{status}</p>
+    {!trusted && <p className="v1-muted">此紀錄不是已登記專案，不能連線 GitHub。</p>}
+    {trusted && archived && <p className="v1-muted">已封存的專案不會讀取 GitHub；還原後需要重新連線。</p>}
+    {trusted && !archived && open === null && <div className="v1m-actions">
+      {authorization
+        ? <>
+            <button type="button" disabled={busy} onClick={onDisconnect}><Unlink size={13} />中斷 GitHub 連線…</button>
+            <button type="button" disabled={busy} onClick={() => onOpen('change')}><Github size={13} />更換 repository…</button>
+          </>
+        : <>
+            <button type="button" disabled={busy} onClick={() => onOpen('connect')}><Github size={13} />連線 GitHub…</button>
+            {project.repository && <button type="button" disabled={busy} onClick={() => onOpen('change')}><Github size={13} />更換 repository…</button>}
+          </>}
+    </div>}
+    {trusted && !archived && open !== null && <ConnectForm project={project} mode={open} busy={busy} onCancel={onCancel} onSubmit={onSubmit} />}
+  </div>;
+}
+
+function ConnectForm({ project, mode, busy, onCancel, onSubmit }: { project: Project; mode: 'connect' | 'change'; busy: boolean; onCancel: () => void; onSubmit: (command: Command) => Promise<void> }) {
+  const [repository, setRepository] = useState(mode === 'connect' ? project.repository : '');
+  const [confirm, setConfirm] = useState('');
+  const id = `gh-${mode}-${project.id}`;
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void onSubmit(mode === 'connect'
+      ? { type: 'connect', id: project.id, repository: repository.trim() }
+      : { type: 'change', id: project.id, repository: repository.trim(), confirmPreviousRepository: confirm });
+  }
+  return <form className="v1m-form" onSubmit={submit} aria-label={mode === 'connect' ? `連線 GitHub ${project.name}` : `更換 repository ${project.name}`}>
+    <label htmlFor={`${id}-repo`}>{mode === 'connect' ? 'GitHub repository（owner/repo）' : '新的 GitHub repository（owner/repo）'}</label>
+    <input id={`${id}-repo`} value={repository} onChange={(e) => setRepository(e.target.value)} placeholder="owner/repo" required autoCapitalize="off" autoCorrect="off" spellCheck={false}
+      readOnly={mode === 'connect' && !!project.repository} />
+    {mode === 'change' && <>
+      <label htmlFor={`${id}-confirm`}>請輸入目前的 repository「{project.repository}」以確認更換</label>
+      <input id={`${id}-confirm`} value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} />
+    </>}
+    <p className="v1-muted">按下後，伺服器會用你現有的 gh 登入，對 GitHub 做<strong>一次唯讀查詢</strong>確認這個 repository 存在且可讀取；成功才會儲存。不會寫入 GitHub。{mode === 'change' ? ' 舊 repository 的讀取權限會在同一次儲存中撤銷，專案 ID 不變。' : ''}</p>
+    <div className="v1m-actions">
+      <button type="submit" className="p-primary" disabled={busy || !repository.trim() || (mode === 'change' && confirm !== project.repository)}>{busy ? '驗證中…' : mode === 'connect' ? '驗證並連線' : '驗證並更換'}</button>
+      <button type="button" disabled={busy} onClick={onCancel}>取消</button>
+    </div>
+  </form>;
+}
+
+function DisconnectDialog({ project, busy, onCancel, onConfirm }: { project: Project; busy: boolean; onCancel: () => void; onConfirm: () => Promise<void> }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, onCancel]);
+  return <div className="v1m-overlay">
+    <div role="dialog" aria-modal="true" aria-labelledby="v1m-disconnect-title" className="v1m-dialog">
+      <h2 id="v1m-disconnect-title">中斷「{project.name}」的 GitHub 連線？</h2>
+      <p>之後開發地圖不會再讀取 {project.repository} 的歷史；已快取的結果也不再提供。專案與 repository 名稱會保留，之後可以重新連線。</p>
+      <p><strong>不會</strong>修改或刪除 GitHub 上的任何東西。</p>
+      <div className="v1m-actions">
+        <button type="button" className="is-danger" disabled={busy} onClick={() => void onConfirm()}>{busy ? '處理中…' : '確認中斷'}</button>
         <button type="button" disabled={busy} onClick={onCancel}>取消</button>
       </div>
     </div>

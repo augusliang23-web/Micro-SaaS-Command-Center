@@ -5,7 +5,6 @@ import { fetchPullRequestStatus, fetchChangedFiles, fetchRecentCommits, isRealGi
 import {
   fetchDevelopmentHistory,
   fetchPullDetail,
-  isAllowlistedHistoryRepo,
   createHistoryCache,
 } from './githubDevelopmentHistory.mjs';
 
@@ -35,6 +34,12 @@ export function parseRecentCommitsLimit(raw) {
   return Number.isFinite(n) && n >= 1 ? Math.min(n, 50) : 30;
 }
 
+/** The default authorizer: nothing is readable unless the server injects its saved-state authorizer. */
+// eslint-disable-next-line no-unused-vars
+function denyAllHistory(_scope) {
+  return null;
+}
+
 export function createGithubRouter({
   fetchRepos = fetchGithubRepos,
   fetchPullStatus = fetchPullRequestStatus,
@@ -43,6 +48,9 @@ export function createGithubRouter({
   fetchHistory = fetchDevelopmentHistory,
   fetchHistoryPull = (repo, number, opts) => fetchPullDetail(repo, number, { ...opts, aggregateCi: aggregateCiResponse }),
   historyCache = createHistoryCache(),
+  // V1.2C: ({ repo, projectId }) => registry-issued authorization or null. Re-derived from saved state on EVERY call. The default
+  // authorizes nothing, so a router built without the server's authorizer can never read history.
+  authorizeHistory = denyAllHistory,
 } = {}) {
   const router = express.Router();
 
@@ -159,22 +167,42 @@ export function createGithubRouter({
     return controller.signal;
   }
 
-  router.get('/development-history', async (req, res) => {
+  // Authorization is checked BEFORE the cache and again AFTER every fetch: if the connection was revoked or changed meanwhile, the
+  // result is discarded (409 authorization_changed) and never cached. Cache keys carry the authority's scopeKey, so a reconnect
+  // or another project can never be served an older identity's snapshot.
+  function authorize(req, res) {
     const repo = typeof req.query.repo === 'string' ? req.query.repo : '';
-    if (!isAllowlistedHistoryRepo(repo)) {
-      res.status(403).json({ error: 'Repository is not allowlisted for development history.', kind: 'forbidden', status: 'unavailable' });
-      return;
+    const rawProject = req.query.projectId;
+    const projectId = rawProject === undefined ? undefined : typeof rawProject === 'string' && rawProject.length <= 200 ? rawProject : null;
+    const authorization = projectId === null ? null : authorizeHistory({ repo, projectId });
+    if (!authorization) {
+      res.status(403).json({ error: 'Repository is not authorized for development history.', kind: 'forbidden', status: 'unavailable' });
+      return null;
     }
+    return { repo, projectId, authorization };
+  }
+  function stillAuthorized(res, { repo, projectId, authorization }) {
+    const again = authorizeHistory({ repo, projectId });
+    if (again && again.scopeKey === authorization.scopeKey) return true;
+    res.status(409).json({ error: 'The GitHub connection changed while reading; the result was discarded.', kind: 'authorization_changed', status: 'unavailable' });
+    return false;
+  }
+
+  router.get('/development-history', async (req, res) => {
+    const scope = authorize(req, res);
+    if (!scope) return;
+    const { repo, authorization } = scope;
     const refresh = req.query.refresh === '1';
-    const cached = refresh ? null : historyCache.get(repo);
+    const cached = refresh ? null : historyCache.get(authorization.scopeKey);
     if (cached) {
       res.json({ ...cached, cache: 'hit' });
       return;
     }
     try {
-      const history = await fetchHistory(repo, { signal: abortOnClose(req, res) });
+      const history = await fetchHistory(repo, { authorization, signal: abortOnClose(req, res) });
       if (history?.repository !== repo) throw new GithubCliError('History response repository mismatch.', 'failed');
-      historyCache.set(repo, history);
+      if (!stillAuthorized(res, scope)) return;
+      historyCache.set(authorization.scopeKey, history);
       res.json({ ...history, cache: refresh ? 'refreshed' : 'miss' });
     } catch (error) {
       historyErrorResponse(res, error);
@@ -182,18 +210,18 @@ export function createGithubRouter({
   });
 
   router.get('/development-history/pull', async (req, res) => {
-    const repo = typeof req.query.repo === 'string' ? req.query.repo : '';
+    const scope = authorize(req, res);
+    if (!scope) return;
+    const { repo, authorization } = scope;
     const number = typeof req.query.number === 'string' && /^\d{1,7}$/.test(req.query.number) ? Number(req.query.number) : NaN;
-    if (!isAllowlistedHistoryRepo(repo)) {
-      res.status(403).json({ error: 'Repository is not allowlisted for development history.', kind: 'forbidden', status: 'unavailable' });
-      return;
-    }
     if (!Number.isInteger(number) || number < 1) {
       res.status(400).json({ error: 'Query param "number" must be a positive integer.', kind: 'failed', status: 'unavailable' });
       return;
     }
     try {
-      res.json(await fetchHistoryPull(repo, number, { signal: abortOnClose(req, res) }));
+      const detail = await fetchHistoryPull(repo, number, { authorization, signal: abortOnClose(req, res) });
+      if (!stillAuthorized(res, scope)) return;
+      res.json(detail);
     } catch (error) {
       historyErrorResponse(res, error);
     }
