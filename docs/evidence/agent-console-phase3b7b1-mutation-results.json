@@ -1,0 +1,718 @@
+{
+  "phase": "3B7B1-security-fixes",
+  "sourceHead": "4936074dcca9bc1db595889fdafea82e98b3e1ec",
+  "node": "v20.20.2",
+  "baseline": {
+    "code": 0,
+    "tests": 93,
+    "pass": 93,
+    "fail": 0
+  },
+  "summary": {
+    "total": 78,
+    "caught": 74,
+    "survivedEquivalent": 4,
+    "survivedUnexplained": [],
+    "patternErrors": []
+  },
+  "results": [
+    {
+      "id": "approval: ignore expiry",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: ignore not-yet-valid",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: never write consumed marker",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: ignore consumed marker",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: ignore diff digest",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: ignore base commit",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: ignore branch",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: ignore task binding",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: ignore action binding",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: accept ambiguous",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: agent-like approver allowed",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: unlimited ttl",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: authenticity label unchecked",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: unknown fields allowed",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: gate skips action category check",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "GATED_ACTIONS.includes(action) is checked next to it and enforces the same three actions"
+    },
+    {
+      "id": "approval: gate skips task allowed actions",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: docker policy commit auto",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "manifest: follow symlinks",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "manifest: allow hard links",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "the post-open fstat nlink check right below enforces the same rule"
+    },
+    {
+      "id": "manifest: allow .git paths",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "manifest: ignore content in digest",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: skip COMMIT approval",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: skip PUSH approval",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: skip PR approval",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: no diff re-check",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: evidence grade unchecked",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: evidence kind unchecked",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: unconfirmed cleanup tolerated",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: unknown outcome tolerated",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: cancelled treated as failure only",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: non-completed outcome keeps exit code",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: docker path accepts any adapter id",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: gate not required to be ApprovalGate",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: adapter evidence recorded without grade cap",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-docker-path.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: spec extra keys allowed",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: constructor unknown options allowed",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: fixture path unchecked",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: run replay allowed",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: skip destroy",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 9,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: unconfirmed cleanup still success",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: network profile widened",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: cancel claims terminated without stop",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: cancelled without a cancel request",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: cancel of unknown run",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: policy evidence not required",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: no secret redaction",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: no host path redaction",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: unbounded output events",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: timeout treated as success",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: oom treated as success",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: blocked prepare ignored",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 6,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: unknown image alias accepted",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-container-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": "approval: ignore tree binding",
+      "file": "server/execution/approvalGate.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-approval.test.mjs"
+      ]
+    },
+    {
+      "id": "git: skip attribute check",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "git: skip index flag check",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "git: skip pre-staged index check",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "git: skip staged tree comparison",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "git: skip committed tree check",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "git: skip published parent check",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "git: skip published head check",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "git: skip one-commit count",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "the parents check right above already requires HEAD to have exactly the base as its only parent, which makes the count 1"
+    },
+    {
+      "id": "git: expected tree ignores deletions",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "git: index not reset after drift",
+      "file": "server/execution/worktreeManager.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: legacy commit on the docker path",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: skip published-commit verification",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "orchestrator: skip tree re-check",
+      "file": "server/execution/orchestrator.mjs",
+      "status": "SURVIVED",
+      "failures": 0,
+      "caughtBy": null,
+      "equivalent": "the tree is a pure function of the manifest and base commit, and the manifest digest is re-checked on the line above"
+    },
+    {
+      "id": "runtime: no launch fence",
+      "file": "server/sandbox/dockerSandboxRuntime.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "runtime: stop does not fence",
+      "file": "server/sandbox/dockerSandboxRuntime.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "runtime: destroy does not fence",
+      "file": "server/sandbox/dockerSandboxRuntime.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "runtime: stop ignores an unsettled launch",
+      "file": "server/sandbox/dockerSandboxRuntime.mjs",
+      "status": "CAUGHT",
+      "failures": 2,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "runtime: unsettled launch counts as stopped",
+      "file": "server/sandbox/dockerSandboxRuntime.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "runtime: late-started container is not stopped",
+      "file": "server/sandbox/dockerSandboxRuntime.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: pre-launch cancellation not recognized",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "runtime: agent role not strict",
+      "file": "server/sandbox/dockerSandboxRuntime.mjs",
+      "status": "CAUGHT",
+      "failures": 7,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "runtime: execution check skipped for strict roles",
+      "file": "server/sandbox/dockerSandboxRuntime.mjs",
+      "status": "CAUGHT",
+      "failures": 3,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: execution check not required",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: oom type not required",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    },
+    {
+      "id": "adapter: exit code type not required",
+      "file": "server/execution/containerAgentAdapter.mjs",
+      "status": "CAUGHT",
+      "failures": 1,
+      "caughtBy": [
+        "test/agent-console-phase3b7b1-security-fixes.test.mjs"
+      ]
+    }
+  ]
+}

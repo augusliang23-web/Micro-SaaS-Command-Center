@@ -52,6 +52,14 @@ export const EVIDENCE_KINDS = Object.freeze([
   'guard_violation',
   'agent_report',
   'error',
+  // Phase 3B7B1 Docker path. Sandbox kinds come only from authoritative container readback; approval kinds are at most RUNTIME_OBSERVED.
+  'sandbox_policy',
+  'sandbox_created',
+  'sandbox_started',
+  'sandbox_stopped',
+  'sandbox_destroyed',
+  'approval_required',
+  'approval_consumed',
 ]);
 const PASS_THRESHOLD = EVIDENCE_GRADES.indexOf('LOCALLY_VERIFIED');
 

@@ -34,14 +34,17 @@ import { verifyContainerReadback, verifyExecutionReadback } from './readbackVeri
 export const SANDBOX_EVIDENCE_KINDS = Object.freeze(['sandbox_created', 'sandbox_started', 'sandbox_stopped', 'sandbox_destroyed', 'sandbox_policy']);
 const SPEC_KEYS = ['sandboxId', 'role', 'worktreePath', 'policy', 'command'];
 const CONTAINER_ID = /^[0-9a-f]{64}$/;
+// Roles whose run result must be backed by COMPLETE raw execution facts (exit code, OOM flag, timestamps, identity).
+// A missing field is never normalized into "false" or "success": it makes the run UNKNOWN.
+const STRICT_EXECUTION_ROLES = Object.freeze(['verifier', 'agent']);
 
 const evidence = (kind, grade, data) => ({ kind, grade, data, observedAt: new Date().toISOString() });
 function parseJson(text) { try { return JSON.parse(text); } catch { return undefined; } }
 
 export class DockerSandboxRuntime {
-  #docker; #images; #stateRoot; #commandCenterRoot; #homeDir; #user; #stopGraceSec; #lstat; #records = new Map();
+  #docker; #images; #stateRoot; #commandCenterRoot; #homeDir; #user; #stopGraceSec; #launchSettleMs; #launchPollMs; #lstat; #records = new Map();
 
-  constructor({ docker, images = TEST_IMAGES, stateRoot, commandCenterRoot = process.cwd(), homeDir = os.homedir(), user, stopGraceSec = 2, lstat }) {
+  constructor({ docker, images = TEST_IMAGES, stateRoot, commandCenterRoot = process.cwd(), homeDir = os.homedir(), user, stopGraceSec = 2, launchSettleMs, lstat }) {
     if (!docker || typeof docker.run !== 'function' || typeof docker.stream !== 'function') throw new Error('A docker client is required');
     this.#docker = docker;
     this.#images = validateImageAllowlist(images);
@@ -53,6 +56,8 @@ export class DockerSandboxRuntime {
     if (!Number.isInteger(uid) || !Number.isInteger(gid) || uid <= 0 || gid < 0) throw new Error('Sandbox user must be a non-root numeric uid:gid');
     this.#user = `${uid}:${gid}`;
     this.#stopGraceSec = stopGraceSec;
+    this.#launchSettleMs = Number.isInteger(launchSettleMs) && launchSettleMs > 0 ? launchSettleMs : (stopGraceSec + 10) * 1000;
+    this.#launchPollMs = Math.min(100, this.#launchSettleMs);
     this.#lstat = lstat; // test seam for the workspace scan only (server-side constructor option, never task input)
   }
 
@@ -247,10 +252,14 @@ export class DockerSandboxRuntime {
     }
     // …and re-verify the container: the exact tracked ID must still be ours and still match the policy.
     const before = await this.#readTracked(record);
+    // LAUNCH FENCE. stop() and destroy() set `fenced` synchronously when they are called. Everything between the fence check below and the
+    // `docker start` call is synchronous, so a stop that returned (or is in progress) before this point always wins and the
+    // container is never launched afterwards. A stop that arrives later sees `record.launch` and waits for the launch to settle.
     if (before.state === 'UNKNOWN') return { state: 'UNKNOWN', code: 'AMBIGUOUS_DOCKER_STATE', evidence: [] };
     if (before.state === 'ABSENT' || !this.#owns(before.info, record) || !verifyContainerReadback(before.info, { plan, image, user: this.#user }).ok) {
       return { state: 'BLOCKED', code: 'CONTAINER_CHANGED', reason: 'Container no longer matches the verified identity and configuration', evidence: [] };
     }
+    if (record.fenced) return { state: 'BLOCKED', code: 'CANCELLED_BEFORE_LAUNCH', reason: 'The sandbox was stopped before it was launched', evidence: [] };
     record.state = 'STARTED';
     const lines = [];
     const handle = this.#docker.stream(['start', '-a', record.containerId], {
@@ -258,6 +267,9 @@ export class DockerSandboxRuntime {
       limits: { maxStdoutBytes: plan.policy.outputBytes },
       onLine: (line) => { lines.push(line); onLine?.(line); },
     });
+    const launch = { settled: false, done: null };
+    launch.done = Promise.resolve(handle.done).then(() => { launch.settled = true; }, () => { launch.settled = true; });
+    record.launch = launch;
     const done = await handle.done;
     let outcome = null;
     let after = await this.#readTracked(record);
@@ -275,15 +287,20 @@ export class DockerSandboxRuntime {
     const st = after.info.State;
     const policyReadback = verifyContainerReadback(after.info,{plan,image,user:this.#user});
     const executionReadbackCheck = verifyExecutionReadback(after.info,{containerId:record.containerId});
-    if(plan.role==='verifier' && (!policyReadback.ok || !executionReadbackCheck.ok)) {
+    if(STRICT_EXECUTION_ROLES.includes(plan.role) && (!policyReadback.ok || !executionReadbackCheck.ok)) {
       record.state='UNKNOWN';return {state:'UNKNOWN',outcome:'UNKNOWN',code:'EXECUTION_READBACK_INCOMPLETE',lines,evidence:[]};
     }
     record.state = 'EXITED';
     return {
       state: 'EXITED', outcome: outcome ?? 'FINISHED', exitCode: st.ExitCode, oomKilled: st.OOMKilled === true, lines, stderr: done.stderr ?? '', outputLimitKind: done.limit ?? null,
-      ...(plan.role==='verifier' ? { executionReadback: structuredClone(st), executionReadbackCheck, policyReadback, containerReadback: structuredClone(after.info), containerId: record.containerId } : {}),
+      ...(STRICT_EXECUTION_ROLES.includes(plan.role) ? { executionReadback: structuredClone(st), executionReadbackCheck, policyReadback, containerReadback: structuredClone(after.info), containerId: record.containerId } : {}),
       evidence: [evidence('sandbox_started', 'LOCALLY_VERIFIED', { containerId: record.containerId, startedAt: st.StartedAt, finishedAt: st.FinishedAt, exitCode: st.ExitCode, oomKilled: st.OOMKilled === true })],
     };
+  }
+
+  async #settleOrWait(launch, ms) {
+    let timer;
+    try { await Promise.race([launch.done, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]); } finally { clearTimeout(timer); }
   }
 
   /** Normalized, authoritative view of the exact tracked ID; UNKNOWN when ambiguous or not provably ours. */
@@ -295,7 +312,7 @@ export class DockerSandboxRuntime {
     if (r.state === 'UNKNOWN') return { state: 'UNKNOWN', reason: r.detail };
     if (!this.#owns(r.info, record)) return { state: 'UNKNOWN', reason: 'NOT_OWNED' };
     const st = r.info.State ?? {};
-    if(record.plan?.role==='verifier') {
+    if(STRICT_EXECUTION_ROLES.includes(record.plan?.role)) {
       const keys=['ExitCode','Running','Status','OOMKilled','StartedAt','FinishedAt'];
       const present=keys.every(k=>Object.hasOwn(st,k));
       const typed=Number.isInteger(st.ExitCode)&&typeof st.Running==='boolean'&&typeof st.OOMKilled==='boolean'&&typeof st.Status==='string'&&typeof st.StartedAt==='string'&&typeof st.FinishedAt==='string';
@@ -309,6 +326,7 @@ export class DockerSandboxRuntime {
   async stop(sandboxId) {
     const record = this.#records.get(sandboxId);
     if (!record) return { state: 'STOPPED', already: true, evidence: [] };
+    record.fenced = true; // synchronous: from this point this sandbox can never be launched by a start() that is still reading
     if (!record.containerId) return { state: 'UNKNOWN', code: 'NO_TRACKED_CONTAINER_ID', evidence: [] };
     let r = await this.#readTracked(record);
     if (r.state === 'ABSENT') return { state: 'STOPPED', already: true, evidence: [] };
@@ -321,6 +339,23 @@ export class DockerSandboxRuntime {
         await this.#docker.run(['kill', record.containerId], { timeoutMs: 10_000 });
         r = await this.#readTracked(record);
       }
+    }
+    // A `docker start` that was already issued may not have taken effect yet, so "not running" proves nothing until that
+    // launch has finished. Poll the exact container (stopping it if a late launch brings it up) until the launch process
+    // has exited, bounded; if it never settles the stop is UNKNOWN, not STOPPED.
+    if (r.state === 'PRESENT' && this.#owns(r.info, record) && record.launch && !record.launch.settled) {
+      const deadline = Date.now() + this.#launchSettleMs;
+      while (!record.launch.settled && Date.now() < deadline) {
+        await this.#settleOrWait(record.launch, Math.min(this.#launchPollMs, Math.max(1, deadline - Date.now())));
+        const cur = await this.#readTracked(record);
+        if (cur.state === 'PRESENT' && this.#owns(cur.info, record) && cur.info.State?.Running) {
+          await this.#docker.run(['stop', `--time=${this.#stopGraceSec}`, record.containerId], { timeoutMs: (this.#stopGraceSec + 10) * 1000 });
+          const after = await this.#readTracked(record);
+          if (after.state === 'PRESENT' && this.#owns(after.info, record) && after.info.State?.Running) await this.#docker.run(['kill', record.containerId], { timeoutMs: 10_000 });
+        }
+      }
+      if (!record.launch.settled) { record.state = 'UNKNOWN'; return { state: 'UNKNOWN', code: 'STOP_NOT_CONFIRMED', reason: 'The container launch has not finished; a stop cannot be confirmed', evidence: [] }; }
+      r = await this.#readTracked(record);
     }
     if (r.state === 'PRESENT' && this.#owns(r.info, record) && r.info.State?.Running === false) {
       record.state = 'STOPPED';
@@ -338,6 +373,7 @@ export class DockerSandboxRuntime {
     const record = this.#records.get(sandboxId);
     if (!record) return { state: 'DESTROYED', already: true, evidence: [] };
     if (record.state === 'DESTROYED') return { state: 'DESTROYED', already: true, evidence: [] };
+    record.fenced = true;
     if (!record.containerId) return { state: 'UNKNOWN', code: 'CREATE_AMBIGUOUS', reason: 'A container with this name may exist but its identity was never confirmed; it is left untouched', evidence: [] };
     const r = await this.#readTracked(record);
     if (r.state === 'UNKNOWN') return { state: 'UNKNOWN', code: 'AMBIGUOUS_DOCKER_STATE', evidence: [] };
