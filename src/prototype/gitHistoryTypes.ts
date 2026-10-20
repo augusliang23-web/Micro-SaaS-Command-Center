@@ -59,5 +59,10 @@ export type PullDetail = {
   ci: { status: CiStatus; total: number | null; headSha: string | null };
   reviews: { status: ReviewStatus; count: number | null; complete: boolean; headSha?: string | null; reviewers?: ReviewerDecision[]; observed?: ReviewStatus };
 };
-export type HistoryErrorKind = 'not_authenticated' | 'forbidden' | 'missing' | 'rate_limited' | 'not_found' | 'timeout' | 'aborted' | 'failed' | 'network';
-export type LiveIdentity = { source: 'REGISTERED' | 'DEMO'; projectId?: string; repository?: string; displayName: string };
+export type HistoryErrorKind = 'not_authenticated' | 'forbidden' | 'missing' | 'rate_limited' | 'not_found' | 'timeout' | 'aborted' | 'failed' | 'network' | 'authorization_changed';
+/**
+ * V1.2C: why the UI expects this project to be readable. It mirrors the server's registry projection for display and request
+ * decisions only; the server re-derives and enforces authority on every history request.
+ */
+export type HistoryAuthorization = { source: 'user-verified' | 'legacy-pm-dashboard-compat'; generation: number };
+export type LiveIdentity = { source: 'REGISTERED' | 'DEMO'; projectId?: string; repository?: string; displayName: string; authorization?: HistoryAuthorization | null };

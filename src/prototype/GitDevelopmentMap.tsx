@@ -21,7 +21,7 @@ type LoadState = {
 };
 const ERROR_TEXT: Record<HistoryErrorKind, string> = {
   not_authenticated: 'GitHub CLI 尚未授權（gh auth）。資料 Unavailable；不會改用 DEMO 資料。',
-  forbidden: '此 repository 不在唯讀允許清單內。',
+  forbidden: '伺服器未授權讀取此 repository（未連線、已中斷、已封存或身分不符）。',
   missing: 'GitHub 找不到資源（repository 或 branch 可能已刪除）。',
   rate_limited: 'GitHub API 速率限制已達上限，請稍後重新整理。',
   not_found: '伺服器找不到 GitHub CLI（gh）。',
@@ -29,10 +29,13 @@ const ERROR_TEXT: Record<HistoryErrorKind, string> = {
   aborted: '讀取已取消。',
   failed: 'GitHub 讀取失敗，可重試。',
   network: '無法連線到本機 Command Center 伺服器。',
+  authorization_changed: 'GitHub 連線在讀取期間已變更或中斷，這次結果已丟棄；請重新整理。',
 };
+/** V1.2C: every history read names the project, so the server can bind the repository to exactly that project's authority. */
+const historyQuery = (repo: string, projectId: string | undefined) => `repo=${encodeURIComponent(repo)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`;
 
 /** Fetches one repository's history; stale or cancelled responses never land. */
-export function useDevelopmentHistory(repo: string | null, key: string) {
+export function useDevelopmentHistory(repo: string | null, key: string, projectId?: string) {
   const [state, setState] = useState<LoadState>({ key, status: 'loading', refreshing: true });
   const seq = useRef(0);
   const controller = useRef<AbortController | null>(null);
@@ -44,7 +47,7 @@ export function useDevelopmentHistory(repo: string | null, key: string) {
     const mine = ++seq.current;
     setState((s) => (s.key === key ? { ...s, refreshing: true } : { key, status: 'loading', refreshing: true }));
     const fail = (error: LoadState['error']) => setState((s) => ({ key, status: 'error', data: s.key === key ? s.data : undefined, error, refreshing: false }));
-    fetch(`/api/github/development-history?repo=${encodeURIComponent(repo)}${refresh ? '&refresh=1' : ''}`, { signal: c.signal })
+    fetch(`/api/github/development-history?${historyQuery(repo, projectId)}${refresh ? '&refresh=1' : ''}`, { signal: c.signal })
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         if (mine !== seq.current || c.signal.aborted) return;
@@ -53,7 +56,7 @@ export function useDevelopmentHistory(repo: string | null, key: string) {
         setState({ key, status: 'ready', data: body as DevelopmentHistory, refreshing: false });
       })
       .catch(() => { if (mine === seq.current && !c.signal.aborted) fail({ kind: 'network', message: 'Network error' }); });
-  }, [repo, key]);
+  }, [repo, key, projectId]);
   useEffect(() => { load(false); return () => controller.current?.abort(); }, [load]);
   return { state: state.key === key ? state : ({ key, status: 'loading', refreshing: true } as LoadState), refresh: () => load(true) };
 }
@@ -72,7 +75,7 @@ function useDetailCache(owner: string, version: string): DetailCache {
   if (ref.current.owner !== owner || ref.current.version !== version) ref.current = { owner, version, map: new Map() };
   return ref.current;
 }
-function usePullDetail(repo: string | null, scopeKey: string, number: number | null, snapshotVersion: string, cache: DetailCache) {
+function usePullDetail(repo: string | null, projectId: string | undefined, scopeKey: string, number: number | null, snapshotVersion: string, cache: DetailCache) {
   const key = JSON.stringify([scopeKey, number, snapshotVersion]);
   const [state, setState] = useState<{ key: string; detail?: PullDetail; error?: string }>({ key });
   const cached = number ? cache.map.get(number) : undefined;
@@ -80,7 +83,7 @@ function usePullDetail(repo: string | null, scopeKey: string, number: number | n
     if (!repo || !number || cache.map.has(number)) return; // same PR + same snapshot: reuse, no request
     const c = new AbortController();
     setState({ key });
-    fetch(`/api/github/development-history/pull?repo=${encodeURIComponent(repo)}&number=${number}`, { signal: c.signal })
+    fetch(`/api/github/development-history/pull?${historyQuery(repo, projectId)}&number=${number}`, { signal: c.signal })
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         if (c.signal.aborted) return;
@@ -90,7 +93,7 @@ function usePullDetail(repo: string | null, scopeKey: string, number: number | n
       })
       .catch(() => { if (!c.signal.aborted) setState({ key, error: 'Network error' }); });
     return () => c.abort();
-  }, [repo, key, number, cache]);
+  }, [repo, projectId, key, number, cache]);
   if (cached) return { key, detail: cached } as { key: string; detail?: PullDetail; error?: string };
   return state.key === key ? state : { key };
 }
@@ -155,13 +158,13 @@ function NotConnected({ identity }: { identity: LiveIdentity }) {
     <p className="p-eyebrow">DEVELOPMENT MAP</p>
     <h1>{identity.displayName}</h1>
     <p><strong>{identity.source === 'DEMO' ? 'DEMO PROJECT' : 'REGISTERED PROJECT'}</strong> · Repository：{identity.repository ?? 'Not available'}</p>
-    <p className="g-banner is-warn"><AlertTriangle size={15} />Not available：此專案尚未連線到唯讀 GitHub 歷史來源。不顯示其他專案的資料，也不以名稱推測 repository。</p>
+    <p className="g-banner is-warn"><AlertTriangle size={15} />Not available：此專案尚未連線到唯讀 GitHub 歷史來源（可在「管理專案」明確連線）。不顯示其他專案的資料，也不以名稱推測 repository。</p>
   </section>;
 }
 
 function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string }) {
   const key = identityKey(identity);
-  const { state, refresh } = useDevelopmentHistory(repo, key);
+  const { state, refresh } = useDevelopmentHistory(repo, key, identity.projectId);
   const data = state.data;
   const [view, setView] = useState<View>('timeline');
   const [focusPR, setFocusPR] = useState<number | null>(null);
@@ -231,7 +234,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
   return <>
     <header className="g-header">
       <div>
-        <p className="p-eyebrow">DEVELOPMENT MAP · PM DASHBOARD</p>
+        <p className="p-eyebrow">DEVELOPMENT MAP · {repo}</p>
         <h1>{identity.displayName}</h1>
         <p className="g-badges"><span className="g-badge">{identity.source}</span><span className={`g-badge ${sourceBadge.read ? 'is-live' : ''}`} data-testid="g-source-badge">{sourceBadge.text}</span><span className="g-badge">Project ID：{identity.projectId}</span></p>
       </div>
@@ -288,7 +291,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
           {view === 'list' && <PullList data={data} stateFilter={stateFilter} query={query} range={range} selection={selection} select={openDetail} />}
         </section>
       </div>
-      {selection && <DetailOverlay data={data} repo={repo} scopeKey={key} selection={selection} select={openDetail} close={closeDetail} refresh={refresh} cache={detailCache} />}
+      {selection && <DetailOverlay data={data} repo={repo} projectId={identity.projectId} scopeKey={key} selection={selection} select={openDetail} close={closeDetail} refresh={refresh} cache={detailCache} />}
       {view !== 'hybrid' && <BottomCards data={data} select={openDetail} />}
     </>}
   </>;
@@ -525,7 +528,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input, select, textarea, [ta
  * Floating detail dialog. It is rendered outside the graph grid, so opening or closing it never changes the
  * chart width. Desktop: non-modal panel on the right (clicking another node updates it). Mobile: modal bottom sheet.
  */
-function DetailOverlay({ data, repo, scopeKey, selection, select, close, refresh, cache }: { data: DevelopmentHistory; repo: string; scopeKey: string; selection: NonNullable<Selection>; select: (s: Selection, origin?: Element | null) => void; close: () => void; refresh: () => void; cache: DetailCache }) {
+function DetailOverlay({ data, repo, projectId, scopeKey, selection, select, close, refresh, cache }: { data: DevelopmentHistory; repo: string; projectId?: string; scopeKey: string; selection: NonNullable<Selection>; select: (s: Selection, origin?: Element | null) => void; close: () => void; refresh: () => void; cache: DetailCache }) {
   const ref = useRef<HTMLDivElement>(null);
   const sheet = useIsSheet();
   useEffect(() => { ref.current?.focus({ preventScroll: true }); }, []); // focus moves into the dialog when it opens
@@ -568,15 +571,15 @@ function DetailOverlay({ data, repo, scopeKey, selection, select, close, refresh
   return <>
     {sheet && <div className="g-backdrop" data-testid="g-backdrop" onClick={close} />}
     <div ref={ref} className={`g-floating ${sheet ? 'is-sheet' : ''}`} role="dialog" aria-modal={sheet} aria-label={selection.kind === 'pr' ? 'PR 詳細資訊' : 'Commit 詳細資訊'} tabIndex={-1} onKeyDown={trap}>
-      <DetailPanel data={data} repo={repo} scopeKey={scopeKey} selection={selection} select={select} close={close} refresh={refresh} cache={cache} />
+      <DetailPanel data={data} repo={repo} projectId={projectId} scopeKey={scopeKey} selection={selection} select={select} close={close} refresh={refresh} cache={cache} />
     </div>
   </>;
 }
 
-function DetailPanel({ data, repo, scopeKey, selection, select, close, refresh, cache }: { data: DevelopmentHistory; repo: string; scopeKey: string; selection: NonNullable<Selection>; select: (s: Selection, origin?: Element | null) => void; close: () => void; refresh: () => void; cache: DetailCache }) {
+function DetailPanel({ data, repo, projectId, scopeKey, selection, select, close, refresh, cache }: { data: DevelopmentHistory; repo: string; projectId?: string; scopeKey: string; selection: NonNullable<Selection>; select: (s: Selection, origin?: Element | null) => void; close: () => void; refresh: () => void; cache: DetailCache }) {
   const index = useMemo(() => indexCommits(data.commits), [data]);
   const pr = selection.kind === 'pr' ? data.pulls.find((p) => p.number === selection.number) ?? null : null;
-  const detail = usePullDetail(pr ? repo : null, scopeKey, pr?.number ?? null, data.fetchedAt, cache);
+  const detail = usePullDetail(pr ? repo : null, projectId, scopeKey, pr?.number ?? null, data.fetchedAt, cache);
   const branchNames = new Set(data.branches.map((b) => b.name));
   const branchHead = (name: string | null) => data.branches.find((b) => b.name === name)?.headSha ?? null;
   if (selection.kind === 'pr' && !pr) {

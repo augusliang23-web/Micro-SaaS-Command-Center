@@ -1,8 +1,13 @@
 import { execFile } from 'node:child_process';
 import { GithubCliError } from './githubRepos.mjs';
+import { isHistoryAuthorizationFor } from './githubConnectionRegistry.mjs';
 
 /**
- * Read-only development-history snapshot for ONE allowlisted repository.
+ * Read-only development-history snapshot for ONE authorized repository.
+ *
+ * V1.2C: there is no hard-coded repository list. Every history or PR-detail read REQUIRES an `authorization` object issued by
+ * server/githubConnectionRegistry.mjs for that exact repository (derived from validated saved state on each request); without
+ * it the read is refused before any `gh` call, so a direct caller cannot bypass the route's gate.
  *
  * Every GitHub call is a `gh api <GET path>` through the user's existing
  * authenticated GitHub CLI. Nothing here writes to GitHub, reads tokens, or
@@ -10,8 +15,6 @@ import { GithubCliError } from './githubRepos.mjs';
  * (source, repository, fetchedAt) and completeness flags so the UI can label
  * partial data instead of presenting it as the whole history.
  */
-
-export const DEVELOPMENT_HISTORY_REPOS = Object.freeze(['augusliang23-web/pm-dashboard']);
 
 export const HISTORY_LIMITS = Object.freeze({
   perPage: 100,
@@ -25,8 +28,66 @@ export const HISTORY_LIMITS = Object.freeze({
   cacheTtlMs: 5 * 60_000,
 });
 
-export function isAllowlistedHistoryRepo(repo) {
-  return typeof repo === 'string' && DEVELOPMENT_HISTORY_REPOS.includes(repo);
+/**
+ * V1.2 remediation F3: every GitHub answer that names a repository must be the AUTHORIZED repository before anything derived
+ * from it is accepted. A user-verified connection is pinned to GitHub's numeric id (recorded at connect time) and its exact
+ * full_name; a rename, transfer, id change or missing identity fails closed. The unpinned legacy PM Dashboard exception is
+ * matched by name only, case-insensitively, and is NOT id-pinned (Gate A R1):
+ *  - if the answer HAS a `full_name` key, that value decides: it must be a string naming this repository. null, a number or any
+ *    other non-string is refused, never treated as "missing";
+ *  - only when `full_name` is genuinely absent may `html_url` be used, and only in GitHub's exact canonical form
+ *    (canonicalGithubRepositoryFromUrl); anything else is refused.
+ * Never derived from the requested string: an answer without identity is refused.
+ */
+export function assertRepositoryIdentity(meta, repo, authorization, what) {
+  const refuse = (why) => { throw new GithubCliError(`GitHub ${what} does not match the authorized repository (${why}); nothing was used.`, 'forbidden'); };
+  if (!meta || typeof meta !== 'object') refuse('missing repository identity');
+  const pinned = authorization?.verifiedRepositoryId ?? null;
+  if (pinned !== null) {
+    if (!Number.isInteger(meta.id) || meta.id !== pinned) refuse('repository id differs from the verified connection');
+    if (meta.full_name !== repo) refuse('repository name differs from the verified connection');
+    return;
+  }
+  let name;
+  if (Object.prototype.hasOwnProperty.call(meta, 'full_name')) {
+    if (typeof meta.full_name !== 'string') refuse('full_name is present but not a string');
+    name = meta.full_name;
+  } else {
+    name = canonicalGithubRepositoryFromUrl(meta.html_url);
+    if (name === null) refuse(Object.prototype.hasOwnProperty.call(meta, 'html_url') ? 'html_url is not a canonical GitHub repository URL' : 'missing repository identity');
+  }
+  if (name.toLowerCase() !== repo.toLowerCase()) refuse('repository name differs');
+}
+
+const CANONICAL_URL_PREFIX = 'https://github.com/';
+const URL_OWNER = /^(?!-)(?!.*--)[A-Za-z0-9-]{1,39}(?<!-)$/;
+const URL_REPO = /^[A-Za-z0-9._-]{1,100}$/;
+/**
+ * Gate A R1: the ONLY accepted html_url form is exactly `https://github.com/{owner}/{repo}`: lower-case scheme and host as
+ * written, no credentials, no port (not even :443), no query, no fragment, no percent-encoding, no trailing slash or extra path
+ * segment, owner/repo within GitHub's character rules. The literal check is repeated structurally with the URL parser so a
+ * spelling the parser would normalise cannot slip through. Returns `owner/repo` or null.
+ */
+export function canonicalGithubRepositoryFromUrl(value) {
+  if (typeof value !== 'string' || !value.startsWith(CANONICAL_URL_PREFIX)) return null;
+  const parts = value.slice(CANONICAL_URL_PREFIX.length).split('/');
+  if (parts.length !== 2 || !URL_OWNER.test(parts[0]) || !URL_REPO.test(parts[1]) || parts[1] === '.' || parts[1] === '..' || /\.git$/i.test(parts[1])) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  const structural = url.protocol === 'https:' && url.hostname === 'github.com' && url.port === '' && url.username === '' && url.password === ''
+    && url.search === '' && url.hash === '' && url.pathname === `/${parts[0]}/${parts[1]}` && url.href === value;
+  return structural ? `${parts[0]}/${parts[1]}` : null;
+}
+
+/** Refuses any read that does not carry a registry-issued authorization for exactly this repository. */
+export function assertHistoryAuthorized(repo, authorization) {
+  if (!isHistoryAuthorizationFor(authorization, repo)) {
+    throw new GithubCliError('Repository is not authorized for development history.', 'forbidden');
+  }
 }
 
 /** Parses an RFC 5988 Link header into { next, last, ... } URLs. */
@@ -217,15 +278,14 @@ export function selectFocusRefs({ defaultBranch, branches, pulls, limit = HISTOR
   return { refs: wanted.slice(0, limit), truncated: wanted.length > limit, requested: wanted.length };
 }
 
-export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, signal, now = () => new Date() } = {}) {
-  if (!isAllowlistedHistoryRepo(repo)) {
-    throw new GithubCliError(`Repository is not allowlisted for development history: ${repo}`, 'forbidden');
-  }
+export async function fetchDevelopmentHistory(repo, { authorization, execFileFn = execFile, signal, now = () => new Date() } = {}) {
+  assertHistoryAuthorized(repo, authorization);
   const opts = { execFileFn, signal };
   const startedAt = now().toISOString();
   const warnings = [];
 
   const repoInfo = (await ghApiPage(`repos/${repo}`, opts)).data;
+  assertRepositoryIdentity(repoInfo, repo, authorization, 'repository metadata');
   const defaultBranch = repoInfo?.default_branch || 'main';
 
   // Branches and PRs are read first; every later read is pinned to the exact
@@ -235,8 +295,10 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
     fetchPaginated(`repos/${repo}/pulls?state=all&sort=created&direction=desc`, { ...opts, maxPages: HISTORY_LIMITS.maxPullPages }),
   ]);
   const branches = branchPage.items.map(normalizeBranch).sort((a, b) => a.name.localeCompare(b.name));
+  // F3: every PR must target this repository (its base repo identity); a fork's head repository stays separate (headRepo).
+  for (const item of pullPage.items) assertRepositoryIdentity(item?.base?.repo, repo, authorization, `PR #${item?.number ?? '?'} base repository`);
   const pulls = pullPage.items
-    .map((item) => ({ ...normalizePull(item), baseRepo: item.base?.repo?.full_name ?? repo }))
+    .map((item) => ({ ...normalizePull(item), baseRepo: item.base.repo.full_name ?? repo }))
     .sort((a, b) => a.number - b.number);
   const defaultHeadSha = branches.find((b) => b.name === defaultBranch)?.headSha ?? null;
   if (!defaultHeadSha) warnings.push(`${defaultBranch} head was not observed in the branch list; history is read by name and cannot be pinned.`);
@@ -403,13 +465,12 @@ export async function assessConsistency({ repo, opts, branches, pulls, defaultBr
  * check runs for its head SHA and submitted reviews (with each review's commit_id). All GET; never comments,
  * approves, merges or re-runs checks.
  */
-export async function fetchPullDetail(repo, number, { execFileFn = execFile, signal, now = () => new Date(), aggregateCi } = {}) {
-  if (!isAllowlistedHistoryRepo(repo)) {
-    throw new GithubCliError(`Repository is not allowlisted for development history: ${repo}`, 'forbidden');
-  }
+export async function fetchPullDetail(repo, number, { authorization, execFileFn = execFile, signal, now = () => new Date(), aggregateCi } = {}) {
+  assertHistoryAuthorized(repo, authorization);
   if (!Number.isInteger(number) || number < 1) throw new GithubCliError('PR number must be a positive integer.', 'failed');
   const opts = { execFileFn, signal };
   const pr = (await ghApiPage(`repos/${repo}/pulls/${number}`, opts)).data;
+  assertRepositoryIdentity(pr?.base?.repo, repo, authorization, `PR #${number} base repository`); // F3: before any detail is used
   const headSha = pr?.head?.sha;
   const [checks, reviews] = await Promise.all([
     headSha

@@ -1,21 +1,114 @@
 // Pure presentation model for the read-only GitHub development history.
 // Nothing here invents Git facts: verified edges come only from commit
 // parents; PR base/head refs stay labelled as reported PR metadata.
-import type { DevelopmentHistory, HistoryCommit, HistoryPull, LiveIdentity, PullDetail, ReviewerDecision } from './gitHistoryTypes';
+import type { DevelopmentHistory, HistoryAuthorization, HistoryCommit, HistoryPull, LiveIdentity, PullDetail, ReviewerDecision } from './gitHistoryTypes';
 
 import { activityWindow } from './activityTimelineModel';
 
-export const LIVE_HISTORY_REPOS = ['augusliang23-web/pm-dashboard'] as const;
+/** V1.2C: the only repository the strict legacy rule can grant (no hard-coded allowlist otherwise). */
+export const LEGACY_COMPAT_REPOSITORY = 'augusliang23-web/pm-dashboard';
+const CANONICAL_REPO = /^(?!-)(?!.*--)[A-Za-z0-9-]{1,39}(?<!-)\/[A-Za-z0-9._-]{1,100}$/;
 const SGT_OFFSET_MS = 8 * 3600_000;
 const DAY_MS = 86_400_000;
 
-/** Exact allowlist match; a repository-like display name never qualifies. */
-export function liveRepositoryFor(identity: LiveIdentity | null | undefined): string | null {
-  if (!identity || identity.source !== 'REGISTERED' || !identity.projectId?.trim()) return null; // a blank id is no stable identity
-  const repo = (identity.repository ?? '').trim().replace(/^(?:https?:\/\/)?(?:github\.com\/)/, '').replace(/\/$/, '');
-  return (LIVE_HISTORY_REPOS as readonly string[]).includes(repo) ? repo : null;
+type SavedRecord = Record<string, unknown>;
+const recordOf = (v: unknown): v is SavedRecord => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = (v: unknown) => (typeof v === 'string' ? v : '');
+
+/**
+ * Mirror of server/githubConnectionRegistry.mjs, used only to decide what the UI offers and requests. Returns one entry per
+ * project (same order), null when the project must not be read. The server independently refuses anything not authorized.
+ * Rules: trusted provenance (no dataMode), active lifecycle, id non-blank and unique across current AND removed projects, and
+ * EITHER a saved `connected` record for exactly its repository OR the single legacy PM Dashboard record (no dataMode, no
+ * management, exact repository). A repository claimed by two projects is denied for both.
+ */
+/** F2 conflict key, identical to server/githubConnectionRegistry.mjs#repositoryClaimKey: one repository in any spelling. */
+export function repositoryClaimKey(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/^git@github\.com:/, '').replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//, '').replace(/\/+$/, '').replace(/\.git$/, '');
 }
-export const identityKey = (identity: LiveIdentity) => JSON.stringify([identity.source, identity.projectId ?? null, identity.repository ?? null]);
+const isTimestamp = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
+// ---- Gate A R2: an exact mirror of the backend saved-state schema rules connectionOf and lifecycleOf (the backend is authority). ----
+const CONNECTION_KEYS = new Set(['status', 'repository', 'generation', 'source', 'connectedAt', 'verifiedRepositoryId', 'revokedAt', 'revokedReason']);
+const SCHEMA_OWNER = /^(?!-)(?!.*--)[A-Za-z0-9-]{1,39}(?<!-)$/;
+const SCHEMA_REPO = /^[A-Za-z0-9._-]{1,100}$/;
+/** schema canonicalRepository: exactly owner/repo, no surrounding space, not "." or "..", no ".git" suffix. */
+function isSchemaRepository(value: unknown): value is string {
+  if (typeof value !== 'string' || value !== value.trim()) return false;
+  const parts = value.split('/');
+  return parts.length === 2 && SCHEMA_OWNER.test(parts[0]) && SCHEMA_REPO.test(parts[1]) && parts[1] !== '.' && parts[1] !== '..' && !/\.git$/i.test(parts[1]);
+}
+/** schema connectionOf: a connection record is valid only with exactly the known keys and consistent values. */
+function isValidConnectionRecord(c: unknown): boolean {
+  if (!recordOf(c) || Object.keys(c).some((k) => !CONNECTION_KEYS.has(k))) return false;
+  if (c.status !== 'connected' && c.status !== 'disconnected') return false;
+  if (!isSchemaRepository(c.repository) || !Number.isInteger(c.generation) || (c.generation as number) < 1) return false;
+  if (c.source !== 'user-verified' && c.source !== 'legacy-pm-dashboard-compat') return false;
+  if (!(c.connectedAt === null || isTimestamp(c.connectedAt))) return false;
+  if (!(c.verifiedRepositoryId === null || (Number.isInteger(c.verifiedRepositoryId) && (c.verifiedRepositoryId as number) > 0))) return false;
+  if (c.status === 'connected') return c.revokedAt === null && c.revokedReason === null && isTimestamp(c.connectedAt);
+  return isTimestamp(c.revokedAt) && (c.revokedReason === 'disconnected' || c.revokedReason === 'archived' || c.revokedReason === 'removed');
+}
+/** schema lifecycleOf + connectionOf over one record: absent management is valid; anything the backend rejects is not. */
+function isValidManagement(m: unknown): boolean {
+  if (m === undefined) return true;
+  if (!recordOf(m)) return false;
+  if (!(m.lifecycle === undefined || m.lifecycle === null || m.lifecycle === 'active' || m.lifecycle === 'archived')) return false;
+  return m.githubConnection === undefined || isValidConnectionRecord(m.githubConnection);
+}
+
+/** A complete, currently-connected record; anything missing or malformed is NOT connected (V1.2 remediation F6). */
+function connectedRecord(c: SavedRecord, repository: string): HistoryAuthorization | null {
+  if (!isValidConnectionRecord(c)) return null; // Gate A R2: unknown extra keys and every other backend rejection
+  if (c.status !== 'connected' || c.repository !== repository || !CANONICAL_REPO.test(repository)) return null;
+  if (!Number.isInteger(c.generation) || (c.generation as number) < 1 || !isTimestamp(c.connectedAt) || c.revokedAt !== null || c.revokedReason !== null) return null;
+  if (c.source === 'user-verified') return Number.isInteger(c.verifiedRepositoryId) && (c.verifiedRepositoryId as number) > 0 ? { source: 'user-verified', generation: c.generation as number } : null;
+  if (c.source === 'legacy-pm-dashboard-compat') return repository === LEGACY_COMPAT_REPOSITORY ? { source: 'legacy-pm-dashboard-compat', generation: c.generation as number } : null;
+  return null;
+}
+
+export function githubAuthorizationsFor(projects: SavedRecord[], removed: SavedRecord[] = []): (HistoryAuthorization | null)[] {
+  // Gate A R2: the backend treats ONE malformed management/connection record anywhere (current or removed) as an invalid saved
+  // state and authorizes nothing at all. The mirror does the same, so it can never show Connected where the server denies.
+  if (![...projects, ...removed].every((p) => isValidManagement(p.management))) return projects.map(() => null);
+  const counts = new Map<string, number>();
+  for (const p of [...projects, ...removed]) { const id = str(p.id); if (id.trim()) counts.set(id, (counts.get(id) ?? 0) + 1); }
+  // F2: repository claims over ALL current and removed records (any lifecycle, connection, provenance) BEFORE any projection.
+  const claims = new Map<string, number>();
+  for (const p of [...projects, ...removed]) {
+    const m = recordOf(p.management) ? p.management : undefined;
+    const c = m && recordOf(m.githubConnection) ? m.githubConnection : undefined;
+    for (const key of new Set([repositoryClaimKey(p.repository), repositoryClaimKey(c?.repository)].filter(Boolean))) claims.set(key, (claims.get(key) ?? 0) + 1);
+  }
+  const uniqueClaim = (repository: unknown) => claims.get(repositoryClaimKey(repository)) === 1;
+  const legacy = projects.filter((p) => p.dataMode === undefined && p.management === undefined && p.repository === LEGACY_COMPAT_REPOSITORY);
+  const legacyId = legacy.length === 1 && str(legacy[0].id).trim() && counts.get(str(legacy[0].id)) === 1 && uniqueClaim(LEGACY_COMPAT_REPOSITORY) ? str(legacy[0].id) : null;
+  return projects.map((p): HistoryAuthorization | null => {
+    const id = str(p.id);
+    if (p.dataMode !== undefined || !id.trim() || id !== id.trim() || counts.get(id) !== 1 || !uniqueClaim(p.repository)) return null;
+    const m = recordOf(p.management) ? p.management : undefined;
+    if (m && m.lifecycle !== undefined && m.lifecycle !== null && m.lifecycle !== 'active') return null;
+    if (m && m.githubConnection !== undefined) return recordOf(m.githubConnection) ? connectedRecord(m.githubConnection, str(p.repository)) : null;
+    return id === legacyId ? { source: 'legacy-pm-dashboard-compat', generation: 0 } : null;
+  });
+}
+
+/**
+ * The repository to request for a REGISTERED identity with a stable id and an exact canonical `owner/repo` (no URL, prefix or
+ * whitespace normalisation: the server matches the exact string, so the UI does too).
+ * - `authorization` object: the caller projected saved state (the shell always does) and this project is authorized.
+ * - `authorization: null`: projected and NOT authorized (disconnected, archived, duplicate, ...).
+ * - `authorization` absent: the caller supplied no projection; only the strict legacy repository is treated as readable.
+ * Whatever the UI decides, the server re-derives and enforces authority on every request.
+ */
+export function liveRepositoryFor(identity: LiveIdentity | null | undefined): string | null {
+  if (!identity || identity.source !== 'REGISTERED' || !identity.projectId?.trim() || identity.authorization === null) return null;
+  const repo = identity.repository ?? '';
+  if (!CANONICAL_REPO.test(repo)) return null;
+  return identity.authorization || repo === LEGACY_COMPAT_REPOSITORY ? repo : null;
+}
+/** Includes the authorization, so a reconnect (new generation) remounts the viewer and drops every cached result. */
+export const identityKey = (identity: LiveIdentity) => JSON.stringify([identity.source, identity.projectId ?? null, identity.repository ?? null, identity.authorization?.source ?? null, identity.authorization?.generation ?? null]);
 
 const pad = (n: number) => String(n).padStart(2, '0');
 function sgtParts(iso: string) {
