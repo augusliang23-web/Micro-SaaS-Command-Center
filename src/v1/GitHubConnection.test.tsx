@@ -102,6 +102,35 @@ describe('F2 / F6 client projection matches the server rules',()=>{
  });
 });
 
+// ---------------- Gate A R2: the client mirror is never broader than the backend schema ----------------
+describe('Gate A R2 client projection rejects everything the backend rejects',()=>{
+ const live=(over:Record<string,unknown>={})=>base('live',{repository:'synthetic-owner/app',management:conn('synthetic-owner/app',over)});
+ test.each([
+  ['an unknown extra field',{note:'x'}],['an extra token-like field',{accessToken:'not-used'}],['a prototype-looking key',{constructor:'x'}],
+  ['a .git repository spelling',{repository:'synthetic-owner/app.git'}],['an unknown status',{status:'pending'}],
+ ])('a connected record with %s is Not connected and triggers no history request',async(_l,over)=>{
+  expect(githubAuthorizationsFor([live(over)])).toEqual([null]);
+  const calls=mockState([live(over)]);render(<ReadOnlyCommandCenter/>);await flush();
+  expect(card('SYN live')).not.toHaveTextContent(/Connected|GitHub 可查詢/);expect(within(card('SYN live')).queryByRole('button',{name:'開啟開發地圖'})).toBeNull();
+  nav('開發地圖');await flush();expect(history(calls)).toHaveLength(0);
+ });
+ test('ONE malformed record anywhere (another project, a removed record, a bad lifecycle) denies everything, as the server does',async()=>{
+  const pm=base('reg-pm',{repository:PM});
+  const brokenOther=base('o',{repository:'synthetic-owner/o',management:conn('synthetic-owner/o',{extra:1})});
+  expect(githubAuthorizationsFor([live(),pm,brokenOther])).toEqual([null,null,null]);
+  expect(githubAuthorizationsFor([live(),pm],[base('r',{repository:'synthetic-owner/r',management:{lifecycle:'active',githubConnection:{status:'disconnected'}}})])).toEqual([null,null]);
+  expect(githubAuthorizationsFor([live(),pm,base('x',{repository:'synthetic-owner/x',management:{lifecycle:'deleted'}})])).toEqual([null,null,null]);
+  expect(githubAuthorizationsFor([live(),pm,base('x',{repository:'synthetic-owner/x',management:'oops'})])).toEqual([null,null,null]);
+  const calls=mockState([pm,brokenOther]);render(<ReadOnlyCommandCenter/>);await flush();
+  expect(within(card('SYN reg-pm')).queryByRole('button',{name:'開啟開發地圖'})).toBeNull();nav('開發地圖');await flush();expect(history(calls)).toHaveLength(0);
+ });
+ test('positive controls: valid connected, legacy, a valid disconnected neighbour and a null lifecycle keep working',()=>{
+  const disconnected=base('d',{repository:'synthetic-owner/d',management:revoked('synthetic-owner/d','disconnected')});
+  expect(githubAuthorizationsFor([live(),base('reg-pm',{repository:PM}),disconnected])).toEqual([{source:'user-verified',generation:1},{source:'legacy-pm-dashboard-compat',generation:0},null]);
+  expect(githubAuthorizationsFor([base('n',{repository:'synthetic-owner/n',management:{...conn('synthetic-owner/n'),lifecycle:null}})])).toEqual([{source:'user-verified',generation:1}]);
+ });
+});
+
 // ------------------------------------------------------------------------------------------------ 管理專案 connection flows
 type Auth={projectId:string;repository:string;source:string;generation:number};
 function manageBackend(initial:Record<string,unknown>[],{fail}:{fail?:(command:Record<string,unknown>)=>{status:number;body:unknown}|null}={}){

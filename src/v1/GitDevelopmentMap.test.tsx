@@ -1472,3 +1472,12 @@ test('B1.4 separation: an OPEN PR is not described as actively developed, and dr
  const panel=screen.getByRole('dialog',{name:'PR 詳細資訊'});
  expect(panel).toHaveTextContent('OPEN ≠ 正在開發');expect(panel).not.toHaveTextContent(/進行中|actively|正在開發中/i);
 });
+
+// ---------------- Gate A R2: a projected-and-denied identity never starts a history request in the map itself ----------------
+test('Gate A R2: an identity projected as NOT authorized (authorization null) shows Not available and requests nothing',async()=>{
+ const spy=vi.spyOn(globalThis,'fetch').mockImplementation(()=>new Promise<Response>(()=>{}));
+ render(<GitDevelopmentMap identity={{...LIVE_PM_DASHBOARD,authorization:null}} rail={[]} selectIdentity={()=>{}}/>);
+ await act(async()=>{await Promise.resolve();});
+ expect(screen.getByLabelText('開發地圖不可用')).toBeVisible();
+ expect(spy).not.toHaveBeenCalled();
+});

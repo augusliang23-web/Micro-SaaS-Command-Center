@@ -28,8 +28,38 @@ export function repositoryClaimKey(value: unknown): string {
   return value.trim().toLowerCase().replace(/^git@github\.com:/, '').replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//, '').replace(/\/+$/, '').replace(/\.git$/, '');
 }
 const isTimestamp = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
+// ---- Gate A R2: an exact mirror of the backend saved-state schema rules connectionOf and lifecycleOf (the backend is authority). ----
+const CONNECTION_KEYS = new Set(['status', 'repository', 'generation', 'source', 'connectedAt', 'verifiedRepositoryId', 'revokedAt', 'revokedReason']);
+const SCHEMA_OWNER = /^(?!-)(?!.*--)[A-Za-z0-9-]{1,39}(?<!-)$/;
+const SCHEMA_REPO = /^[A-Za-z0-9._-]{1,100}$/;
+/** schema canonicalRepository: exactly owner/repo, no surrounding space, not "." or "..", no ".git" suffix. */
+function isSchemaRepository(value: unknown): value is string {
+  if (typeof value !== 'string' || value !== value.trim()) return false;
+  const parts = value.split('/');
+  return parts.length === 2 && SCHEMA_OWNER.test(parts[0]) && SCHEMA_REPO.test(parts[1]) && parts[1] !== '.' && parts[1] !== '..' && !/\.git$/i.test(parts[1]);
+}
+/** schema connectionOf: a connection record is valid only with exactly the known keys and consistent values. */
+function isValidConnectionRecord(c: unknown): boolean {
+  if (!recordOf(c) || Object.keys(c).some((k) => !CONNECTION_KEYS.has(k))) return false;
+  if (c.status !== 'connected' && c.status !== 'disconnected') return false;
+  if (!isSchemaRepository(c.repository) || !Number.isInteger(c.generation) || (c.generation as number) < 1) return false;
+  if (c.source !== 'user-verified' && c.source !== 'legacy-pm-dashboard-compat') return false;
+  if (!(c.connectedAt === null || isTimestamp(c.connectedAt))) return false;
+  if (!(c.verifiedRepositoryId === null || (Number.isInteger(c.verifiedRepositoryId) && (c.verifiedRepositoryId as number) > 0))) return false;
+  if (c.status === 'connected') return c.revokedAt === null && c.revokedReason === null && isTimestamp(c.connectedAt);
+  return isTimestamp(c.revokedAt) && (c.revokedReason === 'disconnected' || c.revokedReason === 'archived' || c.revokedReason === 'removed');
+}
+/** schema lifecycleOf + connectionOf over one record: absent management is valid; anything the backend rejects is not. */
+function isValidManagement(m: unknown): boolean {
+  if (m === undefined) return true;
+  if (!recordOf(m)) return false;
+  if (!(m.lifecycle === undefined || m.lifecycle === null || m.lifecycle === 'active' || m.lifecycle === 'archived')) return false;
+  return m.githubConnection === undefined || isValidConnectionRecord(m.githubConnection);
+}
+
 /** A complete, currently-connected record; anything missing or malformed is NOT connected (V1.2 remediation F6). */
 function connectedRecord(c: SavedRecord, repository: string): HistoryAuthorization | null {
+  if (!isValidConnectionRecord(c)) return null; // Gate A R2: unknown extra keys and every other backend rejection
   if (c.status !== 'connected' || c.repository !== repository || !CANONICAL_REPO.test(repository)) return null;
   if (!Number.isInteger(c.generation) || (c.generation as number) < 1 || !isTimestamp(c.connectedAt) || c.revokedAt !== null || c.revokedReason !== null) return null;
   if (c.source === 'user-verified') return Number.isInteger(c.verifiedRepositoryId) && (c.verifiedRepositoryId as number) > 0 ? { source: 'user-verified', generation: c.generation as number } : null;
@@ -38,6 +68,9 @@ function connectedRecord(c: SavedRecord, repository: string): HistoryAuthorizati
 }
 
 export function githubAuthorizationsFor(projects: SavedRecord[], removed: SavedRecord[] = []): (HistoryAuthorization | null)[] {
+  // Gate A R2: the backend treats ONE malformed management/connection record anywhere (current or removed) as an invalid saved
+  // state and authorizes nothing at all. The mirror does the same, so it can never show Connected where the server denies.
+  if (![...projects, ...removed].every((p) => isValidManagement(p.management))) return projects.map(() => null);
   const counts = new Map<string, number>();
   for (const p of [...projects, ...removed]) { const id = str(p.id); if (id.trim()) counts.set(id, (counts.get(id) ?? 0) + 1); }
   // F2: repository claims over ALL current and removed records (any lifecycle, connection, provenance) BEFORE any projection.
@@ -54,7 +87,7 @@ export function githubAuthorizationsFor(projects: SavedRecord[], removed: SavedR
     const id = str(p.id);
     if (p.dataMode !== undefined || !id.trim() || id !== id.trim() || counts.get(id) !== 1 || !uniqueClaim(p.repository)) return null;
     const m = recordOf(p.management) ? p.management : undefined;
-    if (m && m.lifecycle !== undefined && m.lifecycle !== 'active') return null;
+    if (m && m.lifecycle !== undefined && m.lifecycle !== null && m.lifecycle !== 'active') return null;
     if (m && m.githubConnection !== undefined) return recordOf(m.githubConnection) ? connectedRecord(m.githubConnection, str(p.repository)) : null;
     return id === legacyId ? { source: 'legacy-pm-dashboard-compat', generation: 0 } : null;
   });

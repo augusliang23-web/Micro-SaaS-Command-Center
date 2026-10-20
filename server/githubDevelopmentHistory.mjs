@@ -32,7 +32,11 @@ export const HISTORY_LIMITS = Object.freeze({
  * V1.2 remediation F3: every GitHub answer that names a repository must be the AUTHORIZED repository before anything derived
  * from it is accepted. A user-verified connection is pinned to GitHub's numeric id (recorded at connect time) and its exact
  * full_name; a rename, transfer, id change or missing identity fails closed. The unpinned legacy PM Dashboard exception is
- * matched by name only (GitHub's full_name, or its canonical html_url path when full_name is absent), case-insensitively.
+ * matched by name only, case-insensitively, and is NOT id-pinned (Gate A R1):
+ *  - if the answer HAS a `full_name` key, that value decides: it must be a string naming this repository. null, a number or any
+ *    other non-string is refused, never treated as "missing";
+ *  - only when `full_name` is genuinely absent may `html_url` be used, and only in GitHub's exact canonical form
+ *    (canonicalGithubRepositoryFromUrl); anything else is refused.
  * Never derived from the requested string: an answer without identity is refused.
  */
 export function assertRepositoryIdentity(meta, repo, authorization, what) {
@@ -44,15 +48,39 @@ export function assertRepositoryIdentity(meta, repo, authorization, what) {
     if (meta.full_name !== repo) refuse('repository name differs from the verified connection');
     return;
   }
-  let name = typeof meta.full_name === 'string' ? meta.full_name : null;
-  if (name === null && typeof meta.html_url === 'string') {
-    try {
-      const url = new URL(meta.html_url);
-      if (url.protocol === 'https:' && url.hostname === 'github.com') name = url.pathname.replace(/^\/+|\/+$/g, '');
-    } catch { /* stays null */ }
+  let name;
+  if (Object.prototype.hasOwnProperty.call(meta, 'full_name')) {
+    if (typeof meta.full_name !== 'string') refuse('full_name is present but not a string');
+    name = meta.full_name;
+  } else {
+    name = canonicalGithubRepositoryFromUrl(meta.html_url);
+    if (name === null) refuse(Object.prototype.hasOwnProperty.call(meta, 'html_url') ? 'html_url is not a canonical GitHub repository URL' : 'missing repository identity');
   }
-  if (name === null) refuse('missing repository identity');
   if (name.toLowerCase() !== repo.toLowerCase()) refuse('repository name differs');
+}
+
+const CANONICAL_URL_PREFIX = 'https://github.com/';
+const URL_OWNER = /^(?!-)(?!.*--)[A-Za-z0-9-]{1,39}(?<!-)$/;
+const URL_REPO = /^[A-Za-z0-9._-]{1,100}$/;
+/**
+ * Gate A R1: the ONLY accepted html_url form is exactly `https://github.com/{owner}/{repo}`: lower-case scheme and host as
+ * written, no credentials, no port (not even :443), no query, no fragment, no percent-encoding, no trailing slash or extra path
+ * segment, owner/repo within GitHub's character rules. The literal check is repeated structurally with the URL parser so a
+ * spelling the parser would normalise cannot slip through. Returns `owner/repo` or null.
+ */
+export function canonicalGithubRepositoryFromUrl(value) {
+  if (typeof value !== 'string' || !value.startsWith(CANONICAL_URL_PREFIX)) return null;
+  const parts = value.slice(CANONICAL_URL_PREFIX.length).split('/');
+  if (parts.length !== 2 || !URL_OWNER.test(parts[0]) || !URL_REPO.test(parts[1]) || parts[1] === '.' || parts[1] === '..' || /\.git$/i.test(parts[1])) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  const structural = url.protocol === 'https:' && url.hostname === 'github.com' && url.port === '' && url.username === '' && url.password === ''
+    && url.search === '' && url.hash === '' && url.pathname === `/${parts[0]}/${parts[1]}` && url.href === value;
+  return structural ? `${parts[0]}/${parts[1]}` : null;
 }
 
 /** Refuses any read that does not carry a registry-issued authorization for exactly this repository. */

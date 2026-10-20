@@ -41,7 +41,7 @@ function answer(p){
   const headRepo=meta.forkHead?{full_name:'someone-else/fork',id:999}:{full_name:repo,id};
   const commit=(sha,parents)=>({sha,parents:parents.map((s)=>({sha:s})),html_url:'https://github.com/'+repo+'/commit/'+sha,commit:{message:'SYNTHETIC '+sha,author:{date:day,name:'a'},committer:{date:day}}});
   const pull={number:7,title:'SYNTHETIC PR',state:'open',draft:false,created_at:day,updated_at:day,closed_at:null,merged_at:null,html_url:'https://github.com/'+repo+'/pull/7',user:{login:'s'},base:{ref:'main',sha:'m1',repo:baseRepo},head:{ref:'feat/x',sha:'h7',repo:headRepo},merge_commit_sha:null};
-  if(rest==='') return out(after&&meta.noIdentity?{default_branch:'main'}:{id,full_name:repo,default_branch:'main',html_url:'https://github.com/'+repo});
+  if(rest==='') return out(meta.metadata?meta.metadata:(after&&meta.noIdentity?{default_branch:'main'}:{id,full_name:repo,default_branch:'main',html_url:'https://github.com/'+repo}));
   if(/^\\/branches\\?/.test(rest)) return out([{name:'main',commit:{sha:'m1'},protected:true},{name:'feat/x',commit:{sha:'h7'},protected:false}]);
   if(/^\\/pulls\\?state=all/.test(rest)) return out([pull]);
   if(/^\\/commits\\?sha=/.test(rest)) return out([commit('m1',[])]);
@@ -120,11 +120,11 @@ function makeCwd(saved, { raw } = {}) {
 }
 const freePort = () => new Promise((resolve, reject) => { const s = net.createServer(); s.once('error', reject); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
 
-async function withServer(cwd, fn) {
+async function withServer(cwd, fn, fakeRepos = FAKE_REPOS) {
   const port = await freePort();
   const log = path.join(work, `spy-${path.basename(cwd)}.log`);
   const child = spawn(process.execPath, ['--require', preload, bundle], {
-    cwd, env: { PATH: process.env.PATH, NODE_PATH: path.join(REPO_ROOT, 'node_modules'), NODE_ENV: 'production', PORT: String(port), SPY_LOG: log, FAKE_GH_REPOS: JSON.stringify(FAKE_REPOS), TMPDIR: work },
+    cwd, env: { PATH: process.env.PATH, NODE_PATH: path.join(REPO_ROOT, 'node_modules'), NODE_ENV: 'production', PORT: String(port), SPY_LOG: log, FAKE_GH_REPOS: JSON.stringify(fakeRepos), TMPDIR: work },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   children.add(child);
@@ -477,6 +477,42 @@ describe('6. (F2) a repository named by ANY other saved record grants no authori
         assert.equal((await s.history(PM, 'reg-pm')).status, 403);
         assert.deepEqual(s.gh(), []);
       });
+    }
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ 7. Gate A R1 end-to-end
+describe('7. (Gate A R1) the legacy PM name-only identity accepts only a genuine full_name or an exact canonical html_url', () => {
+  const variants = [
+    ['full_name null (present, never treated as missing)', { full_name: null, html_url: `https://github.com/${PM}`, default_branch: 'main' }],
+    ['full_name non-string', { full_name: 7, html_url: `https://github.com/${PM}`, default_branch: 'main' }],
+    ['full_name of another repository', { full_name: 'augusliang23-web/other', default_branch: 'main' }],
+    ['html_url with credentials', { html_url: `https://u:p@github.com/${PM}`, default_branch: 'main' }],
+    ['html_url with explicit port', { html_url: `https://github.com:443/${PM}`, default_branch: 'main' }],
+    ['html_url with query', { html_url: `https://github.com/${PM}?tab=x`, default_branch: 'main' }],
+    ['html_url with fragment', { html_url: `https://github.com/${PM}#x`, default_branch: 'main' }],
+    ['html_url on another host', { html_url: `https://evil.example/${PM}`, default_branch: 'main' }],
+    ['html_url percent-encoded', { html_url: 'https://github.com/augusliang23-web/pm%2Ddashboard', default_branch: 'main' }],
+    ['html_url extra segments', { html_url: `https://github.com/${PM}/tree/main`, default_branch: 'main' }],
+    ['no identity at all', { default_branch: 'main' }],
+  ];
+  for (const [label, metadata] of variants) {
+    test(label, async () => {
+      await withServer(makeCwd(state([legacyPm()])), async (s) => {
+        for (let i = 1; i <= 2; i += 1) {
+          const res = await s.history(PM, 'reg-pm');
+          assert.deepEqual([res.status, res.json.kind], [403, 'forbidden'], `${label}: ${res.text}`);
+          assert.deepEqual(s.gh(), Array(i).fill(`repos/${PM}`), 'only the metadata request, and nothing was cached');
+        }
+      }, { ...FAKE_REPOS, [PM]: { id: 1, metadata } });
+    });
+  }
+  test('positive controls: exact canonical html_url, and a genuine full_name, are both accepted', async () => {
+    for (const metadata of [{ html_url: `https://github.com/${PM}`, default_branch: 'main' }, { full_name: PM, default_branch: 'main' }]) {
+      await withServer(makeCwd(state([legacyPm()])), async (s) => {
+        const res = await s.history(PM, 'reg-pm');
+        assert.equal(res.status, 200, res.text);
+      }, { ...FAKE_REPOS, [PM]: { id: 1, metadata } });
     }
   });
 });

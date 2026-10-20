@@ -5,6 +5,7 @@ import express from 'express';
 import {
   HISTORY_LIMITS,
   assertRepositoryIdentity,
+  canonicalGithubRepositoryFromUrl,
   classifyGhFailure,
   createHistoryCache,
   fetchDevelopmentHistory,
@@ -1055,4 +1056,55 @@ test('F3 route: an identity mismatch is 403 and never cached; the next read asks
     }
   });
   assert.equal(calls, 2, 'the refused result was not cached');
+});
+
+// ------------------------------------------------------------------------------------------------ Gate A R1: strict legacy identity
+const CANON = `https://github.com/${REPO}`;
+const BAD_URLS = [
+  ['trailing slash', `${CANON}/`], ['explicit default port', `https://github.com:443/${REPO}`], ['other port', `https://github.com:8443/${REPO}`],
+  ['credentials', `https://u:p@github.com/${REPO}`], ['username only', `https://u@github.com/${REPO}`], ['query', `${CANON}?ref=x`], ['empty query', `${CANON}?`],
+  ['fragment', `${CANON}#readme`], ['extra segment', `${CANON}/tree/main`], ['double slash', `https://github.com//${REPO}`],
+  ['percent-encoded', 'https://github.com/augusliang23-web/pm%2Ddashboard'], ['encoded slash', 'https://github.com/augusliang23-web%2Fpm-dashboard'],
+  ['upper-case host', `https://GITHUB.COM/${REPO}`], ['upper-case scheme', `HTTPS://github.com/${REPO}`], ['http', `http://github.com/${REPO}`],
+  ['alternate host', `https://evil.example/${REPO}`], ['look-alike host', `https://github.com.evil.example/${REPO}`], ['www host', `https://www.github.com/${REPO}`],
+  ['.git suffix', `${CANON}.git`], ['leading space', ` ${CANON}`], ['backslash', `https://github.com\\${REPO}`], ['dot segment', 'https://github.com/augusliang23-web/./pm-dashboard'],
+  ['not a string', 42], ['null', null],
+];
+
+test('Gate A R1: canonicalGithubRepositoryFromUrl accepts only exact https://github.com/{owner}/{repo}', () => {
+  assert.equal(canonicalGithubRepositoryFromUrl(CANON), REPO);
+  for (const [label, url] of BAD_URLS) assert.equal(canonicalGithubRepositoryFromUrl(url), null, label);
+});
+
+test('Gate A R1: legacy name-only identity: a PRESENT full_name decides (never falls back), html_url only when full_name is absent', () => {
+  const ok = (meta) => assert.doesNotThrow(() => assertRepositoryIdentity(meta, REPO, AUTH, 'x'), JSON.stringify(meta));
+  const bad = (meta, why) => assert.throws(() => assertRepositoryIdentity(meta, REPO, AUTH, 'x'), (e) => e instanceof GithubCliError && e.kind === 'forbidden' && why.test(e.message), JSON.stringify(meta));
+  ok({ full_name: REPO });
+  ok({ full_name: 'Augusliang23-Web/PM-Dashboard' }); // documented case-insensitive legacy policy
+  ok({ html_url: CANON }); // full_name genuinely absent
+  for (const fullName of [null, 42, {}, [], true]) bad({ full_name: fullName, html_url: CANON }, /full_name is present but not a string/);
+  for (const fullName of ['', ' augusliang23-web/pm-dashboard', 'augusliang23-web/other', `github.com/${REPO}`]) bad({ full_name: fullName, html_url: CANON }, /name differs/);
+  for (const [label, url] of BAD_URLS) bad({ html_url: url }, /not a canonical GitHub repository URL/);
+  bad({ html_url: 'https://github.com/augusliang23-web/other' }, /name differs/);
+  bad({ default_branch: 'main' }, /missing repository identity/);
+  // the pinned path is unchanged: id AND exact full_name; html_url never substitutes
+  assert.throws(() => assertRepositoryIdentity({ id: 42, html_url: 'https://github.com/synthetic-owner/app' }, 'synthetic-owner/app', PINNED, 'x'), /name differs from the verified connection/);
+  assert.doesNotThrow(() => assertRepositoryIdentity({ id: 42, full_name: 'synthetic-owner/app' }, 'synthetic-owner/app', PINNED, 'x'));
+});
+
+test('Gate A R1: a refused legacy identity stops the read after the metadata call and is never cached', async () => {
+  const pmRoutes = (meta) => [[/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput(meta)], ...standardRoutes().slice(1)];
+  for (const meta of [{ full_name: null, html_url: CANON }, { html_url: `https://u:p@github.com/${REPO}` }, { html_url: `${CANON}?x=1` }, { html_url: `https://github.com:443/${REPO}` }]) {
+    const { execFileFn, calls } = fakeGh(pmRoutes(meta));
+    await assert.rejects(fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn }), (e) => e.kind === 'forbidden', JSON.stringify(meta));
+    assert.equal(calls.length, 1, `${JSON.stringify(meta)}: no downstream GitHub read`);
+  }
+  let calls = 0;
+  const fetchHistory = async (repo, { authorization }) => { calls += 1; return fetchDevelopmentHistory(repo, { authorization, execFileFn: fakeGh(pmRoutes({ html_url: `${CANON}#x` })).execFileFn }); };
+  await withRouter({ fetchHistory }, async (base) => {
+    for (let i = 0; i < 2; i += 1) assert.equal((await fetch(`${base}/development-history?repo=${REPO}`)).status, 403);
+  });
+  assert.equal(calls, 2, 'the refused result was not cached');
+  const good = fakeGh(pmRoutes({ html_url: CANON, default_branch: 'main' }));
+  assert.equal((await fetchDevelopmentHistory(REPO, { authorization: AUTH, execFileFn: good.execFileFn })).repository, REPO, 'canonical html_url positive control');
 });
