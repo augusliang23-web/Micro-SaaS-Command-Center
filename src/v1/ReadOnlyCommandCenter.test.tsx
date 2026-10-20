@@ -119,9 +119,10 @@ describe('V1 feature isolation and read-only frontend',()=>{
   expect(screen.queryAllByRole('textbox')).toHaveLength(0);
  });
  test('G. the V1 entry does not import or mount demo, AI or legacy-app sources',()=>{
-  const files=['src/main.tsx','src/v1/ReadOnlyCommandCenter.tsx','src/prototype/GitDevelopmentMap.tsx','src/prototype/gitHistoryModel.ts','src/prototype/gitHistoryTypes.ts'];
+  // V1.2 remediation F5: ManageProjects.tsx is part of the scanned set BEFORE imports are collected (it was appended too late).
+  const files=['src/main.tsx','src/v1/ReadOnlyCommandCenter.tsx','src/v1/ManageProjects.tsx','src/prototype/GitDevelopmentMap.tsx','src/prototype/gitHistoryModel.ts','src/prototype/gitHistoryTypes.ts'];
   const imports=files.flatMap(f=>[...readFileSync(`${process.cwd()}/${f}`,'utf8').matchAll(/^\s*import[^;]*?from\s+['"]([^'"]+)['"]/gms)].map(m=>`${f} -> ${m[1]}`));
-  files.push('src/v1/ManageProjects.tsx');
+  expect(imports.some(i=>i.startsWith('src/v1/ManageProjects.tsx -> '))).toBe(true); // the file really was scanned
   for(const banned of ['NodeCommandPanel','AiCommand','PromptHistory','CostGuard','PrototypeShell','prototype/data','mockData','/App','./App'])
    expect(imports.filter(i=>i.includes(banned)),`${banned} must not be imported`).toEqual([]);
   expect(readFileSync(`${process.cwd()}/src/main.tsx`,'utf8')).toContain('ReadOnlyCommandCenter');
@@ -173,19 +174,16 @@ describe('P1 explicit DEMO projects never become REGISTERED or live',()=>{
   mockFetch(state([PM]));render(<ReadOnlyCommandCenter/>);await flush();
   expect(card('PM Dashboard')).toHaveTextContent('REGISTERED');expect(within(card('PM Dashboard')).getByRole('button',{name:'開啟開發地圖'})).toBeVisible();
  });
- test('a same-name DEMO project beside the registered PM stays isolated: one history request, for the registered project only',async()=>{
+ // V1.2 remediation F2: a DEMO record naming the same repository is a conflicting claim, so NEITHER record gets GitHub authority.
+ test('a same-repository DEMO record beside the registered PM is a conflict: neither is live and no history request is made',async()=>{
   const calls=mockFetch(state([DEMO_PM,PM]));render(<ReadOnlyCommandCenter/>);await flush();
   expect(screen.getAllByRole('article')).toHaveLength(2);
-  expect(screen.getAllByRole('button',{name:'開啟開發地圖'})).toHaveLength(1);
+  expect(screen.queryAllByRole('button',{name:'開啟開發地圖'})).toHaveLength(0);
+  for(const c of screen.getAllByRole('article'))expect(c).not.toHaveTextContent(/GitHub 可查詢|Connected/);
   nav('開發地圖');await flush();
-  expect(historyCalls(calls)).toHaveLength(1);
-  expect(screen.getByLabelText('資料來源')).toHaveTextContent(PM_REPO);
-  const rail=within(screen.getByRole('navigation',{name:'專案（開發地圖）'}));
-  fireEvent.click(rail.getAllByRole('button').find(b=>/DEMO/.test(b.getAttribute('aria-label')??''))!);await flush();
-  expect(historyCalls(calls)).toHaveLength(1);expect(screen.getByLabelText('開發地圖不可用')).toBeVisible();
+  expect(historyCalls(calls)).toHaveLength(0);expect(screen.getByLabelText('開發地圖不可用')).toBeVisible();
   expect(calls.every(c=>c.method==='GET')).toBe(true);
- });
-});
+ });});
 
 describe('P2 eligibility to query is not presented as verified LIVE',()=>{
  test('the project card says 可查詢 · 尚未驗證 and does not say LIVE before any GitHub request succeeds',async()=>{

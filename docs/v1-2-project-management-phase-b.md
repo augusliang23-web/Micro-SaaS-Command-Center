@@ -58,7 +58,15 @@ state is touched, and there is no hard delete.
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` |
 | 423 | `LOCKED` |
-| 500 | `CORRUPT_STATE`, `INVALID_STATE`, `UNSAFE_TARGET`, `WRITE_FAILED`, `BACKUP_FAILED`, `DURABILITY_UNCONFIRMED` |
+| 500 | `CORRUPT_STATE`, `INVALID_STATE`, `UNSAFE_TARGET`, `WRITE_FAILED`, `BACKUP_FAILED` (all: refused before the file was replaced, nothing changed); `COMMIT_OUTCOME_UNKNOWN` (remediation F1: the file was replaced but the result could not be confirmed) |
+
+**Remediation F1: uncertain outcomes.**
+- `COMMIT_OUTCOME_UNKNOWN` responses carry `outcome: "unknown"`, `stateReadable` and `currentVersion` (or `null`). The server
+  gets these from a fresh validated read after the failure.
+- The UI treats `COMMIT_OUTCOME_UNKNOWN`, any other 5xx without a "nothing changed" code, and a lost connection the same way:
+  it re-reads `GET /api/projects` and refreshes the overview.
+- It then says "結果未知" (outcome unknown), adding "無法讀取資料" (state unreadable) when the read fails too. It never retries
+  the command and never claims the data is unchanged.
 
 Every 500 uses a fixed message. No response contains a file path, stack trace or anything from the store's internal text.
 

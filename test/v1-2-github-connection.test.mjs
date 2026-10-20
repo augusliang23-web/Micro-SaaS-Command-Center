@@ -25,16 +25,23 @@ const PRELOAD = `
 const fs=require('fs'),cp=require('child_process'),net=require('net');
 const LOG=process.env.SPY_LOG; const rec=(e)=>{try{fs.appendFileSync(LOG,JSON.stringify(e)+'\\n');}catch{}};
 const KNOWN=JSON.parse(process.env.FAKE_GH_REPOS||'{}');
+const metaCalls={};
 const out=(body,status=200)=>'HTTP/2.0 '+status+' OK\\r\\n\\r\\n'+JSON.stringify(body);
 const day='2026-10-01T00:00:00Z';
 function answer(p){
   const m=/^repos\\/([^/]+\\/[^/?]+)(.*)$/.exec(p); if(!m) return null;
   const known=Object.keys(KNOWN).find((k)=>k.toLowerCase()===m[1].toLowerCase()); if(!known) return null;
   const meta=KNOWN[known]; if(meta.fail) return {fail:meta.fail};
-  const repo=meta.full_name||known, rest=m[2];
+  const rest=m[2];
+  const n=rest===''?(metaCalls[known]=(metaCalls[known]||0)+1):(metaCalls[known]||0);
+  const after=n>1; // the 1st metadata call is the connect-time verification; later ones are history reads
+  const repo=(after&&meta.renamedTo)||meta.full_name||known;
+  const id=(after&&meta.idAfterConnect)||meta.id;
+  const baseRepo=meta.baseRepo||{full_name:repo,id};
+  const headRepo=meta.forkHead?{full_name:'someone-else/fork',id:999}:{full_name:repo,id};
   const commit=(sha,parents)=>({sha,parents:parents.map((s)=>({sha:s})),html_url:'https://github.com/'+repo+'/commit/'+sha,commit:{message:'SYNTHETIC '+sha,author:{date:day,name:'a'},committer:{date:day}}});
-  const pull={number:7,title:'SYNTHETIC PR',state:'open',draft:false,created_at:day,updated_at:day,closed_at:null,merged_at:null,html_url:'https://github.com/'+repo+'/pull/7',user:{login:'s'},base:{ref:'main',sha:'m1',repo:{full_name:repo}},head:{ref:'feat/x',sha:'h7',repo:{full_name:repo}},merge_commit_sha:null};
-  if(rest==='') return out({id:meta.id,full_name:repo,default_branch:'main',html_url:'https://github.com/'+repo});
+  const pull={number:7,title:'SYNTHETIC PR',state:'open',draft:false,created_at:day,updated_at:day,closed_at:null,merged_at:null,html_url:'https://github.com/'+repo+'/pull/7',user:{login:'s'},base:{ref:'main',sha:'m1',repo:baseRepo},head:{ref:'feat/x',sha:'h7',repo:headRepo},merge_commit_sha:null};
+  if(rest==='') return out(after&&meta.noIdentity?{default_branch:'main'}:{id,full_name:repo,default_branch:'main',html_url:'https://github.com/'+repo});
   if(/^\\/branches\\?/.test(rest)) return out([{name:'main',commit:{sha:'m1'},protected:true},{name:'feat/x',commit:{sha:'h7'},protected:false}]);
   if(/^\\/pulls\\?state=all/.test(rest)) return out([pull]);
   if(/^\\/commits\\?sha=/.test(rest)) return out([commit('m1',[])]);
@@ -94,6 +101,12 @@ const FAKE_REPOS = {
   'synthetic-owner/renamed': { id: 104, full_name: 'synthetic-owner/new-name' }, 'Synthetic-Owner/CaseRepo': { id: 105 },
   'synthetic-owner/limited': { id: 106, fail: 'rate' }, 'synthetic-owner/slow': { id: 107, fail: 'timeout' }, 'synthetic-owner/noauth': { id: 108, fail: 'auth' },
   [PM]: { id: 1 },
+  // F3 scripted identity changes AFTER the connect-time verification
+  'synthetic-owner/transferred': { id: 301, idAfterConnect: 999 },
+  'synthetic-owner/renamed-later': { id: 302, renamedTo: 'synthetic-owner/renamed-elsewhere' },
+  'synthetic-owner/foreign-base': { id: 303, baseRepo: { full_name: 'synthetic-owner/other', id: 103 } },
+  'synthetic-owner/no-identity': { id: 304, noIdentity: true },
+  'synthetic-owner/fork-pr': { id: 305, forkHead: true },
 };
 
 function makeCwd(saved, { raw } = {}) {
@@ -383,5 +396,87 @@ describe('4. state integrity and fail-closed reads', () => {
       assert.ok(results.every((r) => [200, 409, 423].includes(r.status)), results.map((r) => r.text).join('\n'));
       assert.equal((await s.projects()).githubAuthorizations.length, 1);
     });
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ 5. F3 verified identity binding
+describe('5. (F3) every GitHub answer must match the verified repository identity', () => {
+  test('id change (transfer), rename, foreign PR base or missing identity after connect: 403, nothing used, nothing cached', async () => {
+    const repos = ['synthetic-owner/transferred', 'synthetic-owner/renamed-later', 'synthetic-owner/foreign-base', 'synthetic-owner/no-identity'];
+    const cwd = makeCwd(state(repos.map((r, i) => project(`p${i}`))));
+    await withServer(cwd, async (s) => {
+      for (const [i, repo] of repos.entries()) {
+        assert.equal((await s.command({ type: 'connect', id: `p${i}`, repository: repo })).status, 200, repo);
+        for (let attempt = 0; attempt < 2; attempt += 1) { // a second read proves nothing was cached from the refused read
+          const res = await s.history(repo, `p${i}`);
+          assert.deepEqual([res.status, res.json.kind], [403, 'forbidden'], `${repo}: ${res.text}`);
+          assert.match(res.json.error, /does not match the authorized repository/);
+        }
+        // PR detail verifies its OWN base repository identity: refused when that identity is wrong; for no-identity only the
+        // repository metadata lacked identity while the PR base is correct, so history is refused but the PR detail is not.
+        assert.equal((await s.pull(repo, `p${i}`)).status, repo === 'synthetic-owner/no-identity' ? 200 : 403, `${repo} PR detail`);
+      }
+    });
+  });
+
+  test('a fork PR (head in another repository, base in this one) is accepted and the head repository stays separate', async () => {
+    const cwd = makeCwd(state([project('p1')]));
+    await withServer(cwd, async (s) => {
+      assert.equal((await s.command({ type: 'connect', id: 'p1', repository: 'synthetic-owner/fork-pr' })).status, 200);
+      const res = await s.history('synthetic-owner/fork-pr', 'p1');
+      assert.equal(res.status, 200, res.text);
+      assert.equal(res.json.repository, 'synthetic-owner/fork-pr');
+      assert.equal(res.json.pulls[0].headRepo, 'someone-else/fork', 'the fork head keeps its own repository');
+      assert.ok(!res.json.branches.some((b) => b.name === 'someone-else/fork'));
+      assert.equal((await s.pull('synthetic-owner/fork-pr', 'p1')).status, 200);
+    });
+  });
+
+  test('a user-verified record without a verified repository id grants nothing (hand-edited state)', async () => {
+    const unpinned = project('p1', { repository: 'synthetic-owner/other', management: { lifecycle: 'active', githubConnection: {
+      status: 'connected', repository: 'synthetic-owner/other', generation: 1, source: 'user-verified', connectedAt: '2026-10-19T00:00:00.000Z', verifiedRepositoryId: null, revokedAt: null, revokedReason: null } } });
+    await withServer(makeCwd(state([unpinned])), async (s) => {
+      assert.equal((await s.history('synthetic-owner/other', 'p1')).status, 403);
+      assert.deepEqual((await s.projects()).githubAuthorizations, []);
+      assert.deepEqual(s.gh(), []);
+    });
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ 6. F2 global repository conflicts
+describe('6. (F2) a repository named by ANY other saved record grants no authority to anyone', () => {
+  const conn = (repo) => ({ lifecycle: 'active', githubConnection: { status: 'connected', repository: repo, generation: 1, source: 'user-verified', connectedAt: '2026-10-19T00:00:00.000Z', verifiedRepositoryId: 103, revokedAt: null, revokedReason: null } });
+  const connected = () => project('live', { repository: 'synthetic-owner/other', management: conn('synthetic-owner/other') });
+  const variants = [
+    ['unconnected current record', project('x', { repository: 'synthetic-owner/other' })],
+    ['archived record', project('x', { repository: 'synthetic-owner/other', management: { lifecycle: 'archived' } })],
+    ['disconnected record', project('x', { repository: 'synthetic-owner/other', management: { lifecycle: 'active', githubConnection: { status: 'disconnected', repository: 'synthetic-owner/other', generation: 2, source: 'user-verified', connectedAt: '2026-10-19T00:00:00.000Z', verifiedRepositoryId: 103, revokedAt: '2026-10-19T01:00:00.000Z', revokedReason: 'disconnected' } } })],
+    ['demo record', project('x', { repository: 'synthetic-owner/other', dataMode: 'demo' })],
+    ['different case', project('x', { repository: 'Synthetic-Owner/OTHER' })],
+    ['URL spelling', project('x', { repository: 'https://github.com/synthetic-owner/other.git' })],
+  ];
+  for (const [label, other] of variants) {
+    test(`${label}`, async () => {
+      await withServer(makeCwd(state([connected(), other])), async (s) => {
+        assert.equal((await s.history('synthetic-owner/other', 'live')).status, 403, label);
+        assert.deepEqual(s.gh(), [], `${label}: no GitHub request`);
+      });
+    });
+  }
+  test('removed record', async () => {
+    const removed = { projectManagement: { removed: [{ project: project('x', { repository: 'synthetic-owner/other' }), removedAt: '2026-10-19T00:00:00.000Z', previousIndex: 1, previousLifecycle: 'active' }] } };
+    await withServer(makeCwd(state([connected()], removed)), async (s) => {
+      assert.equal((await s.history('synthetic-owner/other', 'live')).status, 403);
+      assert.deepEqual(s.gh(), []);
+    });
+  });
+  test('the legacy PM rule obeys the same gate (a demo or removed record naming pm-dashboard ends it)', async () => {
+    for (const extra of [{ projects: [legacyPm(), project('d', { repository: PM, dataMode: 'demo' })] }, { projects: [legacyPm()], removed: [project('r', { repository: `https://github.com/${PM}` })] }]) {
+      const pm = extra.removed ? { projectManagement: { removed: extra.removed.map((p) => ({ project: p, removedAt: '2026-10-19T00:00:00.000Z', previousIndex: 1, previousLifecycle: 'active' })) } } : {};
+      await withServer(makeCwd(state(extra.projects, pm)), async (s) => {
+        assert.equal((await s.history(PM, 'reg-pm')).status, 403);
+        assert.deepEqual(s.gh(), []);
+      });
+    }
   });
 });

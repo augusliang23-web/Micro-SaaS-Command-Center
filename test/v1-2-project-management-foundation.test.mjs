@@ -22,7 +22,7 @@ import {
   restoreProject,
 } from '../server/projectManagementCommands.mjs';
 import { LIMITS, ProjectDataError, canonicalRepository, cleanText, serializeState } from '../server/projectManagementSchema.mjs';
-import { ABSENT_VERSION, BACKUP_GENERATIONS, createProjectStore, defaultIo } from '../server/projectManagementStore.mjs';
+import { ABSENT_VERSION, BACKUP_GENERATIONS, REPLACED_INODE_RETRIES, createProjectStore, defaultIo } from '../server/projectManagementStore.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NOW = '2026-10-19T12:00:00.000Z';
@@ -509,6 +509,117 @@ describe('D. concurrency: stale callers are refused and no update is lost', () =
 });
 
 // ---------------------------------------------------------------------------------------------------- E. V1 boundary regression (static)
+// ---------------------------------------------------------------------------------------------------- F. remediation F1 / F4
+/** An io whose behaviour changes once the TARGET has been renamed into place (post-replacement fault injection). */
+function afterReplaceIo(dir, onAfter) {
+  const target = path.join(fs.realpathSync(dir), 'app-state.json');
+  const state = { replaced: false };
+  return {
+    io: {
+      ...defaultIo,
+      renameSync: (from, to) => { defaultIo.renameSync(from, to); if (to === target) { state.replaced = true; onAfter.afterRename?.(to); } },
+      fsyncSync: (fd) => { if (state.replaced && onAfter.dirFsync && fd === state.dirFd) throw Object.assign(new Error('synthetic EIO'), { code: 'EIO' }); return defaultIo.fsyncSync(fd); },
+      openSync: (p, ...rest) => { const fd = defaultIo.openSync(p, ...rest); if (p === fs.realpathSync(dir)) state.dirFd = fd; return fd; },
+      readFileSync: (src, ...rest) => { if (state.replaced && onAfter.readBack && typeof src === 'number') throw Object.assign(new Error('synthetic EIO'), { code: 'EIO' }); return defaultIo.readFileSync(src, ...rest); },
+    },
+    state,
+  };
+}
+
+describe('F. remediation: post-replacement outcome (F1) and replaced-inode reads (F4)', () => {
+  for (const [label, hooks, reason] of [
+    ['directory sync fails after the rename', { dirFsync: true }, 'directory-sync-failed'],
+    ['read-back fails after the rename', { readBack: true }, 'read-back-failed'],
+    ['read-back bytes differ after the rename', { afterRename: (p) => fs.writeFileSync(p, '{"projects":[]}', { mode: 0o600 }) }, 'read-back-mismatch'],
+  ]) {
+    test(`F1: ${label} -> COMMIT_OUTCOME_UNKNOWN, never "unchanged"; the backup still holds the previous bytes`, () => {
+      const { dir } = seeded();
+      const before = fileOf(dir);
+      const { io } = afterReplaceIo(dir, hooks);
+      const store = createProjectStore({ dataDir: dir, io, now: () => NOW, newId: ids });
+      const { version } = store.read();
+      const error = code(() => store.apply({ expectedVersion: version, command: { type: 'add', input: { name: 'after rename' } } }), 'COMMIT_OUTCOME_UNKNOWN');
+      assert.equal(error.details.reason, reason);
+      assert.notDeepEqual(fileOf(dir), before, 'the target WAS replaced: claiming "unchanged" would be false');
+      assert.deepEqual(fileOf(dir, 'app-state.json.bak.1'), before, 'last-known-good backup preserved');
+      assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.lock')), [], 'lock released');
+    });
+  }
+
+  test('F1: failures BEFORE the rename are still WRITE_FAILED / BACKUP_FAILED with the target byte-identical', () => {
+    const { dir } = seeded();
+    const before = fileOf(dir);
+    const io = faultyIo((kind, p) => (kind === 'rename' && path.basename(p) === 'app-state.json' ? eio() : null));
+    const store = createProjectStore({ dataDir: dir, io, now: () => NOW, newId: ids });
+    code(() => store.apply({ expectedVersion: store.read().version, command: { type: 'add', input: { name: 'x' } } }), 'WRITE_FAILED');
+    assert.deepEqual(fileOf(dir), before);
+  });
+
+  /** fstat answers nlink 0 (a replaced inode) for the first `times` calls on the target, then the truth. */
+  function replacedInodeIo(times) {
+    let calls = 0;
+    return {
+      calls: () => calls,
+      io: { ...defaultIo, fstatSync: (fd) => { const real = defaultIo.fstatSync(fd); calls += 1; if (calls > times) return real; return Object.assign(Object.create(Object.getPrototypeOf(real)), real, { nlink: 0 }); } },
+    };
+  }
+
+  test('F4: an opened inode that was replaced meanwhile (nlink 0) is re-opened, a bounded number of times, then read normally', () => {
+    const { dir } = seeded();
+    const probe = replacedInodeIo(REPLACED_INODE_RETRIES);
+    const store = createProjectStore({ dataDir: dir, io: probe.io });
+    assert.deepEqual(store.read().state, syntheticState());
+    assert.equal(probe.calls(), REPLACED_INODE_RETRIES + 1);
+  });
+
+  test('F4: a target that keeps reporting nlink 0 is refused after the bound (no unbounded retry)', () => {
+    const { dir } = seeded();
+    const probe = replacedInodeIo(Infinity);
+    const error = code(() => createProjectStore({ dataDir: dir, io: probe.io }).read(), 'UNSAFE_TARGET');
+    assert.match(error.message, /replaced or removed/);
+    assert.equal(probe.calls(), REPLACED_INODE_RETRIES + 1);
+  });
+
+  test('F4: a real extra hard link (nlink 2) is refused on the FIRST attempt; symlinks and foreign permissions stay refused', () => {
+    const { dir } = seeded();
+    const other = path.join(tempDir(), 'second-name.json');
+    fs.linkSync(path.join(dir, 'app-state.json'), other);
+    let fstats = 0;
+    const io = { ...defaultIo, fstatSync: (fd) => { fstats += 1; return defaultIo.fstatSync(fd); } };
+    const error = code(() => createProjectStore({ dataDir: dir, io }).read(), 'UNSAFE_TARGET');
+    assert.match(error.message, /extra hard links/);
+    assert.equal(fstats, 1, 'no retry for a persistent hard link');
+    const d2 = tempDir();
+    fs.symlinkSync(other, path.join(d2, 'app-state.json'));
+    assert.match(code(() => createProjectStore({ dataDir: d2 }).read(), 'UNSAFE_TARGET').message, /symbolic link/);
+  });
+
+  test('F4: separate-process readers racing separate-process writers see no spurious refusal and no update is lost', async () => {
+    const { dir } = seeded();
+    const go = path.join(ROOT, `go-f4-${Date.now()}`);
+    const READER = `
+const [storeUrl, dir, go, ms] = process.argv.slice(1);
+const { createProjectStore } = await import(storeUrl);
+const fs = await import('node:fs');
+const sleep = (n) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, n);
+while (!fs.existsSync(go)) sleep(2);
+const store = createProjectStore({ dataDir: dir });
+const end = Date.now() + Number(ms); let reads = 0; const errors = {};
+while (Date.now() < end) { try { store.read(); reads += 1; } catch (e) { errors[e.code] = (errors[e.code] ?? 0) + 1; } }
+console.log(JSON.stringify({ reads, errors }));`;
+    const readers = Array.from({ length: 4 }, () => runWorker(READER, [STORE_URL, dir, go, '2500']));
+    const writers = Array.from({ length: 4 }, (_, i) => runWorker(WORKER, [STORE_URL, dir, go, `f4-${i}`, 'retry', '']));
+    fs.writeFileSync(go, '');
+    const [r, w] = await Promise.all([Promise.all(readers), Promise.all(writers)]);
+    const results = r.map((x) => JSON.parse(x));
+    assert.ok(results.every((x) => x.reads > 0));
+    assert.deepEqual(results.map((x) => x.errors), [{}, {}, {}, {}], JSON.stringify(results));
+    assert.deepEqual(w, Array(4).fill('OK'));
+    const names = createProjectStore({ dataDir: dir }).read().state.projects.map((p) => p.name).filter((n) => n.startsWith('f4-')).sort();
+    assert.deepEqual(names, ['f4-0', 'f4-1', 'f4-2', 'f4-3']);
+  });
+});
+
 describe('E. the V1 read-only server is unchanged and cannot reach the new modules', () => {
   const NEW = ['server/projectManagementSchema.mjs', 'server/projectManagementCommands.mjs', 'server/projectManagementStore.mjs'];
   const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');

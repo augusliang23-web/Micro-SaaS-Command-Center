@@ -22,28 +22,42 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '');
  * EITHER a saved `connected` record for exactly its repository OR the single legacy PM Dashboard record (no dataMode, no
  * management, exact repository). A repository claimed by two projects is denied for both.
  */
+/** F2 conflict key, identical to server/githubConnectionRegistry.mjs#repositoryClaimKey: one repository in any spelling. */
+export function repositoryClaimKey(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/^git@github\.com:/, '').replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//, '').replace(/\/+$/, '').replace(/\.git$/, '');
+}
+const isTimestamp = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
+/** A complete, currently-connected record; anything missing or malformed is NOT connected (V1.2 remediation F6). */
+function connectedRecord(c: SavedRecord, repository: string): HistoryAuthorization | null {
+  if (c.status !== 'connected' || c.repository !== repository || !CANONICAL_REPO.test(repository)) return null;
+  if (!Number.isInteger(c.generation) || (c.generation as number) < 1 || !isTimestamp(c.connectedAt) || c.revokedAt !== null || c.revokedReason !== null) return null;
+  if (c.source === 'user-verified') return Number.isInteger(c.verifiedRepositoryId) && (c.verifiedRepositoryId as number) > 0 ? { source: 'user-verified', generation: c.generation as number } : null;
+  if (c.source === 'legacy-pm-dashboard-compat') return repository === LEGACY_COMPAT_REPOSITORY ? { source: 'legacy-pm-dashboard-compat', generation: c.generation as number } : null;
+  return null;
+}
+
 export function githubAuthorizationsFor(projects: SavedRecord[], removed: SavedRecord[] = []): (HistoryAuthorization | null)[] {
   const counts = new Map<string, number>();
   for (const p of [...projects, ...removed]) { const id = str(p.id); if (id.trim()) counts.set(id, (counts.get(id) ?? 0) + 1); }
+  // F2: repository claims over ALL current and removed records (any lifecycle, connection, provenance) BEFORE any projection.
+  const claims = new Map<string, number>();
+  for (const p of [...projects, ...removed]) {
+    const m = recordOf(p.management) ? p.management : undefined;
+    const c = m && recordOf(m.githubConnection) ? m.githubConnection : undefined;
+    for (const key of new Set([repositoryClaimKey(p.repository), repositoryClaimKey(c?.repository)].filter(Boolean))) claims.set(key, (claims.get(key) ?? 0) + 1);
+  }
+  const uniqueClaim = (repository: unknown) => claims.get(repositoryClaimKey(repository)) === 1;
   const legacy = projects.filter((p) => p.dataMode === undefined && p.management === undefined && p.repository === LEGACY_COMPAT_REPOSITORY);
-  const legacyId = legacy.length === 1 && str(legacy[0].id).trim() && counts.get(str(legacy[0].id)) === 1 ? str(legacy[0].id) : null;
-  const entries = projects.map((p): HistoryAuthorization | null => {
+  const legacyId = legacy.length === 1 && str(legacy[0].id).trim() && counts.get(str(legacy[0].id)) === 1 && uniqueClaim(LEGACY_COMPAT_REPOSITORY) ? str(legacy[0].id) : null;
+  return projects.map((p): HistoryAuthorization | null => {
     const id = str(p.id);
-    if (p.dataMode !== undefined || !id.trim() || id !== id.trim() || counts.get(id) !== 1) return null;
+    if (p.dataMode !== undefined || !id.trim() || id !== id.trim() || counts.get(id) !== 1 || !uniqueClaim(p.repository)) return null;
     const m = recordOf(p.management) ? p.management : undefined;
     if (m && m.lifecycle !== undefined && m.lifecycle !== 'active') return null;
-    const c = m && recordOf(m.githubConnection) ? m.githubConnection : undefined;
-    if (c) {
-      const ok = c.status === 'connected' && c.repository === p.repository && CANONICAL_REPO.test(str(p.repository)) && Number.isInteger(c.generation)
-        && (c.source === 'user-verified' || c.source === 'legacy-pm-dashboard-compat');
-      return ok ? { source: c.source as HistoryAuthorization['source'], generation: c.generation as number } : null;
-    }
-    if (m && m.githubConnection !== undefined) return null; // malformed record: fail closed
+    if (m && m.githubConnection !== undefined) return recordOf(m.githubConnection) ? connectedRecord(m.githubConnection, str(p.repository)) : null;
     return id === legacyId ? { source: 'legacy-pm-dashboard-compat', generation: 0 } : null;
   });
-  const claims = new Map<string, number>();
-  projects.forEach((p, i) => { if (entries[i]) { const k = str(p.repository).toLowerCase(); claims.set(k, (claims.get(k) ?? 0) + 1); } });
-  return entries.map((e, i) => (e && claims.get(str(projects[i].repository).toLowerCase()) === 1 ? e : null));
 }
 
 /**

@@ -71,6 +71,37 @@ describe('overview: connection status mirrors the server rules and never over-cl
  });
 });
 
+// ---------------- V1.2 remediation F2 / F6: the client never shows Connected where the server denies ----------------
+describe('F2 / F6 client projection matches the server rules',()=>{
+ const live=()=>base('live',{repository:'synthetic-owner/app',management:conn('synthetic-owner/app')});
+ test.each([
+  ['no verified repository id',{verifiedRepositoryId:null}],['a non-numeric verified id',{verifiedRepositoryId:'5'}],['no connectedAt',{connectedAt:null}],
+  ['an invalid connectedAt',{connectedAt:'yesterday'}],['generation 0',{generation:0}],['a revokedAt on a connected record',{revokedAt:'2026-10-19T01:00:00.000Z'}],
+  ['an unknown source',{source:'imported'}],['the legacy source on a non-legacy repository',{source:'legacy-pm-dashboard-compat'}],
+ ])('F6: a connected record with %s is Not connected',async(_l,over)=>{
+  expect(githubAuthorizationsFor([base('p1',{repository:'synthetic-owner/app',management:conn('synthetic-owner/app',over)})])).toEqual([null]);
+  const calls=mockState([base('p1',{repository:'synthetic-owner/app',management:conn('synthetic-owner/app',over)})]);
+  render(<ReadOnlyCommandCenter/>);await flush();
+  expect(card('SYN p1')).not.toHaveTextContent(/Connected|GitHub 可查詢/);expect(within(card('SYN p1')).queryByRole('button',{name:'開啟開發地圖'})).toBeNull();
+  nav('開發地圖');await flush();expect(history(calls)).toHaveLength(0);
+ });
+ test.each([
+  ['an unconnected current record',base('x',{repository:'synthetic-owner/app'})],
+  ['an archived record',base('x',{repository:'synthetic-owner/app',management:{lifecycle:'archived'}})],
+  ['a demo record',base('x',{repository:'synthetic-owner/app',dataMode:'demo'})],
+  ['a different-case record',base('x',{repository:'Synthetic-Owner/APP'})],
+  ['a URL spelling',base('x',{repository:'https://github.com/synthetic-owner/app.git'})],
+ ])('F2: %s naming the same repository denies the connected project',(_l,other)=>{
+  expect(githubAuthorizationsFor([live(),other])).toEqual([null,null]);
+ });
+ test('F2: a removed record naming the repository denies it too, and the legacy PM rule obeys the same gate',()=>{
+  expect(githubAuthorizationsFor([live()],[base('r',{repository:'synthetic-owner/app'})])).toEqual([null]);
+  expect(githubAuthorizationsFor([base('reg-pm',{repository:PM})],[base('r',{repository:`git@github.com:${PM}.git`})])).toEqual([null]);
+  expect(githubAuthorizationsFor([base('reg-pm',{repository:PM}),base('d',{repository:PM,dataMode:'demo'})])).toEqual([null,null]);
+  expect(githubAuthorizationsFor([live()])).toEqual([{source:'user-verified',generation:1}]); // positive control
+ });
+});
+
 // ------------------------------------------------------------------------------------------------ 管理專案 connection flows
 type Auth={projectId:string;repository:string;source:string;generation:number};
 function manageBackend(initial:Record<string,unknown>[],{fail}:{fail?:(command:Record<string,unknown>)=>{status:number;body:unknown}|null}={}){

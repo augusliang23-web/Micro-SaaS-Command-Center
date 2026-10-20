@@ -65,7 +65,6 @@ const MESSAGES: Record<string, string> = {
   PAYLOAD_TOO_LARGE: '內容太長，請縮短後再試。資料沒有變更。',
   WRITE_FAILED: '存檔失敗，原本的資料沒有變更。',
   BACKUP_FAILED: '無法先建立備份，所以沒有存檔。原本的資料沒有變更。',
-  DURABILITY_UNCONFIRMED: '變更已寫入，但無法確認磁碟同步完成。已重新載入，請確認結果。',
   CORRUPT_STATE: '已儲存的資料無法安全讀取，沒有做任何變更。不會用範例資料代替。',
   INVALID_STATE: '已儲存的資料格式不符合規則，沒有做任何變更。不會用範例資料代替。',
   UNSAFE_TARGET: '存檔位置未通過安全檢查，沒有做任何變更。',
@@ -77,7 +76,14 @@ const MESSAGES: Record<string, string> = {
   UNTRUSTED_IDENTITY: '只有已登記專案可以連線 GitHub（DEMO 或身分無法確認的紀錄不行）。資料沒有變更。',
 };
 const INPUT_CODES = new Set(['INVALID_INPUT', 'INVALID_ID', 'FIELD_NOT_EDITABLE', 'INVALID_COMMAND', 'INVALID_REQUEST']);
-const RELOAD_CODES = new Set(['CONFLICT', 'ILLEGAL_TRANSITION', 'NOT_FOUND', 'DURABILITY_UNCONFIRMED']);
+const RELOAD_CODES = new Set(['CONFLICT', 'ILLEGAL_TRANSITION', 'NOT_FOUND']);
+/**
+ * V1.2 remediation F1: server errors that guarantee the saved state was NOT changed (refused before the file was replaced).
+ * Any other 5xx, COMMIT_OUTCOME_UNKNOWN or a lost connection means the outcome is unknown: reload and say so, never retry.
+ */
+const UNCHANGED_SERVER_CODES = new Set(['WRITE_FAILED', 'BACKUP_FAILED', 'CORRUPT_STATE', 'INVALID_STATE', 'UNSAFE_TARGET', 'GITHUB_VERIFICATION_FAILED']);
+const OUTCOME_UNKNOWN_RELOADED = '無法確認這次變更是否已儲存（結果未知）。已重新讀取目前資料，請先確認清單內容，不要直接重做一次。';
+const OUTCOME_UNKNOWN_UNREADABLE = '無法確認這次變更是否已儲存（結果未知），而且目前也無法讀取資料。請稍後重新整理後再確認，不要直接重做一次。';
 const SUCCESS: Record<Command['type'], string> = {
   add: '已新增專案並儲存。', edit: '已儲存變更。', archive: '已封存專案（紀錄與 ID 都保留）。', restore: '已還原專案。',
   remove: '已移除專案（只影響本機資料，可在「已移除」救回）。', recover: '已救回專案。',
@@ -98,17 +104,27 @@ export function ManageProjects({ onChanged, identityLabel }: { onChanged: () => 
   const [connecting, setConnecting] = useState<{ id: string; mode: 'connect' | 'change' } | null>(null);
   const [disconnecting, setDisconnecting] = useState<Project | null>(null);
 
-  const reload = useCallback(async () => {
+  /** Re-reads the versioned state. Returns true only when a valid current state was loaded. */
+  const reload = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch('/api/projects', { method: 'GET' });
       const body = await res.json().catch(() => null);
-      if (res.status === 404 && isRecord(body) && body.code === 'NO_STATE') { setLoad({ status: 'empty' }); return; }
-      if (!res.ok) { setLoad({ status: 'unavailable', reason: isRecord(body) && typeof body.code === 'string' && MESSAGES[body.code] ? MESSAGES[body.code] : `HTTP ${res.status}` }); return; }
-      setLoad(parseProjectsResponse(body));
+      if (res.status === 404 && isRecord(body) && body.code === 'NO_STATE') { setLoad({ status: 'empty' }); return false; }
+      if (!res.ok) { setLoad({ status: 'unavailable', reason: isRecord(body) && typeof body.code === 'string' && MESSAGES[body.code] ? MESSAGES[body.code] : `HTTP ${res.status}` }); return false; }
+      const next = parseProjectsResponse(body);
+      setLoad(next);
+      return next.status === 'ready';
     } catch {
       setLoad({ status: 'unavailable', reason: '無法連線到本機 Command Center 伺服器' });
+      return false;
     }
   }, []);
+  /** F1: reconcile an uncertain outcome by reading the current state; the overview is refreshed too. Never retries. */
+  async function reconcileUnknown() {
+    const readable = await reload();
+    setNotice({ kind: 'error', text: readable ? OUTCOME_UNKNOWN_RELOADED : OUTCOME_UNKNOWN_UNREADABLE });
+    onChanged();
+  }
   useEffect(() => { void reload(); }, [reload]);
 
   /** Sends ONE command with the last-read version. A refusal is shown as-is; nothing is retried automatically. */
@@ -130,13 +146,16 @@ export function ManageProjects({ onChanged, identityLabel }: { onChanged: () => 
         return true;
       }
       const code = isRecord(body) && typeof body.code === 'string' ? body.code : '';
+      if (code === 'COMMIT_OUTCOME_UNKNOWN' || (res.status >= 500 && !UNCHANGED_SERVER_CODES.has(code))) {
+        await reconcileUnknown();
+        return false;
+      }
       const detail = isRecord(body) && typeof body.error === 'string' ? body.error : `HTTP ${res.status}`;
       setNotice({ kind: 'error', text: INPUT_CODES.has(code) ? `輸入不符合規則，資料沒有變更：${detail}` : MESSAGES[code] ?? `操作失敗（HTTP ${res.status}），資料沒有變更。` });
       if (RELOAD_CODES.has(code)) await reload();
       return false;
     } catch {
-      setNotice({ kind: 'error', text: '無法連線到本機伺服器，無法確認是否已儲存。已重新載入最新資料。' });
-      await reload();
+      await reconcileUnknown(); // no response at all: the server may or may not have applied it
       return false;
     } finally {
       setBusy(false);

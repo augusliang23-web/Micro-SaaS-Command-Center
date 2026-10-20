@@ -10,6 +10,15 @@
 //   5. stage     write a unique temp file IN THE SAME DIRECTORY (O_EXCL, 0600), fsync, close, re-read and verify the hash.
 //   6. replace   rename the temp file over the target (atomic on one filesystem), fsync the directory where supported.
 //   7. verify    re-read the target and compare hashes; release the lock (also on every failure path).
+//
+// Failure semantics (V1.2 remediation F1): any failure BEFORE step 6's rename leaves the previous file byte-identical and is
+// reported as WRITE_FAILED / BACKUP_FAILED. Any failure AFTER the rename (directory sync, read-back, hash mismatch) is
+// COMMIT_OUTCOME_UNKNOWN: the new bytes may already be the current state, so nothing may claim "unchanged".
+//
+// Reads (V1.2 remediation F4): a reader opens the file with O_NOFOLLOW and checks the OPENED inode (fstat), so the checks and
+// the bytes always describe the same file. On APFS a reader that races another process's atomic rename can open the replaced
+// inode after it was unlinked (fstat nlink 0); that, and only that, is re-opened a bounded number of times. nlink >= 2 (a real
+// hard link), symlinks, other owners, group/other-writable files and non-regular files are refused immediately, as before.
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import nodeFs from 'node:fs';
@@ -34,6 +43,7 @@ export const defaultIo = Object.freeze({
   openSync: nodeFs.openSync,
   writeSync: nodeFs.writeSync,
   fsyncSync: nodeFs.fsyncSync,
+  fstatSync: nodeFs.fstatSync,
   closeSync: nodeFs.closeSync,
   renameSync: nodeFs.renameSync,
   unlinkSync: nodeFs.unlinkSync,
@@ -46,6 +56,10 @@ export const defaultIo = Object.freeze({
  * @param {() => string} [options.now] ISO clock (tests inject a fixed one)
  * @param {() => string} [options.newId] project id generator
  */
+/** Bounded re-opens when a reader observes the replaced inode of a concurrent atomic rename (nlink 0). */
+export const REPLACED_INODE_RETRIES = 5;
+const READ_FLAGS = nodeFs.constants.O_RDONLY | nodeFs.constants.O_NOFOLLOW | nodeFs.constants.O_NONBLOCK;
+
 export function createProjectStore({ dataDir, io = defaultIo, now = () => new Date().toISOString(), newId = () => `proj-${randomUUID()}` } = {}) {
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
   const dir = resolveDataDir(dataDir, io, uid);
@@ -53,7 +67,19 @@ export function createProjectStore({ dataDir, io = defaultIo, now = () => new Da
   const lockPath = `${target}.lock`;
   const backupPath = (n) => `${target}.bak.${n}`;
 
-  /** A destination must be a plain regular file we own, with one link, not group/other writable. Absent is fine. */
+  /** The checks every state/backup file must pass: a regular file we own, exactly one link, not group/other writable, bounded. */
+  function checkStat(st, file) {
+    const name = path.basename(file);
+    if (st.isSymbolicLink() || !st.isFile()) fail('UNSAFE_TARGET', 'A state or backup path is not a regular file.', { file: name });
+    if (st.nlink === 0) fail('UNSAFE_TARGET', 'A state or backup file was replaced or removed while it was being checked.', { file: name });
+    if (st.nlink !== 1) fail('UNSAFE_TARGET', 'A state or backup file has extra hard links.', { file: name });
+    if (uid !== null && st.uid !== uid) fail('UNSAFE_TARGET', 'A state or backup file is owned by another user.', { file: name });
+    if ((st.mode & 0o022) !== 0) fail('UNSAFE_TARGET', 'A state or backup file is writable by group or others.', { file: name });
+    if (st.size > LIMITS.maxStateBytes) fail('LIMIT_EXCEEDED', 'A state or backup file is larger than the size limit.', { file: name });
+    return st;
+  }
+
+  /** Destination check by path (lstat), used by writers under the lock before a rename. Absent is fine. */
   function inspectFile(file) {
     let st;
     try {
@@ -62,17 +88,33 @@ export function createProjectStore({ dataDir, io = defaultIo, now = () => new Da
       if (notFound(error)) return null;
       throw error;
     }
-    if (st.isSymbolicLink() || !st.isFile()) fail('UNSAFE_TARGET', 'A state or backup path is not a regular file.', { file: path.basename(file) });
-    if (st.nlink !== 1) fail('UNSAFE_TARGET', 'A state or backup file has extra hard links.', { file: path.basename(file) });
-    if (uid !== null && st.uid !== uid) fail('UNSAFE_TARGET', 'A state or backup file is owned by another user.', { file: path.basename(file) });
-    if ((st.mode & 0o022) !== 0) fail('UNSAFE_TARGET', 'A state or backup file is writable by group or others.', { file: path.basename(file) });
-    if (st.size > LIMITS.maxStateBytes) fail('LIMIT_EXCEEDED', 'A state or backup file is larger than the size limit.', { file: path.basename(file) });
-    return st;
+    return checkStat(st, file);
   }
 
+  /**
+   * Reads a state/backup file through one O_NOFOLLOW descriptor: the checks run on that descriptor's inode and the bytes come
+   * from the same descriptor. Absent -> null. Only an opened inode with nlink 0 (replaced by a concurrent atomic rename) is
+   * re-opened, at most REPLACED_INODE_RETRIES times; every other check failure is immediate.
+   */
   function readBytes(file) {
-    if (!inspectFile(file)) return null;
-    return io.readFileSync(file);
+    for (let attempt = 0; ; attempt += 1) {
+      let fd;
+      try {
+        fd = io.openSync(file, READ_FLAGS);
+      } catch (error) {
+        if (notFound(error)) return null;
+        if (error?.code === 'ELOOP') fail('UNSAFE_TARGET', 'A state or backup path is a symbolic link.', { file: path.basename(file) });
+        throw error;
+      }
+      try {
+        const st = io.fstatSync(fd);
+        if (st.nlink === 0 && st.isFile() && attempt < REPLACED_INODE_RETRIES) continue; // replaced while opening: read the current file
+        checkStat(st, file);
+        return io.readFileSync(fd);
+      } finally {
+        io.closeSync(fd);
+      }
+    }
   }
 
   /** Current raw version of the target (its hash even if its content is corrupt), or ABSENT_VERSION. */
@@ -139,13 +181,21 @@ export function createProjectStore({ dataDir, io = defaultIo, now = () => new Da
       if (error instanceof ProjectDataError) throw error;
       fail('WRITE_FAILED', 'Writing the state file failed; the previous file is unchanged.', { cause: error?.code ?? String(error) });
     }
+    // The rename succeeded: from here on the new bytes may already be the current file. Nothing below may say "unchanged".
+    const unknown = (reason, cause) => fail('COMMIT_OUTCOME_UNKNOWN', 'The file was replaced but the result could not be confirmed.', { reason, ...(cause ? { cause } : {}) });
     try {
       fsyncDir();
     } catch (error) {
-      fail('DURABILITY_UNCONFIRMED', 'The new file is in place but the directory sync failed.', { cause: error?.code ?? String(error) });
+      unknown('directory-sync-failed', error?.code ?? String(error));
     }
-    const after = readBytes(file);
-    if (after === null || sha256(after) !== expected) fail('WRITE_FAILED', 'The written file does not match after replacement.');
+    let after;
+    try {
+      after = readBytes(file);
+    } catch (error) {
+      unknown('read-back-failed', error?.code ?? String(error));
+    }
+    if (after === null) unknown('read-back-missing');
+    if (sha256(after) !== expected) unknown('read-back-mismatch');
   }
 
   function rotateBackups(currentBytes) {

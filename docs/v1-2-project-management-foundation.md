@@ -82,6 +82,15 @@ refused. It is never repaired, migrated or replaced with demo data.
    is no unconditional write, so a stale tab or caller cannot overwrite newer changes.
 4. **Target check.** The target and every backup must be a regular file: not a symlink, one hard link, owned by the user, not
    group/other-writable, and within the size limit. Otherwise `UNSAFE_TARGET`.
+   - **Reads (remediation F4):** a file is opened with `O_NOFOLLOW | O_NONBLOCK`. The checks run on the **opened** inode
+     (`fstat`), and the bytes are read from the same descriptor, so the checks and the content always describe one file.
+   - If the opened inode reports `nlink 0`, it was replaced by another process's atomic rename between `open` and `fstat`. Only
+     that case is re-opened, at most `REPLACED_INODE_RETRIES` (5) times; a file that keeps reporting it is refused.
+   - `nlink >= 2` (a real hard link), symlinks, other owners, group/other-writable and non-regular files are refused on the
+     first attempt, as before.
+   - Evidence: synthetic multi-process stress on APFS. Over about 90 million reader `lstat` samples, every anomaly was the
+     outgoing (replaced) inode with `nlink 0`, 0.2–1.4 ms after a rename started, and gone on the next `lstat`. No `nlink 2`
+     was ever observed, and no update was lost. The earlier "extra hard links" text was printed for any `nlink != 1`.
 5. **Backup.** Before the target is touched, `.bak.1`–`.bak.3` are rotated and the current bytes are written atomically to
    `.bak.1` and verified. If the backup fails, the result is `BACKUP_FAILED` and the target is unchanged.
 6. **Atomic write.**
@@ -89,8 +98,12 @@ refused. It is never repaired, migrated or replaced with demo data.
    - Re-read it and verify its hash.
    - Rename it over the target, then fsync the directory where supported.
    - Re-read the target and verify its hash.
-   - On any failure, the previous file is unchanged and our temp file is removed. If the rename succeeded but the directory
-     sync failed, the result is `DURABILITY_UNCONFIRMED`.
+   - **Before the rename (remediation F1):** any failure leaves the previous file byte-identical and our temp file is removed:
+     `WRITE_FAILED` / `BACKUP_FAILED`.
+   - **After the rename (remediation F1):** a failure of the directory sync, the read-back, or the hash comparison is
+     `COMMIT_OUTCOME_UNKNOWN` with a `reason` (`directory-sync-failed`, `read-back-failed`, `read-back-missing`,
+     `read-back-mismatch`). The new bytes may already be the current state, so nothing reports "unchanged". The last-known-good
+     backup (`.bak.1`) still holds the previous bytes.
 7. **Stale temp files** from a crashed writer are never read and never deleted automatically.
 
 **Restore:** `restoreBackup({ generation, expectedCurrentVersion })`.

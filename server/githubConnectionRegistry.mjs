@@ -4,7 +4,10 @@
 //   - its id is non-blank and unique across current AND removed projects;
 //   - EITHER management.githubConnection is `connected` for exactly its saved `repository`
 //     OR it is the single legacy PM Dashboard record (see legacyCompatProjectId);
-//   - no other project claims the same repository (any clash denies all of them).
+//   - NO OTHER saved record (current or removed, any lifecycle, connected or not, demo or not) names the same repository in any
+//     spelling (V1.2 remediation F2): a repository claimed twice grants nothing to anyone, legacy rule included;
+//   - a user-verified connection carries the GitHub repository id verified at connect time; the history service checks every
+//     GitHub answer against it (V1.2 remediation F3).
 // A repository string alone, a display name, a demo record or a missing/invalid state never grants anything.
 
 import { LIFECYCLE, assertUsableState, connectionOf, lifecycleOf, removedOf, repositoryKey } from './projectManagementSchema.mjs';
@@ -14,6 +17,31 @@ export const LEGACY_COMPAT_REPOSITORY = 'augusliang23-web/pm-dashboard';
 
 const issued = new WeakSet();
 const text = (v) => (typeof v === 'string' ? v : '');
+const isRecordLike = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * F2 conflict key: one repository in any spelling (case, surrounding space, https/www/github.com prefix, git@github.com: SSH
+ * form, trailing slash, .git suffix) maps to the same key, so look-alike records collide instead of slipping past the check.
+ */
+export function repositoryClaimKey(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase()
+    .replace(/^git@github\.com:/, '')
+    .replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//, '')
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '');
+}
+
+/** F2: how many distinct saved records (current AND removed) name each repository, via `repository` or a connection record. */
+export function repositoryClaimCounts(state) {
+  const counts = new Map();
+  for (const p of [...state.projects, ...removedOf(state).map((e) => e.project)]) {
+    const connection = isRecordLike(p.management) && isRecordLike(p.management.githubConnection) ? p.management.githubConnection : null;
+    const keys = new Set([repositoryClaimKey(p.repository), repositoryClaimKey(connection?.repository)].filter(Boolean));
+    for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
 
 function idCounts(state) {
   const counts = new Map();
@@ -31,6 +59,7 @@ function idCounts(state) {
  */
 export function legacyCompatProjectId(state) {
   const counts = idCounts(state);
+  if (repositoryClaimCounts(state).get(repositoryClaimKey(LEGACY_COMPAT_REPOSITORY)) !== 1) return null; // F2 applies to the legacy rule too
   const candidates = state.projects.filter((p) => p.dataMode === undefined && p.management === undefined && p.repository === LEGACY_COMPAT_REPOSITORY);
   if (candidates.length !== 1) return null;
   const id = text(candidates[0].id);
@@ -45,17 +74,24 @@ export function legacyCompatProjectId(state) {
 export function connectionAuthorizations(state) {
   assertUsableState(state);
   const counts = idCounts(state);
+  const claimCounts = repositoryClaimCounts(state); // F2: computed over ALL records BEFORE any authority is issued
   const legacyId = legacyCompatProjectId(state);
   const claims = new Map();
   for (const p of state.projects) {
     const id = text(p.id);
     if (p.dataMode !== undefined || !id.trim() || counts.get(id) !== 1 || lifecycleOf(p) !== LIFECYCLE.ACTIVE) continue;
+    if (claimCounts.get(repositoryClaimKey(p.repository)) !== 1) continue; // another record names this repository: nobody gets it
     const c = connectionOf(p);
     let entry = null;
     if (c && c.status === 'connected' && c.repository === p.repository) {
-      entry = { projectId: id, repository: p.repository, source: c.source, generation: c.generation, connectedAt: c.connectedAt };
+      // F3: a user-verified connection must carry the GitHub id verified at connect time. The persisted legacy record carries
+      // none, so it is accepted only for the exact legacy repository (explicit, documented exception).
+      const pinned = c.verifiedRepositoryId;
+      if (c.source === 'user-verified' && !(Number.isInteger(pinned) && pinned > 0)) continue;
+      if (c.source === 'legacy-pm-dashboard-compat' && p.repository !== LEGACY_COMPAT_REPOSITORY) continue;
+      entry = { projectId: id, repository: p.repository, source: c.source, generation: c.generation, connectedAt: c.connectedAt, verifiedRepositoryId: c.source === 'user-verified' ? pinned : null };
     } else if (!c && id === legacyId) {
-      entry = { projectId: id, repository: p.repository, source: 'legacy-pm-dashboard-compat', generation: 0, connectedAt: null };
+      entry = { projectId: id, repository: p.repository, source: 'legacy-pm-dashboard-compat', generation: 0, connectedAt: null, verifiedRepositoryId: null };
     }
     if (!entry) continue;
     const key = repositoryKey(entry.repository);
@@ -64,7 +100,7 @@ export function connectionAuthorizations(state) {
   const out = new Map();
   for (const [key, entry] of claims) {
     if (entry === 'CLASH') continue;
-    out.set(key, Object.freeze({ ...entry, scopeKey: JSON.stringify([entry.repository, entry.projectId, entry.source, entry.generation, entry.connectedAt]) }));
+    out.set(key, Object.freeze({ ...entry, scopeKey: JSON.stringify([entry.repository, entry.projectId, entry.source, entry.generation, entry.connectedAt, entry.verifiedRepositoryId]) }));
   }
   return out;
 }

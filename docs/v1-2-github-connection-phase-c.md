@@ -29,7 +29,30 @@ server re-reads and validates saved state. It grants a repository only to a proj
 2. Its id is non-blank and unique across current **and** removed projects.
 3. It has a `connected` record for exactly its saved `repository`, **or** it is the unique legacy PM Dashboard record (Decision B,
    below).
-4. No other project claims the same repository. A clash denies all claimants.
+4. **No other saved record names the same repository (remediation F2).** Claims are counted over **every** current and removed
+   record before any authority is issued: any lifecycle, connected or not, demo or not, via `repository` or a connection
+   record.
+   - Spellings are normalized for this check (case, whitespace, `https://`/`www.`/`github.com/` prefix, `git@github.com:`,
+     trailing slash, `.git`).
+   - A repository claimed by more than one record gives **no** authority to anyone, including the legacy PM rule.
+5. **A `user-verified` connection must carry `verifiedRepositoryId` (remediation F3),** the GitHub id recorded at connect time;
+   without it, there is no authority.
+
+### Verified identity on every GitHub answer (remediation F3)
+
+The history service checks GitHub's answers against the authorization before anything derived from them is used:
+- the repository metadata;
+- every PR's `base.repo` in the list;
+- the PR-detail `base.repo`, checked before check runs or reviews are requested.
+
+What must match:
+- **Pinned (`user-verified`):** GitHub's numeric `id` must equal `verifiedRepositoryId` **and** `full_name` must equal the
+  stored repository exactly. A transfer, re-creation, rename or missing identity is refused with 403 `forbidden`; the result is
+  never cached, and no further `gh` call is made for that read.
+- **Unpinned legacy PM exception:** matched by name only, case-insensitively, from `full_name` (or GitHub's canonical
+  `https://github.com/...` `html_url` when `full_name` is absent). If neither is present, the read is refused.
+- **Forks:** a fork's **head** repository is a different repository and is kept separate (`headRepo`); only the **base** must
+  be this repository.
 
 The requested `repo` must match the stored spelling exactly. When `projectId` is sent (the UI always sends it), it must be that
 project's id.
@@ -106,12 +129,15 @@ Other effects of lifecycle commands:
 
 - **Single-user, loopback.** Host/Origin/Referer checks are CSRF protection, not local-process authentication.
 - **Advisory lock.** Only this store's writers use the lock; legacy `state-write` still refuses to start.
-- **Store race (pre-existing in V1.2A).** `server/projectManagementStore.mjs` (outside the C allowlist) can spuriously report
-  `UNSAFE_TARGET` ("extra hard links") when a reader `lstat`s `app-state.json` during another process's atomic rename. This was
-  observed in about 1 of 500 racing workers on APFS. It fails closed and loses no data.
-  - Proposed amendment: retry the read-side `lstat` of the target a few times when `nlink !== 1`, or check `nlink` only under the
-    write lock.
-- **Static asset exposure (unchanged).** Built production mode still serves `dist/server.cjs(.map)` (P3).
+- **Store race: resolved by remediation F4.** Root cause measured on synthetic files: a reader can observe the replaced inode
+  (`nlink 0`) of another process's atomic rename. Reads are now descriptor-bound with a bounded re-open for `nlink 0` only; see
+  `docs/v1-2-project-management-foundation.md`. Real hard links are still refused immediately.
+- **Client projection (remediation F6).** `githubAuthorizationsFor` applies the same global conflict gate and requires a complete
+  connected record (pinned id for `user-verified`, valid `connectedAt`, `generation >= 1`, no revocation fields). Otherwise the
+  overview shows Not connected.
+- **Static asset exposure (F7, unchanged, out of remediation scope).** Built production mode still serves `dist/server.cjs(.map)`
+  (P3). This is acceptable only under the single-user, loopback-only limitation; it needs a separate decision before any wider
+  exposure.
 - **No real GitHub during development.** All C tests use a fake `gh`. Connecting real repositories, and the first write to the
   owner's real state, need separate release authorization.
 

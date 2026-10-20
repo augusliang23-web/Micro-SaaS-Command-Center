@@ -166,7 +166,8 @@ describe('refusals are shown, never retried, never optimistic',()=>{
  test('a network failure is not treated as success; the page reloads to show the real state',async()=>{
   const b=backend([synthetic('a')],{fail:()=> 'network'});mount();await flush();
   fireEvent.click(within(row('SYN a')).getByRole('button',{name:/封存/}));await flush();
-  expect(screen.getByRole('alert')).toHaveTextContent('無法確認是否已儲存');expect(b.calls.filter(c=>c.url==='/api/projects')).toHaveLength(2);
+  // V1.2 remediation F1: no response means the outcome is unknown; the page re-reads and says so, never retries
+  expect(screen.getByRole('alert')).toHaveTextContent('無法確認這次變更是否已儲存（結果未知）');expect(b.calls.filter(c=>c.url==='/api/projects')).toHaveLength(2);expect(b.posts()).toHaveLength(1);
  });
  test('every action button is disabled while a command is in flight',async()=>{
   backend([synthetic('a'),synthetic('b')]);
@@ -176,6 +177,41 @@ describe('refusals are shown, never retried, never optimistic',()=>{
   fireEvent.click(within(row('SYN a')).getByRole('button',{name:/封存/}));await flush();
   for(const btn of screen.getAllByRole('button').filter(x=>!x.getAttribute('role')))expect(btn).toBeDisabled();
   expect(fetchSpy.mock.calls.filter(([u])=>String(u)==='/api/projects/commands')).toHaveLength(1);
+ });
+});
+
+// ---------------- V1.2 remediation F1: uncertain outcomes are reconciled, never retried, never called "unchanged" ----------------
+describe('F1 uncertain outcomes',()=>{
+ test.each([
+  ['COMMIT_OUTCOME_UNKNOWN',{error:'x',code:'COMMIT_OUTCOME_UNKNOWN',outcome:'unknown',stateReadable:true,currentVersion:'1'.repeat(64)}],
+  ['an unrecognised 5xx',{error:'boom',code:'INTERNAL'}],
+  ['a 5xx without a body code',null],
+ ])('%s: the page re-reads the current state, says the outcome is unknown, notifies the overview and does not retry',async(_l,body)=>{
+  const b=backend([synthetic('a')],{fail:()=>({status:500,body})});const onChanged=mount();await flush();
+  fireEvent.click(within(row('SYN a')).getByRole('button',{name:/封存/}));await flush();
+  expect(screen.getByRole('alert')).toHaveTextContent('無法確認這次變更是否已儲存（結果未知）。已重新讀取目前資料');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('沒有變更');
+  expect(b.posts()).toHaveLength(1);expect(b.calls.filter(c=>c.url==='/api/projects')).toHaveLength(2);expect(onChanged).toHaveBeenCalledTimes(1);
+ });
+ test('if the state cannot be read afterwards, the page says the outcome is unknown AND unreadable',async()=>{
+  let gets=0;
+  vi.spyOn(globalThis,'fetch').mockImplementation((input:RequestInfo|URL,init?:RequestInit)=>{
+   const url=String(input);const method=(init?.method??'GET').toUpperCase();
+   if(url==='/api/projects'){gets+=1;return Promise.resolve(gets===1?new Response(JSON.stringify({version:'0'.repeat(64),projects:[synthetic('a')],removed:[]}),{status:200}):new Response(JSON.stringify({error:'x',code:'CORRUPT_STATE'}),{status:500}));}
+   if(method==='POST')return Promise.resolve(new Response(JSON.stringify({error:'x',code:'COMMIT_OUTCOME_UNKNOWN',stateReadable:false,currentVersion:null}),{status:500}));
+   return Promise.resolve(new Response('{}',{status:500}));
+  });
+  mount();await flush();
+  fireEvent.click(within(row('SYN a')).getByRole('button',{name:/封存/}));await flush();
+  const alerts=screen.getAllByRole('alert').map(e=>e.textContent??'');
+  expect(alerts.some(x=>x.includes('結果未知），而且目前也無法讀取資料'))).toBe(true); // the notice
+  expect(alerts.some(x=>x.includes('Not available'))).toBe(true); // and the honest unavailable banner, no stale list
+  expect(screen.queryAllByRole('article')).toHaveLength(0);
+ });
+ test('a pre-replacement refusal (WRITE_FAILED) still says the data is unchanged and does not reload',async()=>{
+  const b=backend([synthetic('a')],{fail:()=>({status:500,body:{error:'x',code:'WRITE_FAILED'}})});mount();await flush();
+  fireEvent.click(within(row('SYN a')).getByRole('button',{name:/封存/}));await flush();
+  expect(screen.getByRole('alert')).toHaveTextContent('存檔失敗，原本的資料沒有變更');expect(b.calls.filter(c=>c.url==='/api/projects')).toHaveLength(1);
  });
 });
 

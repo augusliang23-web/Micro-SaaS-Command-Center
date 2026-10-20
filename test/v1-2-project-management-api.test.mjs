@@ -14,7 +14,9 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { isUsableSavedState } from '../src/savedState.mjs';
-import { parseCommandRequest } from '../server/v1ProjectManagementRoutes.mjs';
+import express from 'express';
+import { createV1ProjectManagementRouter, parseCommandRequest } from '../server/v1ProjectManagementRoutes.mjs';
+import { createProjectStore, defaultIo } from '../server/projectManagementStore.mjs';
 import { assertCapabilitiesCompatibleWithProjectWriter, isProjectCommandPath } from '../server/v1RequestPolicy.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -249,9 +251,15 @@ describe('3. the single write route: Origin, Referer, Host, media type, size and
       });
       assert.equal(chunked, 413);
       for (const raw of ['{bad json', '[]', '"string"', 'null', JSON.stringify({ expectedVersion: v }), JSON.stringify({ command: { type: 'archive', id: 'a' } }),
-        JSON.stringify({ expectedVersion: 'not-a-hash', command: { type: 'archive', id: 'a' } }), Buffer.from([0x7b, 0xff, 0x7d]).toString('latin1')]) {
+        JSON.stringify({ expectedVersion: 'not-a-hash', command: { type: 'archive', id: 'a' } })]) {
         assert.equal((await post(raw)).status, 400, raw);
       }
+      // V1.2 remediation F5: truly malformed UTF-8 sent as RAW BYTES (no string round trip). Decoded lossily (U+FFFD) this body
+      // would be a VALID edit; only the strict UTF-8 decoder refuses it, so a 400 here proves the strict check runs.
+      const lossyValid = Buffer.concat([Buffer.from(`{"expectedVersion":"${v}","command":{"type":"edit","id":"a","patch":{"name":"X`), Buffer.from([0xff, 0xfe]), Buffer.from('Y"}}}')]);
+      assert.equal(new TextDecoder().decode(lossyValid).includes('\ufffd'), true, 'the fixture really contains invalid UTF-8');
+      const malformed = await post(lossyValid);
+      assert.deepEqual([malformed.status, malformed.json.code], [400, 'INVALID_REQUEST']);
       assert.equal(fileHash(cwd), v);
     });
   });
@@ -412,5 +420,53 @@ describe('6. legacy state-write is refused; composition is as documented', () =>
     assert.doesNotMatch(startServer, /express\.json\(/);
     const router = fs.readFileSync(path.join(REPO, 'server/v1ProjectManagementRoutes.mjs'), 'utf8');
     assert.doesNotMatch(router, /node:(child_process|net|https?)|\bfetch\(|execFile|spawn\(|GoogleGenAI|openai/i);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ 7. remediation F1 over HTTP
+describe('7. (F1) an uncertain commit is reported as unknown and reconciled by a fresh read, never as "unchanged"', () => {
+  async function withRouter(storeFactory, fn) {
+    const app = express();
+    app.use('/api', createV1ProjectManagementRouter({ storeFactory }));
+    const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+    try { return await fn(`http://127.0.0.1:${server.address().port}/api`); } finally { await new Promise((r) => server.close(r)); }
+  }
+  /** Fault injection AFTER the target rename: the directory fsync fails; optionally every later read fails too. */
+  function faultyStoreFactory(dir, { unreadableAfter }) {
+    const real = fs.realpathSync(dir);
+    const flags = { replaced: false, dirFd: null };
+    const io = {
+      ...defaultIo,
+      openSync: (p, ...rest) => { if (flags.replaced && unreadableAfter && p === path.join(real, 'app-state.json')) throw Object.assign(new Error('synthetic EIO'), { code: 'EIO' }); const fd = defaultIo.openSync(p, ...rest); if (p === real) flags.dirFd = fd; return fd; },
+      renameSync: (a, b) => { defaultIo.renameSync(a, b); if (b === path.join(real, 'app-state.json')) flags.replaced = true; },
+      fsyncSync: (fd) => { if (flags.replaced && fd === flags.dirFd) throw Object.assign(new Error('synthetic EIO'), { code: 'EIO' }); return defaultIo.fsyncSync(fd); },
+    };
+    return () => createProjectStore({ dataDir: dir, io });
+  }
+  const post = (base, body) => fetch(`${base}/projects/commands`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, json: await r.json() }));
+
+  test('state still readable: 500 COMMIT_OUTCOME_UNKNOWN with the CURRENT version (the new bytes), no retry, no "unchanged" claim', async () => {
+    const cwd = makeCwd();
+    const dir = path.join(cwd, 'data');
+    const before = fileHash(cwd);
+    await withRouter(faultyStoreFactory(dir, { unreadableAfter: false }), async (base) => {
+      const res = await post(base, { expectedVersion: before, command: { type: 'add', input: { name: 'maybe saved' } } });
+      assert.equal(res.status, 500);
+      assert.deepEqual([res.json.code, res.json.outcome, res.json.stateReadable], ['COMMIT_OUTCOME_UNKNOWN', 'unknown', true]);
+      assert.notEqual(fileHash(cwd), before, 'the file was replaced');
+      assert.equal(res.json.currentVersion, fileHash(cwd), 'reconciled to what is actually on disk now');
+      assert.doesNotMatch(res.json.error, /unchanged|Nothing was changed/i);
+      assert.doesNotMatch(JSON.stringify(res.json), /\/(tmp|private|Users|var)\//);
+    });
+  });
+
+  test('state unreadable after the replacement: 500 COMMIT_OUTCOME_UNKNOWN with stateReadable false and no version', async () => {
+    const cwd = makeCwd();
+    const before = fileHash(cwd);
+    await withRouter(faultyStoreFactory(path.join(cwd, 'data'), { unreadableAfter: true }), async (base) => {
+      const res = await post(base, { expectedVersion: before, command: { type: 'add', input: { name: 'maybe saved' } } });
+      assert.equal(res.status, 500);
+      assert.deepEqual([res.json.code, res.json.stateReadable, res.json.currentVersion], ['COMMIT_OUTCOME_UNKNOWN', false, null]);
+    });
   });
 });

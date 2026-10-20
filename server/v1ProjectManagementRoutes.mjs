@@ -44,20 +44,21 @@ const SERVER_MESSAGES = {
   UNSAFE_TARGET: 'The saved-state file failed a safety check. Nothing was changed.',
   WRITE_FAILED: 'Saving failed. The previous saved state is unchanged.',
   BACKUP_FAILED: 'Saving was stopped because a backup could not be written. The previous saved state is unchanged.',
-  DURABILITY_UNCONFIRMED: 'The change was written but the disk sync could not be confirmed.',
+  // V1.2 remediation F1: the file was already replaced when this failed, so the outcome is unknown, never "unchanged".
+  COMMIT_OUTCOME_UNKNOWN: 'The change may or may not have been saved; this could not be confirmed. Reload the current state before trying again.',
 };
 
 const isRecord = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const reject = (code, message) => { throw new ProjectDataError(code, message); };
 
-function sendError(res, error) {
+function sendError(res, error, extra = {}) {
   if (error instanceof ProjectDataError) {
     const status = STATUS_BY_CODE[error.code] ?? 500;
     const message = status === 500 ? (SERVER_MESSAGES[error.code] ?? 'The request could not be completed.') : error.message;
     const body = { error: message, code: error.code };
     if (error.code === 'CONFLICT' && typeof error.details?.currentVersion === 'string') body.currentVersion = error.details.currentVersion;
     if (error.code === 'GITHUB_VERIFICATION_FAILED' && typeof error.details?.kind === 'string') body.kind = error.details.kind;
-    res.status(status).json(body);
+    res.status(status).json({ ...body, ...extra });
     return;
   }
   res.status(500).json({ error: 'The request could not be completed.', code: 'INTERNAL' });
@@ -214,6 +215,18 @@ export function createV1ProjectManagementRouter({ storeFactory = defaultStoreFac
       const { version, result } = store.apply({ expectedVersion, command });
       res.json({ version, result });
     } catch (error) {
+      // F1: an uncertain commit is reconciled by a fresh, validated read. The response says what is current now (or that the
+      // state cannot be read); it never retries the command and never claims the previous state is unchanged.
+      if (error instanceof ProjectDataError && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
+        let reconciliation = { outcome: 'unknown', stateReadable: false, currentVersion: null };
+        try {
+          const store = storeFactory();
+          const current = store ? store.read() : null;
+          if (current && current.state !== null) reconciliation = { outcome: 'unknown', stateReadable: true, currentVersion: current.version };
+        } catch { /* stays unreadable */ }
+        sendError(res, error, reconciliation);
+        return;
+      }
       sendError(res, error);
     }
   });

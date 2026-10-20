@@ -4,6 +4,7 @@ import express from 'express';
 
 import {
   HISTORY_LIMITS,
+  assertRepositoryIdentity,
   classifyGhFailure,
   createHistoryCache,
   fetchDevelopmentHistory,
@@ -975,4 +976,83 @@ test('V1.2C route: the cache is keyed by authority, so a reconnect (new generati
     assert.deepEqual([after.cache, after.fetchedAt], ['miss', 't2']);
     assert.equal((await fetch(`${base}/development-history?repo=${REPO}`)).status, 403, 'the legacy PM is not in this state');
   });
+});
+
+// ------------------------------------------------------------------------------------------------ V1.2 remediation F3
+const APP = 'synthetic-owner/app';
+const pinnedState = (id = 42) => pmState([syntheticProject('p1', { repository: APP, management: { lifecycle: 'active', githubConnection: {
+  status: 'connected', repository: APP, generation: 1, source: 'user-verified', connectedAt: '2026-10-19T00:00:00.000Z', verifiedRepositoryId: id, revokedAt: null, revokedReason: null } } })]);
+const PINNED = issueHistoryAuthorization(pinnedState(), { repo: APP, projectId: 'p1' });
+const appPull = (baseRepo) => ({ ...PULLS[0], base: { ...PULLS[0].base, repo: baseRepo }, head: { ...PULLS[0].head, repo: { full_name: 'someone-else/fork', id: 7 } } });
+const appRoutes = ({ meta = { id: 42, full_name: APP, default_branch: 'main' }, base = { id: 42, full_name: APP } } = {}) => [
+  [/^repos\/synthetic-owner\/app$/, () => ghOutput(meta)],
+  [/\/branches\?/, () => ghOutput(BRANCHES)],
+  [/\/pulls\?state=all/, () => ghOutput([appPull(base)])],
+  [/\/pulls\/55$/, () => ghOutput({ ...appPull(base), number: 55, changed_files: 1, additions: 1, deletions: 0, commits: 1 })],
+  [/\/commits\?sha=/, () => ghOutput([commit('m1', [], '2026-04-26T21:42:44Z')])],
+  [/\/compare\//, () => ghOutput({ status: 'identical', ahead_by: 0, behind_by: 0, total_commits: 0, merge_base_commit: { sha: 'm1' }, commits: [] })],
+  [/\/check-runs/, () => ghOutput({ total_count: 0, check_runs: [] })],
+  [/\/reviews/, () => ghOutput([])],
+];
+
+test('F3: a user-verified authorization carries the pinned GitHub id; an unpinned user-verified record authorizes nothing', () => {
+  assert.equal(PINNED.verifiedRepositoryId, 42);
+  assert.equal(AUTH.verifiedRepositoryId, null, 'the legacy PM exception is unpinned');
+  const unpinned = pmState([syntheticProject('p1', { repository: APP, management: { lifecycle: 'active', githubConnection: {
+    status: 'connected', repository: APP, generation: 1, source: 'user-verified', connectedAt: '2026-10-19T00:00:00.000Z', verifiedRepositoryId: null, revokedAt: null, revokedReason: null } } })]);
+  assert.equal(issueHistoryAuthorization(unpinned, { repo: APP }), null);
+});
+
+test('F3: assertRepositoryIdentity matrix (pinned: exact id AND exact name; legacy: name only, full_name or github.com html_url)', () => {
+  const ok = (meta, auth, repo = APP) => assert.doesNotThrow(() => assertRepositoryIdentity(meta, repo, auth, 'x'));
+  const bad = (meta, auth, repo = APP) => assert.throws(() => assertRepositoryIdentity(meta, repo, auth, 'x'), (e) => e instanceof GithubCliError && e.kind === 'forbidden');
+  ok({ id: 42, full_name: APP }, PINNED);
+  bad({ id: 43, full_name: APP }, PINNED); // transferred / re-created repository
+  bad({ id: 42, full_name: 'synthetic-owner/renamed' }, PINNED);
+  bad({ id: 42, full_name: 'Synthetic-Owner/App' }, PINNED); // pinned name is exact
+  bad({ full_name: APP }, PINNED); // id missing
+  bad(null, PINNED);
+  ok({ full_name: 'Augusliang23-Web/PM-Dashboard' }, AUTH, REPO);
+  ok({ html_url: `https://github.com/${REPO}` }, AUTH, REPO);
+  bad({ html_url: `https://evil.example/${REPO}` }, AUTH, REPO);
+  bad({ default_branch: 'main' }, AUTH, REPO); // no identity at all
+  bad({ full_name: 'augusliang23-web/other' }, AUTH, REPO);
+});
+
+test('F3: a metadata id/name mismatch stops the history read before any other GitHub call', async () => {
+  for (const meta of [{ id: 999, full_name: APP }, { id: 42, full_name: 'synthetic-owner/renamed' }, { default_branch: 'main' }]) {
+    const { execFileFn, calls } = fakeGh(appRoutes({ meta }));
+    await assert.rejects(fetchDevelopmentHistory(APP, { authorization: PINNED, execFileFn }), (e) => e.kind === 'forbidden', JSON.stringify(meta));
+    assert.equal(calls.length, 1, 'only the metadata request was made');
+  }
+});
+
+test('F3: every PR must target this repository; a foreign base is refused, a fork head is accepted and kept separate', async () => {
+  const foreign = fakeGh(appRoutes({ base: { id: 103, full_name: 'synthetic-owner/other' } }));
+  await assert.rejects(fetchDevelopmentHistory(APP, { authorization: PINNED, execFileFn: foreign.execFileFn }), (e) => e.kind === 'forbidden');
+  const missing = fakeGh(appRoutes({ base: null })); // null: an undefined value would fall back to the default parameter
+  await assert.rejects(fetchDevelopmentHistory(APP, { authorization: PINNED, execFileFn: missing.execFileFn }), (e) => e.kind === 'forbidden');
+  const fork = fakeGh(appRoutes());
+  const history = await fetchDevelopmentHistory(APP, { authorization: PINNED, execFileFn: fork.execFileFn });
+  assert.equal(history.pulls[0].headRepo, 'someone-else/fork');
+});
+
+test('F3: PR detail verifies its base repository before reading checks or reviews', async () => {
+  const foreign = fakeGh(appRoutes({ base: { id: 42, full_name: 'synthetic-owner/other' } }));
+  await assert.rejects(fetchPullDetail(APP, 55, { authorization: PINNED, execFileFn: foreign.execFileFn, aggregateCi: aggregateCiResponse }), (e) => e.kind === 'forbidden');
+  assert.equal(foreign.calls.length, 1, 'no check-runs or reviews were requested');
+  const good = fakeGh(appRoutes());
+  assert.equal((await fetchPullDetail(APP, 55, { authorization: PINNED, execFileFn: good.execFileFn, aggregateCi: aggregateCiResponse })).number, 55);
+});
+
+test('F3 route: an identity mismatch is 403 and never cached; the next read asks GitHub again', async () => {
+  let calls = 0;
+  const fetchHistory = async (repo, { authorization }) => { calls += 1; return fetchDevelopmentHistory(repo, { authorization, execFileFn: fakeGh(appRoutes({ meta: { id: 999, full_name: APP } })).execFileFn }); };
+  await withRouter({ fetchHistory, authorizeHistory: ({ repo, projectId }) => issueHistoryAuthorization(pinnedState(), { repo, projectId }) }, async (base) => {
+    for (let i = 0; i < 2; i += 1) {
+      const res = await fetch(`${base}/development-history?repo=${APP}&projectId=p1`);
+      assert.deepEqual([res.status, (await res.json()).kind], [403, 'forbidden']);
+    }
+  });
+  assert.equal(calls, 2, 'the refused result was not cached');
 });

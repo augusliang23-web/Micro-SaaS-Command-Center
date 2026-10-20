@@ -28,6 +28,33 @@ export const HISTORY_LIMITS = Object.freeze({
   cacheTtlMs: 5 * 60_000,
 });
 
+/**
+ * V1.2 remediation F3: every GitHub answer that names a repository must be the AUTHORIZED repository before anything derived
+ * from it is accepted. A user-verified connection is pinned to GitHub's numeric id (recorded at connect time) and its exact
+ * full_name; a rename, transfer, id change or missing identity fails closed. The unpinned legacy PM Dashboard exception is
+ * matched by name only (GitHub's full_name, or its canonical html_url path when full_name is absent), case-insensitively.
+ * Never derived from the requested string: an answer without identity is refused.
+ */
+export function assertRepositoryIdentity(meta, repo, authorization, what) {
+  const refuse = (why) => { throw new GithubCliError(`GitHub ${what} does not match the authorized repository (${why}); nothing was used.`, 'forbidden'); };
+  if (!meta || typeof meta !== 'object') refuse('missing repository identity');
+  const pinned = authorization?.verifiedRepositoryId ?? null;
+  if (pinned !== null) {
+    if (!Number.isInteger(meta.id) || meta.id !== pinned) refuse('repository id differs from the verified connection');
+    if (meta.full_name !== repo) refuse('repository name differs from the verified connection');
+    return;
+  }
+  let name = typeof meta.full_name === 'string' ? meta.full_name : null;
+  if (name === null && typeof meta.html_url === 'string') {
+    try {
+      const url = new URL(meta.html_url);
+      if (url.protocol === 'https:' && url.hostname === 'github.com') name = url.pathname.replace(/^\/+|\/+$/g, '');
+    } catch { /* stays null */ }
+  }
+  if (name === null) refuse('missing repository identity');
+  if (name.toLowerCase() !== repo.toLowerCase()) refuse('repository name differs');
+}
+
 /** Refuses any read that does not carry a registry-issued authorization for exactly this repository. */
 export function assertHistoryAuthorized(repo, authorization) {
   if (!isHistoryAuthorizationFor(authorization, repo)) {
@@ -230,6 +257,7 @@ export async function fetchDevelopmentHistory(repo, { authorization, execFileFn 
   const warnings = [];
 
   const repoInfo = (await ghApiPage(`repos/${repo}`, opts)).data;
+  assertRepositoryIdentity(repoInfo, repo, authorization, 'repository metadata');
   const defaultBranch = repoInfo?.default_branch || 'main';
 
   // Branches and PRs are read first; every later read is pinned to the exact
@@ -239,8 +267,10 @@ export async function fetchDevelopmentHistory(repo, { authorization, execFileFn 
     fetchPaginated(`repos/${repo}/pulls?state=all&sort=created&direction=desc`, { ...opts, maxPages: HISTORY_LIMITS.maxPullPages }),
   ]);
   const branches = branchPage.items.map(normalizeBranch).sort((a, b) => a.name.localeCompare(b.name));
+  // F3: every PR must target this repository (its base repo identity); a fork's head repository stays separate (headRepo).
+  for (const item of pullPage.items) assertRepositoryIdentity(item?.base?.repo, repo, authorization, `PR #${item?.number ?? '?'} base repository`);
   const pulls = pullPage.items
-    .map((item) => ({ ...normalizePull(item), baseRepo: item.base?.repo?.full_name ?? repo }))
+    .map((item) => ({ ...normalizePull(item), baseRepo: item.base.repo.full_name ?? repo }))
     .sort((a, b) => a.number - b.number);
   const defaultHeadSha = branches.find((b) => b.name === defaultBranch)?.headSha ?? null;
   if (!defaultHeadSha) warnings.push(`${defaultBranch} head was not observed in the branch list; history is read by name and cannot be pinned.`);
@@ -412,6 +442,7 @@ export async function fetchPullDetail(repo, number, { authorization, execFileFn 
   if (!Number.isInteger(number) || number < 1) throw new GithubCliError('PR number must be a positive integer.', 'failed');
   const opts = { execFileFn, signal };
   const pr = (await ghApiPage(`repos/${repo}/pulls/${number}`, opts)).data;
+  assertRepositoryIdentity(pr?.base?.repo, repo, authorization, `PR #${number} base repository`); // F3: before any detail is used
   const headSha = pr?.head?.sha;
   const [checks, reviews] = await Promise.all([
     headSha
