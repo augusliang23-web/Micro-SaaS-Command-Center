@@ -78,7 +78,7 @@ export function normalizeMockStatus({targetId,pr,workflows,review,sourceState,ob
   repo:t.repo,pr:t.pr,url:'https://github.com/'+t.repo+'/pull/'+t.pr,
   head:pr.headSha,ci,review:qa,
   status:pr.merged?'MERGED':
-   (ci==='FAIL'||qa==='FINDINGS'||qa==='FAILED'?'HOLD':
+   (['FAIL','FAILED','BLOCKED'].includes(ci)||qa==='FINDINGS'||qa==='FAILED'?'HOLD':
     (ci==='PASS'&&qa==='NO_NEW_MAJOR_FINDINGS'?'READY_FOR_REVIEW':'PARTIAL')),
   agent:'NOT_CONNECTED',
   reason:ci==='PASS'&&qa==='NO_NEW_MAJOR_FINDINGS'?'MOCK_EVIDENCE_COMPLETE':
