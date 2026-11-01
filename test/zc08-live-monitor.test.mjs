@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { historyFreshness, monitorSummary, validateMonitorHistory, MONITOR_POLL_MS } from '../src/v1/liveMonitorModel.mjs';
+import { beginMonitorRefresh, historyFreshness, monitorSummary, validateMonitorHistory, MONITOR_POLL_MS } from '../src/v1/liveMonitorModel.mjs';
 
 const REPO='augusliang23-web/pm-dashboard';
 const NOW=Date.parse('2026-11-01T02:00:00.000Z');
@@ -60,4 +60,14 @@ test('ZC08-09 event view caps history to 12 entries',()=>{
   const result=monitorSummary(history({pulls}),NOW);
   assert.equal(result.events.length,12);
   assert.equal(result.prCount,30);
+});
+
+test('ZC08-10 retry must retain last UNAVAILABLE error until verified success',()=>{
+  const original={repo:REPO,history:history(),checkedAt:'2026-11-01T01:59:00Z',
+    error:'HTTP 429',busy:false,lastRequest:'2026-11-01T01:59:00Z'};
+  const retried=beginMonitorRefresh(original,REPO,'2026-11-01T02:00:00Z');
+  assert.equal(retried.busy,true);
+  assert.equal(retried.error,'HTTP 429');
+  assert.equal(retried.history,original.history);
+  assert.equal(retried.lastRequest,'2026-11-01T02:00:00Z');
 });
