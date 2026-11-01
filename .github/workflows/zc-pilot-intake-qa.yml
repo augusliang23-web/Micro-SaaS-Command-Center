@@ -3,7 +3,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [main]
-    paths: ['tools/zc-pilot/**', 'test/zc-pilot.test.mjs', '.github/workflows/zc-pilot-intake-qa.yml']
+    paths: ['tools/zc-pilot/**', 'test/zc-pilot.test.mjs', 'test/zc-native-worker.test.mjs', '.github/workflows/zc-pilot-intake-qa.yml']
 permissions:
   contents: read
 concurrency:
@@ -35,4 +35,4 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           for file in tools/zc-pilot/*.mjs; do node --check "$file"; done
           git diff --check
-          node --test test/zc-pilot.test.mjs test/status-provenance.test.mjs
+          node --test test/zc-pilot.test.mjs test/zc-native-worker.test.mjs test/status-provenance.test.mjs

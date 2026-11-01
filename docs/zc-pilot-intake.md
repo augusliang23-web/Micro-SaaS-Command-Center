@@ -1,5 +1,7 @@
 # ZC Pilot 01 — Issue #105
 
+Issue #108 adds an owner-authorized, separately enabled **single native job** to this standalone entry. See [native worker scope, launch and limits](zc-native-worker.md). Earlier intake-only observations below remain historical; native job status is a separate zc.job/v1 surface and never inferred from intake or CI.
+
 Run `node tools/zc-pilot/server.mjs` for read-only mode. Within the owner's explicitly authorized fixed issue-intake scope, run `node tools/zc-pilot/server.mjs --allow-github-intake`. Open http://127.0.0.1:3134/ in Safari. No npm install, environment file, token copy, daemon or provider call is needed. Existing authenticated gh supplies GitHub access; the app never reads or prints token values. Do not grant new scopes if access fails.
 
 This is an independent local Command Center entry on main's codebase, not a deployment or integration of Draft #104. Port 3133 remains separate. Stop the foreground process to stop serving. Default V1 and server.ts are unchanged.

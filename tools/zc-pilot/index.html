@@ -3,7 +3,7 @@
 <body><main>
 <header><span class="eyebrow">COMMAND CENTER / ZERO-COPY PILOT 01</span><span class="tag">本機開發預覽</span></header>
 <h1>從任務開始，讓成果回到這裡。</h1>
-<p class="intro">先把一項小任務交給 GitHub 保存。安全執行器接通後，才會進入開發與複查。</p>
+<p class="intro">任務與證據存於 GitHub。已授權的單次原生試點，可在下方執行並查詢真實結果。</p>
 <section class="task" aria-labelledby="task-heading"><div class="eyebrow">本次固定試點 · PM DASHBOARD</div>
 <h2 id="task-heading">讓載入圖示尊重「減少動態效果」</h2>
 <p>使用者開啟減少動態效果時，停止載入圖示旋轉；保留載入文字、一般顯示與現有操作。</p>
@@ -13,12 +13,13 @@
 </section>
 <section aria-label="任務進度" class="progress">
 <article><span class="step">01 / 任務建立</span><strong id="intake">尚未查詢</strong><p>GitHub 保存正式任務契約。</p></article>
-<article><span class="step">02 / Agent 開發</span><strong>尚未連線</strong><p>安全執行器待接通；本入口尚未派工。</p></article>
-<article><span class="step">03 / 自動測試與 QA</span><strong>尚未接通</strong><p>受控試點的測試與複查另見下方證據。</p></article>
+<article><span class="step">02 / Agent 開發</span><strong id="worker-status">尚未查詢</strong><p>僅顯示本次原生工作事件，不從 CI 推測 Agent 活動。</p></article>
+<article><span class="step">03 / 測試與 QA</span><strong id="qa-status">尚無本次完成證據</strong><p>測試與獨立複查分別保留證據；不代表發布核准。</p></article>
 <article><span class="step">04 / Owner 驗收</span><strong>待成果交付</strong><p>本頁不是 PM 功能的驗收通過證明。</p></article>
 </section>
-<section class="task" aria-labelledby="delivery-heading"><h2 id="delivery-heading">本次受控試點成果</h2><p>這次由已授權的 Codex 工作階段交付 PM 小修正。此處提供真實成果連結；自動派工仍待安全執行器接通，Owner 驗收仍待完成。</p><div class="actions"><a href="https://github.com/augusliang23-web/pm-dashboard/pull/96" target="_blank" rel="noopener noreferrer">查看 PM Draft PR 與 CI ↗</a><a href="https://github.com/augusliang23-web/Micro-SaaS-Command-Center/issues/107#issuecomment-6564506226" target="_blank" rel="noopener noreferrer">查看任務、測試與獨立複查證據 ↗</a></div></section>
-<aside><h2>目前停在哪裡？</h2><p>Mac 執行器的同帳號檔案競態仍為 HOLD。本入口只會建立固定任務，不會呼叫模型、啟動 Agent、合併或部署。</p><p>下一個 Gate：驗證已授權且隔離的執行環境。雲端 Runner 仍需另行確認存取、權限與費用。</p></aside>
+<section class="task" aria-labelledby="delivery-heading"><h2 id="delivery-heading">既有受控試點成果</h2><p>較早的 Codex 受控試點已交付此 PM 小修正。下方原生派工會從原始來源獨立產生修改並驗證；只有來源完全相同時才重用既有 PR。</p><div class="actions"><a href="https://github.com/augusliang23-web/pm-dashboard/pull/96" target="_blank" rel="noopener noreferrer">查看 PM Draft PR 與 CI ↗</a><a href="https://github.com/augusliang23-web/Micro-SaaS-Command-Center/issues/107#issuecomment-6564506226" target="_blank" rel="noopener noreferrer">查看既有測試與獨立複查證據 ↗</a></div></section>
+<section class="task native" aria-labelledby="native-heading"><div class="eyebrow">已授權的單次原生派工 · ISSUE #108</div><h2 id="native-heading">驗證真正的 Coding Agent 交付</h2><p>使用現有 ChatGPT 訂閱，讓原生 Agent 提出限定修改，再於隔離分支套用、測試並核對既有 Draft PR。此操作會使用訂閱額度；不會使用付費 API 或合併部署。</p><div class="actions"><button id="dispatch" disabled>執行單次原生 PM 試點</button><button id="job-refresh" class="secondary" disabled>查詢派工結果</button></div><p id="job-message" role="status" aria-live="polite">尚未查詢原生執行器。</p><ol id="job-events"></ol><a id="job-evidence" hidden target="_blank" rel="noopener noreferrer">查看真實派工證據 ↗</a></section>
+<aside><h2>安全與驗收界線</h2><p>原 Antigravity Mac 執行器的同帳號檔案競態仍為 HOLD，這次不會使用它。原生 Codex 試點只有明確啟用單次能力後才可執行，不會合併或部署。</p><p>這是固定任務的前景試點，不是任意任務的無人值守排程。Owner 驗收仍待完成。</p></aside>
 <details><summary>任務契約與來源詳細資料</summary><p id="checked">尚未取得 GitHub 證據。</p><pre id="contract"></pre></details>
 <footer>控制端可以更換。任務與證據留在 GitHub；Grok bot 可使用相同版本化契約。</footer>
 </main></body></html>
