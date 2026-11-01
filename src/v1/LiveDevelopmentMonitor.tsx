@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, AlertTriangle, Clock3, ExternalLink, GitPullRequest, RefreshCw } from 'lucide-react';
 import type { DevelopmentHistory, LiveIdentity } from '../prototype/gitHistoryTypes';
 import { liveRepositoryFor } from '../prototype/gitHistoryModel';
-import { historyFreshness, monitorSummary, MONITOR_POLL_MS, validateMonitorHistory } from './liveMonitorModel.mjs';
+import { beginMonitorRefresh, historyFreshness, monitorSummary, MONITOR_POLL_MS, validateMonitorHistory } from './liveMonitorModel.mjs';
 import './liveMonitor.css';
 
 type MonitorState = {
@@ -26,7 +26,7 @@ export function LiveDevelopmentMonitor({ identity }: { identity: LiveIdentity | 
     if (!repo || active.current || document.visibilityState === 'hidden' || !navigator.onLine) return;
     const controller = new AbortController();
     active.current = controller;
-    setState(s => ({ ...s, repo, busy: true, error: null, lastRequest: new Date().toISOString() }));
+    setState(s => beginMonitorRefresh(s, repo, new Date().toISOString()));
     try {
       const suffix = force ? '&refresh=1' : '';
       const response = await fetch('/api/github/development-history?repo=' + encodeURIComponent(repo) + suffix,
