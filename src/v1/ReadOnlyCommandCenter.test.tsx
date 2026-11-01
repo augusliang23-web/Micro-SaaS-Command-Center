@@ -104,10 +104,10 @@ describe('V1 identity isolation and live allowlist',()=>{
 });
 
 describe('V1 feature isolation and read-only frontend',()=>{
- test('G. normal navigation has only the overview and the Development Map, with no AI, Prompt or Cost Guard Demo UI',async()=>{
+ test('G. V1 navigation has overview, map, and read-only Live Monitor without AI, Prompt or Cost Guard controls',async()=>{
   mockFetch(state([PM,OTHER]));render(<ReadOnlyCommandCenter/>);await flush();
   const names=()=>within(screen.getByRole('navigation',{name:'主要頁面'})).getAllByRole('button').map(b=>b.textContent);
-  expect(names()).toEqual(['專案總覽','開發地圖']);
+  expect(names()).toEqual(['專案總覽','開發地圖','Live Monitor']);
   // Negative disclaimers ("無 AI 對話、Prompt 或 agent 執行") are allowed; no control, tab or demo surface may exist.
   const forbidden=[/AI 指令/,/Prompt/,/Cost Guard/i,/DEMO/,/新增/,/進入工作區/,/執行/];
   const check=()=>{
@@ -198,5 +198,39 @@ describe('P2 eligibility to query is not presented as verified LIVE',()=>{
   for(const b of within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getAllByRole('button'))expect(b.getAttribute('aria-label')).not.toMatch(/LIVE/);
   expect(document.querySelector('.p-live-bar')?.textContent ?? '').not.toMatch(/LIVE/);
   expect(screen.getByLabelText('資料來源')).toHaveTextContent('Not checked');
+ });
+});
+
+
+describe('ZC-08A Live Monitor V1 read-only integration',()=>{
+ test('the third tab uses only the existing allowlisted GitHub history GET and never claims Agent RUNNING',async()=>{
+  const calls=mockFetch(state([OTHER,PM]));
+  render(<ReadOnlyCommandCenter/>);
+  await flush();
+  nav('Live Monitor');
+  await flush();
+  const main=screen.getByRole('main',{name:'Live Development Monitor'});
+  expect(main).toHaveTextContent('READ ONLY');
+  expect(main).toHaveTextContent('執行中的 Agent');
+  expect(main).toHaveTextContent('未知');
+  expect(main).toHaveTextContent('CI／Codex QA');
+  expect(main).toHaveTextContent('未查詢');
+  const history=historyCalls(calls);
+  expect(history).toHaveLength(1);
+  expect(history[0].method).toBe('GET');
+  expect(history[0].url).toContain('repo='+encodeURIComponent(PM_REPO));
+  expect(calls.every(c=>c.method==='GET')).toBe(true);
+ });
+ test('a DEMO identity does not trigger GitHub requests from Live Monitor',async()=>{
+  const calls=mockFetch(state([DEMO_PM]));
+  render(<ReadOnlyCommandCenter/>);
+  await flush();
+  nav('Live Monitor');
+  await flush();
+  const main=screen.getByRole('main',{name:'Live Development Monitor'});
+  expect(main).toHaveTextContent('NOT CONNECTED');
+  expect(main).toHaveTextContent('不會使用 DEMO 資料');
+  expect(historyCalls(calls)).toHaveLength(0);
+  expect(calls).toEqual([{url:'/api/state',method:'GET'}]);
  });
 });
