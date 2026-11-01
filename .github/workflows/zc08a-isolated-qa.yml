@@ -1,0 +1,75 @@
+# ZC-08A-QA03 / Issue #99: disposable, no-secret, no-deploy verification.
+# Draft PR #97 only. Never runs a model or writes to product repositories.
+name: ZC08A isolated Live Monitor QA
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'src/v1/LiveDevelopmentMonitor.tsx'
+      - 'src/v1/ReadOnlyCommandCenter.tsx'
+      - 'src/v1/ReadOnlyCommandCenter.test.tsx'
+      - 'src/v1/liveMonitorModel.mjs'
+      - 'src/v1/liveMonitor.css'
+      - 'test/zc08-live-monitor.test.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/zc08a-isolated-qa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zc08a-isolated-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-client-checks:
+    if: >-
+      github.repository == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.event.pull_request.number == 97 &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.head_ref == 'zc/zc08a-live-monitor-readonly' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: 'true'
+    steps:
+      - name: Checkout exact PR HEAD without retaining GitHub credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Use Node 22 (no dependency cache)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Exact HEAD and npm environment preflight
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test ! -e .npmrc || { echo 'HOLD_PROJECT_NPMRC'; exit 2; }
+          if compgen -e | grep -Eiq '^(npm_config_|NPM_TOKEN$|NODE_AUTH_TOKEN$|NPM_AUTH_TOKEN$)'; then
+            echo 'HOLD_UNTRUSTED_NPM_ENV_NAME'; exit 2
+          fi
+          node --check src/v1/liveMonitorModel.mjs
+          node --check test/zc08-live-monitor.test.mjs
+      - name: No-install offline Node monitor unit tests
+        run: node --test --test-reporter=spec test/zc08-live-monitor.test.mjs
+      - name: Install only locked npm packages in disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --userconfig=/dev/null --globalconfig=/dev/null --ignore-scripts --no-audit --no-fund
+      - name: TypeScript type-check (no emission)
+        run: npm run lint
+      - name: Vite and server bundle build (no deploy)
+        run: npm run build
+      - name: Existing deterministic frontend regression tests
+        run: npm run test:ui
