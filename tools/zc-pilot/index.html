@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Zero-Copy · Command Center 任務入口</title><link rel="stylesheet" href="/pilot.css"><script type="module" src="/client.mjs"></script></head>
+<body><main>
+<header><span class="eyebrow">COMMAND CENTER / ZERO-COPY PILOT 01</span><span class="tag">本機開發預覽</span></header>
+<h1>從任務開始，讓成果回到這裡。</h1>
+<p class="intro">先把一項小任務交給 GitHub 保存。安全執行器接通後，才會進入開發與複查。</p>
+<section class="task" aria-labelledby="task-heading"><div class="eyebrow">本次固定試點 · PM DASHBOARD</div>
+<h2 id="task-heading">讓載入圖示尊重「減少動態效果」</h2>
+<p>使用者開啟減少動態效果時，停止載入圖示旋轉；保留載入文字、一般顯示與現有操作。</p>
+<div class="boundaries"><span>低風險 UI 小修正</span><span>獨立分支 → 測試 → Draft PR</span><span>Merge / Deploy 另行授權</span></div>
+<div class="actions"><button id="create" disabled>建立 GitHub 任務</button><button id="refresh" class="secondary" disabled>重新查詢狀態</button></div>
+<p id="message" role="status" aria-live="polite">正在連接任務來源…</p><a id="issue" hidden target="_blank" rel="noopener noreferrer">查看 GitHub 任務證據 ↗</a>
+</section>
+<section aria-label="任務進度" class="progress">
+<article><span class="step">01 / 任務建立</span><strong id="intake">尚未查詢</strong><p>GitHub 保存正式任務契約。</p></article>
+<article><span class="step">02 / Agent 開發</span><strong>尚未連線</strong><p>安全執行器待接通，尚未修改 PM 程式。</p></article>
+<article><span class="step">03 / 測試與獨立 QA</span><strong>尚未執行</strong><p>建立任務不代表測試或複查通過。</p></article>
+<article><span class="step">04 / Owner 驗收</span><strong>待成果交付</strong><p>本頁不是 PM 功能的驗收通過證明。</p></article>
+</section>
+<aside><h2>目前停在哪裡？</h2><p>Mac 執行器的同帳號檔案競態仍為 HOLD。本入口只會建立固定任務，不會呼叫模型、啟動 Agent、合併或部署。</p><p>下一個 Gate：驗證已授權且隔離的執行環境。雲端 Runner 仍需另行確認存取、權限與費用。</p></aside>
+<details><summary>任務契約與來源詳細資料</summary><p id="checked">尚未取得 GitHub 證據。</p><pre id="contract"></pre></details>
+<footer>控制端可以更換。任務與證據留在 GitHub；Grok bot 可使用相同版本化契約。</footer>
+</main></body></html>
