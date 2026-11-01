@@ -66,7 +66,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --userconfig=/dev/null --globalconfig=/dev/null --ignore-scripts --no-audit --no-fund
+          # npm 10 rejects user/global config pointing to the same file.
+          # Create two distinct, empty config files in GitHub runner temp only.
+          : > "$RUNNER_TEMP/zc08a-user.npmrc"
+          : > "$RUNNER_TEMP/zc08a-global.npmrc"
+          chmod 600 "$RUNNER_TEMP/zc08a-user.npmrc" "$RUNNER_TEMP/zc08a-global.npmrc"
+          npm ci --userconfig="$RUNNER_TEMP/zc08a-user.npmrc" --globalconfig="$RUNNER_TEMP/zc08a-global.npmrc" --ignore-scripts --no-audit --no-fund
       - name: TypeScript type-check (no emission)
         run: npm run lint
       - name: Vite and server bundle build (no deploy)
