@@ -35,12 +35,13 @@ const record = (entry) => { if (LOG) realAppend(LOG, JSON.stringify(entry) + '\n
 
 // ---- fake GitHub CLI (synthetic) ----
 const REPO = 'augusliang23-web/pm-dashboard';
+const info={id:1221937556,full_name:REPO,html_url:`https://github.com/${REPO}`,default_branch:'main'};
 const out = (body, status = 200) => `HTTP/2.0 ${status} OK\r\n\r\n${JSON.stringify(body)}`;
 const day = '2026-10-01T00:00:00Z';
 const commit = (sha, parents) => ({ sha, parents: parents.map((p) => ({ sha: p })), html_url: `https://github.com/${REPO}/commit/${sha}`, commit: { message: `SYNTHETIC ${sha}`, author: { date: day, name: 'a' }, committer: { date: day } } });
-const pull7 = { number: 7, title: 'SYNTHETIC PR', state: 'open', draft: false, created_at: day, updated_at: day, closed_at: null, merged_at: null, html_url: `https://github.com/${REPO}/pull/7`, user: { login: 'synthetic' }, base: { ref: 'main', sha: 'm1', repo: { full_name: REPO } }, head: { ref: 'feat/x', sha: 'h7', repo: { full_name: REPO } }, merge_commit_sha: null };
+const pull7 = { number: 7, title: 'SYNTHETIC PR', state: 'open', draft: false, created_at: day, updated_at: day, closed_at: null, merged_at: null, html_url: `https://github.com/${REPO}/pull/7`, user: { login: 'synthetic' }, base: { ref: 'main', sha: 'm1', repo: info }, head: { ref: 'feat/x', sha: 'h7', repo: info }, merge_commit_sha: null };
 const routes = [
-  [/^repos\/[^/]+\/[^/?]+$/, () => out({ default_branch: 'main', html_url: `https://github.com/${REPO}` })],
+  [/^repos\/[^/]+\/[^/?]+$/, () => out(info)],
   [/\/branches\?/, () => out([{ name: 'main', commit: { sha: 'm1' }, protected: true }, { name: 'feat/x', commit: { sha: 'h7' }, protected: false }])],
   [/\/pulls\?state=all/, () => out([pull7])],
   [/\/commits\?sha=/, () => out([commit('m1', [])])],

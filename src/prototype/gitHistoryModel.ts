@@ -4,13 +4,15 @@
 import type { DevelopmentHistory, HistoryCommit, HistoryPull, LiveIdentity, PullDetail, ReviewerDecision } from './gitHistoryTypes';
 
 import { activityWindow } from './activityTimelineModel';
+import { REPOSITORY_CATALOG, isCatalogIdentity } from '../v1/projectCatalog.mjs';
 
-export const LIVE_HISTORY_REPOS = ['augusliang23-web/pm-dashboard'] as const;
+export const LIVE_HISTORY_REPOS: readonly string[] = REPOSITORY_CATALOG.map(x=>x.repository);
 const SGT_OFFSET_MS = 8 * 3600_000;
 const DAY_MS = 86_400_000;
 
 /** Exact allowlist match; a repository-like display name never qualifies. */
 export function liveRepositoryFor(identity: LiveIdentity | null | undefined): string | null {
+  if (isCatalogIdentity(identity)) return identity!.repository!;
   if (!identity || identity.source !== 'REGISTERED' || !identity.projectId?.trim()) return null; // a blank id is no stable identity
   const repo = (identity.repository ?? '').trim().replace(/^(?:https?:\/\/)?(?:github\.com\/)/, '').replace(/\/$/, '');
   return (LIVE_HISTORY_REPOS as readonly string[]).includes(repo) ? repo : null;

@@ -60,4 +60,4 @@ export type PullDetail = {
   reviews: { status: ReviewStatus; count: number | null; complete: boolean; headSha?: string | null; reviewers?: ReviewerDecision[]; observed?: ReviewStatus };
 };
 export type HistoryErrorKind = 'not_authenticated' | 'forbidden' | 'missing' | 'rate_limited' | 'not_found' | 'timeout' | 'aborted' | 'failed' | 'network';
-export type LiveIdentity = { source: 'REGISTERED' | 'DEMO'; projectId?: string; repository?: string; displayName: string };
+export type LiveIdentity = { source: 'REGISTERED' | 'DEMO' | 'CATALOG'; projectId?: string; repository?: string; displayName: string };

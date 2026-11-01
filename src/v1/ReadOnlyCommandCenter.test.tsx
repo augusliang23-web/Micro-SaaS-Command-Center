@@ -29,6 +29,7 @@ function mockFetch(handler:(url:string,call:Call)=>{status:number;body:unknown}|
 const state=(projects:unknown[])=>(url:string)=>url==='/api/state'?{status:200,body:savedState(projects)}:url.startsWith('/api/github/development-history')?'pending' as const:{status:500,body:{}};
 const flush=()=>act(async()=>{await Promise.resolve();await new Promise(r=>setTimeout(r,0));});
 const nav=(name:string)=>fireEvent.click(within(screen.getByRole('navigation',{name:'主要頁面'})).getByRole('button',{name}));
+const savedPanel=()=>within(screen.getByRole('region',{name:'本機已儲存專案'}));
 const card=(name:string)=>screen.getByRole('article',{name:`專案 ${name}`});
 
 describe('V1 project overview data handling',()=>{
@@ -42,8 +43,8 @@ describe('V1 project overview data handling',()=>{
  });
  test('B. missing saved state (404) shows Not available and never falls back to mock projects',async()=>{
   mockFetch(()=>({status:404,body:{error:'No saved state yet.'}}));render(<ReadOnlyCommandCenter/>);await flush();
-  expect(screen.getByRole('status')).toHaveTextContent('Not available');expect(screen.queryAllByRole('article')).toHaveLength(0);
-  for(const p of initialProjects)expect(document.body).not.toHaveTextContent(p.name);
+  expect(screen.getByRole('status')).toHaveTextContent('Not available');expect(savedPanel().queryAllByRole('article')).toHaveLength(0);
+  for(const p of initialProjects)expect(screen.getByRole('region',{name:'本機已儲存專案'})).not.toHaveTextContent(p.name);
  });
  test.each([
   ['malformed body',()=>({status:200,body:{projects:'nope'}})],
@@ -52,12 +53,12 @@ describe('V1 project overview data handling',()=>{
   ['unreachable server',()=>'network-error' as const],
  ])('C. invalid or unavailable saved state (%s) shows Not available and no registered data',async(_n,handler)=>{
   mockFetch(handler);render(<ReadOnlyCommandCenter/>);await flush();
-  expect(screen.getByRole('alert')).toHaveTextContent('Not available');expect(screen.queryAllByRole('article')).toHaveLength(0);
-  for(const p of initialProjects)expect(document.body).not.toHaveTextContent(p.name);
+  expect(screen.getByRole('alert')).toHaveTextContent('Not available');expect(savedPanel().queryAllByRole('article')).toHaveLength(0);
+  for(const p of initialProjects)expect(screen.getByRole('region',{name:'本機已儲存專案'})).not.toHaveTextContent(p.name);
  });
  test('C. an empty project list is Not available, not an invented portfolio',async()=>{
   mockFetch(state([]));render(<ReadOnlyCommandCenter/>);await flush();
-  expect(screen.getByRole('status')).toHaveTextContent('Not available');expect(screen.queryAllByRole('article')).toHaveLength(0);
+  expect(screen.getByRole('status')).toHaveTextContent('Not available');expect(savedPanel().queryAllByRole('article')).toHaveLength(0);
  });
 });
 
@@ -68,7 +69,7 @@ describe('V1 identity isolation and live allowlist',()=>{
    project({id:'reg-norepo',name:'PM Dashboard',repository:''}),
    project({id:'dup',name:'Dup A',repository:PM_REPO}),project({id:'dup',name:'Dup B',repository:PM_REPO}),
   ]));render(<ReadOnlyCommandCenter/>);await flush();
-  const cards=screen.getAllByRole('article');expect(cards).toHaveLength(4);
+  const cards=savedPanel().getAllByRole('article');expect(cards).toHaveLength(4);
   for(const c of cards){expect(c).toHaveTextContent('NOT CONNECTED');expect(within(c).queryByRole('button',{name:'開啟開發地圖'})).toBeNull();}
   expect(card('Dup A')).toHaveTextContent('Not available（缺少或重複');
   nav('開發地圖');await flush();
@@ -96,18 +97,19 @@ describe('V1 identity isolation and live allowlist',()=>{
   expect(calls.filter(c=>c.url.includes('development-history')).every(c=>c.url.includes(encodeURIComponent(PM_REPO)))).toBe(true);
   expect(calls.some(c=>c.url.includes('someone'))).toBe(false);
  });
- test('F. with no registered projects the Development Map page is Not available',async()=>{
+ test('F. without saved projects the approved catalog remains independently queryable',async()=>{
   const calls=mockFetch(()=>({status:404,body:{error:'No saved state yet.'}}));render(<ReadOnlyCommandCenter/>);await flush();
-  nav('開發地圖');await flush();expect(screen.getByRole('status')).toHaveTextContent('Not available');
-  expect(calls.every(c=>c.url==='/api/state')).toBe(true);
+  nav('開發地圖');await flush();expect(screen.getByLabelText('資料來源')).toHaveTextContent(PM_REPO);
+  expect(calls.filter(c=>c.url.includes('development-history'))).toHaveLength(1);
+  expect(screen.getByText('CATALOG')).toBeVisible();
  });
 });
 
 describe('V1 feature isolation and read-only frontend',()=>{
- test('G. normal navigation has only the overview and the Development Map, with no AI, Prompt or Cost Guard Demo UI',async()=>{
+ test('G. V1 navigation has overview, map, and read-only Live Monitor without AI, Prompt or Cost Guard controls',async()=>{
   mockFetch(state([PM,OTHER]));render(<ReadOnlyCommandCenter/>);await flush();
   const names=()=>within(screen.getByRole('navigation',{name:'主要頁面'})).getAllByRole('button').map(b=>b.textContent);
-  expect(names()).toEqual(['專案總覽','開發地圖']);
+  expect(names()).toEqual(['專案總覽','開發地圖','Live Monitor']);
   // Negative disclaimers ("無 AI 對話、Prompt 或 agent 執行") are allowed; no control, tab or demo surface may exist.
   const forbidden=[/AI 指令/,/Prompt/,/Cost Guard/i,/DEMO/,/新增/,/進入工作區/,/執行/];
   const check=()=>{
@@ -173,8 +175,8 @@ describe('P1 explicit DEMO projects never become REGISTERED or live',()=>{
  });
  test('a same-name DEMO project beside the registered PM stays isolated: one history request, for the registered project only',async()=>{
   const calls=mockFetch(state([DEMO_PM,PM]));render(<ReadOnlyCommandCenter/>);await flush();
-  expect(screen.getAllByRole('article')).toHaveLength(2);
-  expect(screen.getAllByRole('button',{name:'開啟開發地圖'})).toHaveLength(1);
+  expect(savedPanel().getAllByRole('article')).toHaveLength(2);
+  expect(savedPanel().getAllByRole('button',{name:'開啟開發地圖'})).toHaveLength(1);
   nav('開發地圖');await flush();
   expect(historyCalls(calls)).toHaveLength(1);
   expect(screen.getByLabelText('資料來源')).toHaveTextContent(PM_REPO);
@@ -198,5 +200,39 @@ describe('P2 eligibility to query is not presented as verified LIVE',()=>{
   for(const b of within(screen.getByRole('navigation',{name:'專案（開發地圖）'})).getAllByRole('button'))expect(b.getAttribute('aria-label')).not.toMatch(/LIVE/);
   expect(document.querySelector('.p-live-bar')?.textContent ?? '').not.toMatch(/LIVE/);
   expect(screen.getByLabelText('資料來源')).toHaveTextContent('Not checked');
+ });
+});
+
+
+describe('ZC-08A Live Monitor V1 read-only integration',()=>{
+ test('the third tab uses only the existing allowlisted GitHub history GET and never claims Agent RUNNING',async()=>{
+  const calls=mockFetch(state([OTHER,PM]));
+  render(<ReadOnlyCommandCenter/>);
+  await flush();
+  nav('Live Monitor');
+  await flush();
+  const main=screen.getByRole('main',{name:'Live Development Monitor'});
+  expect(main).toHaveTextContent('READ ONLY');
+  expect(main).toHaveTextContent('執行中的 Agent');
+  expect(main).toHaveTextContent('未知');
+  expect(main).toHaveTextContent('CI／Codex QA');
+  expect(main).toHaveTextContent('未查詢');
+  const history=historyCalls(calls);
+  expect(history).toHaveLength(1);
+  expect(history[0].method).toBe('GET');
+  expect(history[0].url).toContain('repo='+encodeURIComponent(PM_REPO));
+  expect(calls.every(c=>c.method==='GET')).toBe(true);
+ });
+ test('a DEMO identity does not trigger GitHub requests from Live Monitor',async()=>{
+  const calls=mockFetch(state([DEMO_PM]));
+  render(<ReadOnlyCommandCenter/>);
+  await flush();
+  nav('Live Monitor');
+  await flush();
+  const main=screen.getByRole('main',{name:'Live Development Monitor'});
+  expect(main).toHaveTextContent('NOT CONNECTED');
+  expect(main).toHaveTextContent('不會使用 DEMO 資料');
+  expect(historyCalls(calls)).toHaveLength(0);
+  expect(calls).toEqual([{url:'/api/state',method:'GET'}]);
  });
 });

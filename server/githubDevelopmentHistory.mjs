@@ -1,5 +1,8 @@
 import { execFile } from 'node:child_process';
 import { GithubCliError } from './githubRepos.mjs';
+import { REPOSITORY_CATALOG, catalogEntry } from '../src/v1/projectCatalog.mjs';
+import { FIXED_TARGETS } from '../src/v1/zc08bStatusModel.mjs';
+import { statusFromGitHub } from '../src/v1/projectStatusModel.mjs';
 
 /**
  * Read-only development-history snapshot for ONE allowlisted repository.
@@ -11,7 +14,13 @@ import { GithubCliError } from './githubRepos.mjs';
  * partial data instead of presenting it as the whole history.
  */
 
-export const DEVELOPMENT_HISTORY_REPOS = Object.freeze(['augusliang23-web/pm-dashboard']);
+export const DEVELOPMENT_HISTORY_REPOS = Object.freeze(REPOSITORY_CATALOG.map(x=>x.repository));
+
+function verifyRepository(repo, info) {
+  const expected=catalogEntry(repo);
+  if(!expected || info?.id!==expected.id || info?.full_name!==repo || info?.html_url!==`https://github.com/${repo}`)
+    throw new GithubCliError('GitHub repository identity mismatch.', 'forbidden');
+}
 
 export const HISTORY_LIMITS = Object.freeze({
   perPage: 100,
@@ -226,6 +235,7 @@ export async function fetchDevelopmentHistory(repo, { execFileFn = execFile, sig
   const warnings = [];
 
   const repoInfo = (await ghApiPage(`repos/${repo}`, opts)).data;
+  verifyRepository(repo, repoInfo);
   const defaultBranch = repoInfo?.default_branch || 'main';
 
   // Branches and PRs are read first; every later read is pinned to the exact
@@ -409,7 +419,12 @@ export async function fetchPullDetail(repo, number, { execFileFn = execFile, sig
   }
   if (!Number.isInteger(number) || number < 1) throw new GithubCliError('PR number must be a positive integer.', 'failed');
   const opts = { execFileFn, signal };
+  const repoInfo = (await ghApiPage(`repos/${repo}`, opts)).data;
+  verifyRepository(repo, repoInfo);
   const pr = (await ghApiPage(`repos/${repo}/pulls/${number}`, opts)).data;
+  verifyRepository(repo, pr?.base?.repo);
+  if(pr?.number!==number || pr?.html_url!==`https://github.com/${repo}/pull/${number}`)
+    throw new GithubCliError('GitHub PR identity mismatch.', 'forbidden');
   const headSha = pr?.head?.sha;
   const [checks, reviews] = await Promise.all([
     headSha
@@ -426,10 +441,37 @@ export async function fetchPullDetail(repo, number, { execFileFn = execFile, sig
   const reviewItems = reviews?.items ?? null;
   const reviewsComplete = reviews?.complete === true;
   const observedReview = reviewItems === null ? null : summarizeReviews(reviewItems, headSha ?? null);
+  const target=FIXED_TARGETS.find(t=>t.repo===repo&&t.pr===number);
+  let zcEvidence;
+  if(target) {
+    const runs=await ghApiPage(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(headSha)}&per_page=50`,opts)
+      .then(r=>r.data).catch(e=>{if(e.kind==='aborted')throw e;return null;});
+    const reread=await ghApiPage(`repos/${repo}/pulls/${number}`,opts).then(r=>r.data)
+      .catch(e=>{if(e.kind==='aborted')throw e;return null;});
+    const workflowPaths={ZC06C:'ag2b-offline-ci.yml',ZC07:'zc07-mock-e2e.yml',ZC09A:'zc09a-offline-policy-ci.yml',
+      ZC09B1:'zc09b-claim-ledger-ci.yml',ZC09B2:'zc09b2-fixture-ci.yml',ZC08A:'zc08a-isolated-qa.yml',ZC08B1:'zc08b-offline-status-ci.yml'};
+    const complete=Number.isSafeInteger(runs?.total_count)&&runs.total_count<=50&&Array.isArray(runs?.workflow_runs)&&runs.total_count===runs.workflow_runs.length;
+    const matching=complete?runs.workflow_runs.filter(r=>r.name===target.workflow&&r.head_sha===headSha&&
+      r.path===`.github/workflows/${workflowPaths[target.id]}`):[];
+    // Latest GitHub run id; ties are ambiguous. No timestamps or array ordering guesses.
+    matching.sort((a,b)=>b.id-a.id);
+    const latest=matching[0];
+    const chosen=latest&&Number.isSafeInteger(latest.id)&&(!matching[1]||matching[1].id!==latest.id)?latest:null;
+    const observedAt=now().toISOString();
+    const evidence={source:'GitHub',repository:repo,repositoryId:repoInfo.id,number,head:headSha,observedAt,
+      consistent:reread?.number===number&&reread?.base?.repo?.id===repoInfo.id&&reread?.base?.repo?.full_name===repo&&reread?.head?.sha===headSha,
+      pull:{number,headSha,draft:pr.draft,merged:Boolean(pr.merged_at)},
+      ciRunId:chosen?.id??null,
+      workflows:chosen?[{name:target.workflow,headSha:chosen.head_sha,status:chosen.status,conclusion:chosen.conclusion}]:[],
+      codex:reviewsComplete?reviewItems.filter(r=>r.user?.login==='chatgpt-codex-connector[bot]').map(r=>({
+        id:r.id,author:r.user.login,headSha:r.commit_id,state:r.state})):[]};
+    zcEvidence={...statusFromGitHub(target,evidence,Date.parse(observedAt)),evidence};
+  }
   return {
     source: 'GitHub',
     repository: repo,
     number,
+    ...(zcEvidence ? { zcEvidence } : {}),
     fetchedAt: now().toISOString(),
     pull: { ...normalizePull(pr), changedFiles: pr?.changed_files ?? null, additions: pr?.additions ?? null, deletions: pr?.deletions ?? null, commits: pr?.commits ?? null },
     // 'not_checked' only when the request itself failed; 'none' means GitHub
@@ -565,8 +607,9 @@ export function createHistoryCache({ ttlMs = HISTORY_LIMITS.cacheTtlMs, now = ()
     set(key, value) {
       entries.set(key, { value, storedAt: now() });
     },
-    clear() {
-      entries.clear();
+    clear(key) {
+      if(key===undefined)entries.clear();
+      else entries.delete(key);
     },
   };
 }
