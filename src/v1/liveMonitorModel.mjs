@@ -20,6 +20,12 @@ export function validateMonitorHistory(candidate, expectedRepo) {
     (p.updatedAt === null || validIso(p.updatedAt)));
 }
 
+// A retry is NOT evidence that the source has recovered. Preserve the last
+// failure until a newly fetched snapshot passes strict validation.
+export function beginMonitorRefresh(previous, repo, requestedAt) {
+  return { ...previous, repo, busy: true, lastRequest: requestedAt };
+}
+
 export function historyFreshness(history, nowMs = Date.now()) {
   if (!history || !validIso(history.fetchedAt) || !Number.isFinite(nowMs))
     return { state: 'UNKNOWN', ageSeconds: null };
