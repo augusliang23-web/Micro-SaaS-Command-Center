@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, LayoutGrid, Network, ShieldCheck } from 'lucide-react';
+import { Activity, AlertTriangle, LayoutGrid, Network, ShieldCheck } from 'lucide-react';
 import { isUsableSavedState } from '../savedState.mjs';
 import { isRealProject } from '../verdict.mjs';
 import { GitDevelopmentMap, type RailEntry } from '../prototype/GitDevelopmentMap';
+import { LiveDevelopmentMonitor } from './LiveDevelopmentMonitor';
 import { identityKey, liveRepositoryFor } from '../prototype/gitHistoryModel';
 import type { LiveIdentity } from '../prototype/gitHistoryTypes';
 import '../prototype/prototype.css';
@@ -32,7 +33,7 @@ type SavedLoad =
   | { status: 'ready'; projects: Registered[]; readAt: string }
   | { status: 'empty'; readAt: string }
   | { status: 'unavailable'; reason: string };
-type Page = 'overview' | 'map';
+type Page = 'overview' | 'map' | 'monitor';
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '');
 
@@ -148,6 +149,7 @@ export function ReadOnlyCommandCenter() {
       <nav aria-label="主要頁面">
         <button type="button" aria-current={page === 'overview' ? 'page' : undefined} onClick={() => setPage('overview')}><LayoutGrid size={15} />專案總覽</button>
         <button type="button" aria-current={page === 'map' ? 'page' : undefined} onClick={() => openMap()}><Network size={15} />開發地圖</button>
+        <button type="button" aria-current={page === 'monitor' ? 'page' : undefined} onClick={() => setPage('monitor')}><Activity size={15} />Live Monitor</button>
       </nav>
     </header>
     <div className="v1-bar"><strong>READ-ONLY</strong> 本畫面只讀取資料：不編輯、不建立任務、不推進 gate、不執行 agent、不呼叫 AI 供應商。後端舊有的寫入路由仍存在，但此畫面不會使用它們。</div>
@@ -159,7 +161,9 @@ export function ReadOnlyCommandCenter() {
             ? <Unavailable load={load.status === 'ready' ? { status: 'empty', readAt: load.readAt } : load} />
             : <div className="v1-grid">{projects.map((p, i) => <ProjectCard key={`${p.identity.projectId ?? 'no-id'}-${i}`} entry={p} open={() => openMap(p.identity)} />)}</div>}
         </main>
-      : <>
+      : page === 'monitor'
+        ? <LiveDevelopmentMonitor identity={selected} />
+        : <>
           <div className="p-live-bar"><span><strong>GitHub 唯讀</strong> 只有成功讀取後才會顯示來源與 Last checked；沒有 AI 對話、Prompt 或 agent 執行。</span></div>
           {selected
             ? <main className="p-main g-main"><GitDevelopmentMap identity={selected} rail={rail} selectIdentity={(identity) => setSelectedKey(identityKey(identity))} /></main>
