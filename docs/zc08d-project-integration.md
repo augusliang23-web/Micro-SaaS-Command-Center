@@ -23,7 +23,7 @@ Read-only GitHub observation only. No provider calls, heartbeat, runner, task ex
 
 ## Validation and release gates
 Local baseline: 109/109 existing history / #97 / #102 tests passed using fake GitHub. Initial loopback permission errors were resolved by running local test servers under the approved execution permission.
-Local candidate checks: 204/204 scoped Node tests and 274/274 UI tests PASS; TypeScript and Vite/server bundles PASS. The scoped suite includes source/identity/status/HTTP security regression and all existing UI tests. Copied dependency inventory: 313 installed entries, zero version mismatches against package-lock. Real Docker/provider/agent integration suites are intentionally outside this task and are not executed. No registry download was needed locally: existing same-main dependency installation was copied into the isolated checkout; no global npm configuration was read or changed.
+Local candidate checks: 206/206 scoped Node tests and 274/274 UI tests PASS; TypeScript and Vite/server bundles PASS. The scoped suite includes source/identity/status/HTTP security regression and all existing UI tests. Copied dependency inventory: 313 installed entries, zero version mismatches against package-lock. Real Docker/provider/agent integration suites are intentionally outside this task and are not executed. No registry download was needed locally: existing same-main dependency installation was copied into the isolated checkout; no global npm configuration was read or changed.
 
 Independent review and exact candidate CI evidence must be evaluated separately from implementation tests. Product acceptance remains HOLD until the actual Safari journey is checked. No merge/deploy authorization is implied.
 
@@ -45,3 +45,20 @@ Open Safari at **http://127.0.0.1:3133**. This is a local production-mode bundle
 6. Check wide and narrow layouts and return through Overview, Map and Live Monitor. Record candidate SHA, Safari version, time, source and acceptance separately. Stop the local server with Ctrl-C when finished.
 
 Automated browser control is unavailable in this session. Deterministic React tests are UI regression evidence, not Safari UAT or live Product Acceptance.
+
+## Live observation and independent review evidence
+
+Local read-only HTTP smoke at candidate `9e62f06408226f40c239788f64ea9af67f7af691`, 2026-11-01 20:01–20:02 SGT:
+
+| Exact repository | Branches | PRs | Commits in bounded history | Result |
+|---|---:|---:|---:|---|
+| augusliang23-web/pm-dashboard | 103 | 92 | 761 | HTTP 200, complete / consistent |
+| alin36242-web/inventory-management-tool | 46 | 41 | 139 | HTTP 200, complete / consistent |
+| augusliang23-web/cc-h15a-claude-dispatch-lab | 22 | 21 | 138 | HTTP 200, complete / consistent |
+| augusliang23-web/Micro-SaaS-Command-Center | 39 | 39 | 226 | HTTP 200, complete / consistent |
+
+These are bounded snapshots, not total repository statistics or durable current claims. All seven fixed PR reads returned HTTP 200, exact-head CI PASS, Codex QA UNKNOWN and Agent NOT_CONNECTED. Codex observations were separately labelled CURRENT_HEAD or HISTORICAL, never clean QA. Unallowlisted history returned 403; POST returned 405; absent saved state returned 404 and no data directory was created.
+
+Independent reviewer (separate Codex / GPT-6.1 Sol High role) inspected base `292e8d24cd856255214403fd38690834386e4b61` through `9e62f06408226f40c239788f64ea9af67f7af691`. Initial recommendation HOLD: one reproduced P2 concurrency defect allowed an older in-flight read to repopulate cache after a failed forced refresh. No other demonstrated material findings. Reviewer ran 46 pure status/monitor and 29 selected UI tests; its restricted HTTP tests encountered listen EPERM, so author-run approved loopback regression supplies that evidence separately.
+
+Remediation: per-key cache generations reject writes by invalidated reads for both history and fixed-PR detail. Concurrent regressions reproduced two failures before the fix, then 76/76 combined history/integration tests passed. A focused follow-up independent review is required on this delta; its exact final SHA/result and exact-head CI run are recorded in Draft PR #104 rather than implying the initial HOLD was an approval. No production Gate has been granted.

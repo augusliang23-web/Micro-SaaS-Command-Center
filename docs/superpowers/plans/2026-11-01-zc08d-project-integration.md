@@ -49,3 +49,5 @@
 
 - Task 1/2 validation: 204/204 scoped Node tests; 274/274 UI tests; TypeScript and Vite/server bundles PASS. Refresh failure regression observed RED then GREEN. Offline dependency inventory: 313 installed package entries, zero version mismatches against package-lock.
 - Ruling: do not execute unrelated real Docker or provider integration suites; risk-based regression covers the changed read-only integration and V1 runtime boundary.
+
+- Independent review of 9e62f064: HOLD, one P2 in-flight cache race. Reproduced with two RED concurrent regressions; implemented per-key generation guard; 76/76 history/integration tests GREEN. Follow-up review is bounded to this fix and affected freshness risk. No second full review or implementation owner approval.

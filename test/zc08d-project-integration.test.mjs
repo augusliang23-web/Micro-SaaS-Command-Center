@@ -93,3 +93,25 @@ test('a failed explicit refresh invalidates only that target cache; polling cann
   assert.equal((await fetch(url)).status,500);assert.equal(calls,3);
  }finally{await new Promise(r=>server.close(r));}
 });
+for(const route of ['history','status'])test(`concurrent ${route}: an older in-flight read cannot repopulate cache after failed force refresh`,async()=>{
+ let calls=0,releaseFirst,started;
+ const firstStarted=new Promise(resolve=>{started=resolve;});
+ const firstGate=new Promise(resolve=>{releaseFirst=resolve;});
+ const read=async(r,n)=>{
+  const mine=++calls;
+  if(mine===1){started();await firstGate;}
+  else throw Error('Synthetic refresh unavailable');
+  return {source:'GitHub',repository:r,number:n,ci:'PASS',zcEvidence:{evidence:{consistent:true}}};
+ };
+ const app=express();app.use(createGithubRouter({fetchHistory:read,fetchHistoryPull:read}));
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ const url=`http://127.0.0.1:${server.address().port}/development-history${route==='status'?'/pull':''}?repo=${repo}${route==='status'?'&number=97':''}`;
+ const old=fetch(url);
+ try{
+  await firstStarted;
+  assert.equal((await fetch(url+'&refresh=1')).status,500);
+  releaseFirst();await old;
+  assert.equal((await fetch(url)).status,500);
+  assert.equal(calls,3);
+ }finally{releaseFirst();await old;await new Promise(r=>server.close(r));}
+});

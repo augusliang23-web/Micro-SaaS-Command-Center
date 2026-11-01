@@ -594,7 +594,11 @@ export function summarizeReviews(reviews, headSha) {
 /** Per-process memory cache keyed by exact repository; no disk persistence. */
 export function createHistoryCache({ ttlMs = HISTORY_LIMITS.cacheTtlMs, now = () => Date.now() } = {}) {
   const entries = new Map();
+  const generations = new Map();
+  let epoch=0;
+  const version=key=>`${epoch}:${generations.get(key)??0}`;
   return {
+    version,
     get(key) {
       const hit = entries.get(key);
       if (!hit) return null;
@@ -604,12 +608,15 @@ export function createHistoryCache({ ttlMs = HISTORY_LIMITS.cacheTtlMs, now = ()
       }
       return hit.value;
     },
-    set(key, value) {
+    set(key, value, expectedVersion) {
+      // An invalidated in-flight read must never revive a cleared snapshot.
+      if(expectedVersion!==undefined&&expectedVersion!==version(key))return false;
       entries.set(key, { value, storedAt: now() });
+      return true;
     },
     clear(key) {
-      if(key===undefined)entries.clear();
-      else entries.delete(key);
+      if(key===undefined){epoch++;entries.clear();generations.clear();}
+      else {entries.delete(key);generations.set(key,(generations.get(key)??0)+1);}
     },
   };
 }
