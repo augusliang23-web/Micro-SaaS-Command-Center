@@ -8,6 +8,7 @@ import {
   isAllowlistedHistoryRepo,
   createHistoryCache,
 } from './githubDevelopmentHistory.mjs';
+import { FIXED_TARGETS } from '../src/v1/zc08bStatusModel.mjs';
 
 function requestOrigin(req) {
   const origin = req.get('origin');
@@ -43,6 +44,7 @@ export function createGithubRouter({
   fetchHistory = fetchDevelopmentHistory,
   fetchHistoryPull = (repo, number, opts) => fetchPullDetail(repo, number, { ...opts, aggregateCi: aggregateCiResponse }),
   historyCache = createHistoryCache(),
+  statusCache = createHistoryCache(),
 } = {}) {
   const router = express.Router();
 
@@ -166,15 +168,17 @@ export function createGithubRouter({
       return;
     }
     const refresh = req.query.refresh === '1';
+    if(refresh)historyCache.clear(repo);
     const cached = refresh ? null : historyCache.get(repo);
     if (cached) {
       res.json({ ...cached, cache: 'hit' });
       return;
     }
+    const version=historyCache.version(repo);
     try {
       const history = await fetchHistory(repo, { signal: abortOnClose(req, res) });
       if (history?.repository !== repo) throw new GithubCliError('History response repository mismatch.', 'failed');
-      historyCache.set(repo, history);
+      historyCache.set(repo, history,version);
       res.json({ ...history, cache: refresh ? 'refreshed' : 'miss' });
     } catch (error) {
       historyErrorResponse(res, error);
@@ -193,7 +197,17 @@ export function createGithubRouter({
       return;
     }
     try {
-      res.json(await fetchHistoryPull(repo, number, { signal: abortOnClose(req, res) }));
+      const fixed=FIXED_TARGETS.some(t=>t.repo===repo&&t.pr===number);
+      const key=`${repo}#${number}`;
+      if(fixed&&req.query.refresh==='1')statusCache.clear(key);
+      const cached=fixed&&req.query.refresh!=='1'?statusCache.get(key):null;
+      if(cached){res.json({...cached,cache:'hit'});return;}
+      const version=fixed?statusCache.version(key):null;
+      const detail=await fetchHistoryPull(repo, number, { signal: abortOnClose(req, res) });
+      if(detail?.source!=='GitHub'||detail?.repository!==repo||detail?.number!==number)
+        throw new GithubCliError('PR detail response identity mismatch.','failed');
+      if(fixed&&detail.zcEvidence?.evidence?.consistent===true)statusCache.set(key,detail,version);
+      res.json(detail);
     } catch (error) {
       historyErrorResponse(res, error);
     }

@@ -24,6 +24,7 @@ import { createGithubRouter } from '../server/githubRoutes.mjs';
 import { GithubCliError } from '../server/githubRepos.mjs';
 
 const REPO = 'augusliang23-web/pm-dashboard';
+const REPO_INFO={id:1221937556,full_name:REPO,html_url:`https://github.com/${REPO}`,default_branch:'main'};
 
 // Versioned fixture: PR fields copied from a read-only GitHub snapshot of
 // augusliang23-web/pm-dashboard taken 2026-10-15T23:57:20Z (67 branches,
@@ -55,8 +56,8 @@ const SNAPSHOT_2026_10_15 = [
 const ghPull = ([number, title, state, draft, created, updated, closed, merged, base, head, headSha, mergeSha]) => ({
   number, title, state, draft, created_at: created, updated_at: updated, closed_at: closed, merged_at: merged,
   html_url: `https://github.com/${REPO}/pull/${number}`, user: { login: 'augusliang23-web' },
-  base: { ref: base, sha: `base-${number}`, repo: { full_name: REPO } },
-  head: { ref: head, sha: headSha, repo: { full_name: REPO } },
+  base: { ref: base, sha: `base-${number}`, repo: REPO_INFO },
+  head: { ref: head, sha: headSha, repo: REPO_INFO },
   merge_commit_sha: mergeSha,
 });
 const PULLS = SNAPSHOT_2026_10_15.map(ghPull);
@@ -102,7 +103,7 @@ function fakeGh(routes) {
 function standardRoutes(overrides = []) {
   return [
     ...overrides,
-    [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput({ default_branch: 'main', html_url: `https://github.com/${REPO}` })],
+    [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput(REPO_INFO)],
     [/\/branches\?/, () => ghOutput(BRANCHES)],
     [/\/pulls\?state=all/, () => ghOutput(PULLS)],
     [/\/commits\?sha=/, () => ghOutput([commit('m3', ['m2'], '2026-10-14T05:13:33Z'), commit('m2', ['m1'], '2026-10-10T00:37:33Z'), MERGE_13, commit('m1', [], '2026-04-26T21:42:44Z')].map((c, i) => (i === 2 ? c : c)))],
@@ -110,10 +111,10 @@ function standardRoutes(overrides = []) {
   ];
 }
 
-test('allowlist is exactly the PM Dashboard repository', () => {
-  assert.deepEqual([...DEVELOPMENT_HISTORY_REPOS], [REPO]);
+test('allowlist is exactly the four owner-approved repositories', () => {
+  assert.deepEqual([...DEVELOPMENT_HISTORY_REPOS], [REPO,'alin36242-web/inventory-management-tool','augusliang23-web/cc-h15a-claude-dispatch-lab','augusliang23-web/Micro-SaaS-Command-Center']);
   assert.equal(isAllowlistedHistoryRepo(REPO), true);
-  for (const bad of ['augusliang23-web/pm-dashboard-uat', 'augusliang23-web/Micro-SaaS-Command-Center', 'github.com/augusliang23-web/pm-dashboard', 'PM Dashboard', '', undefined]) {
+  for (const bad of ['augusliang23-web/pm-dashboard-uat', 'augusliang23-web/Micro-SaaS-Command-Center-lookalike', 'github.com/augusliang23-web/pm-dashboard', 'PM Dashboard', '', undefined]) {
     assert.equal(isAllowlistedHistoryRepo(bad), false, String(bad));
   }
 });
@@ -259,6 +260,7 @@ test('a pre-aborted request never spawns gh', async () => {
 
 test('R: PR detail distinguishes Not checked, No CI checks and CI passed', async () => {
   const base = (checks) => fakeGh([
+    [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput(REPO_INFO)],
     [/\/pulls\/55$/, () => ghOutput({ ...PULLS.find((p) => p.number === 55), changed_files: 12, additions: 889, deletions: 8, commits: 2 })],
     [/\/check-runs/, checks],
     [/\/reviews/, () => ghOutput([])],
@@ -308,7 +310,7 @@ test('route: only GET on the allowlisted repo; errors map to explicit statuses; 
     return { repository: repo, fetchedAt: `t${calls}`, status: 'complete' };
   };
   await withRouter({ fetchHistory }, async (base) => {
-    const other = await fetch(`${base}/development-history?repo=augusliang23-web/Micro-SaaS-Command-Center`);
+    const other = await fetch(`${base}/development-history?repo=augusliang23-web/Micro-SaaS-Command-Center-lookalike`);
     assert.equal(other.status, 403);
     assert.equal(calls, 0);
     const first = await (await fetch(`${base}/development-history?repo=${REPO}`)).json();
@@ -345,7 +347,7 @@ test('route: a history response for another repository is rejected, never cached
 
 test('route: PR detail validates number and repository', async () => {
   const seen = [];
-  await withRouter({ fetchHistoryPull: async (repo, number) => { seen.push([repo, number]); return { repository: repo, number }; } }, async (base) => {
+  await withRouter({ fetchHistoryPull: async (repo, number) => { seen.push([repo, number]); return {source:'GitHub',repository:repo,number}; } }, async (base) => {
     assert.equal((await fetch(`${base}/development-history/pull?repo=${REPO}&number=abc`)).status, 400);
     assert.equal((await fetch(`${base}/development-history/pull?repo=x/y&number=5`)).status, 403);
     assert.equal((await fetch(`${base}/development-history/pull?repo=${REPO}&number=55`)).status, 200);
@@ -367,6 +369,7 @@ const reviewPage = (n) => Array.from({ length: 100 }, (_, i) => review(`u${n}-${
 
 function detailRoutes({ reviews }) {
   return [
+    [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput(REPO_INFO)],
     [/\/pulls\/55$/, () => ghOutput({ ...PULLS.find((p) => p.number === 55), changed_files: 1, additions: 1, deletions: 0, commits: 1 })],
     [/\/check-runs/, () => ghOutput({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] })],
     [/\/reviews/, reviews],
@@ -425,7 +428,7 @@ function movingRoutes({ branchReads, compareLog, mainCommits }) {
   const names = ['main', 'production-pages', 'integration/v23-foundation', 'claude/v23-product-integration', 'claude/v23-browser-e2e-hardening', 'integration/v23-e2e-candidate', 'claude/v23-gate2-closeout', 'claude/v23-uat-backend-activation', 'claude/v23-uat-frontend-activation', 'unrelated/old-branch'];
   let reads = 0;
   return [
-    [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput({ default_branch: 'main', html_url: `https://github.com/${REPO}` })],
+    [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput(REPO_INFO)],
     [/\/branches\?/, () => {
       const moved = branchReads(reads++);
       const present = [...names.filter((name) => !(moved.__remove ?? []).includes(name)), ...Object.keys(moved.__add ?? {})];
@@ -554,6 +557,7 @@ function detailAt(headSha, reviewRoute, { checks } = {}) {
   pull.head = { ...pull.head, sha: headSha };
   return fetchPullDetail(REPO, 55, {
     execFileFn: fakeGh([
+      [/^repos\/augusliang23-web\/pm-dashboard$/, () => ghOutput(REPO_INFO)],
       [/\/pulls\/55$/, () => ghOutput(pull)],
       [/\/check-runs/, checks ?? (() => ghOutput({ total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] }))],
       [/\/reviews/, reviewRoute],
@@ -722,7 +726,7 @@ test('B1.4 server: the repository allowlist is exact — arrays, case, slashes, 
 
 test('B1.4 server: the PR number is a strict positive decimal integer', async () => {
   const seen = [];
-  await withRouter({ fetchHistoryPull: async (repo, number) => { seen.push(number); return { repository: repo, number }; } }, async (base) => {
+  await withRouter({ fetchHistoryPull: async (repo, number) => { seen.push(number); return {source:'GitHub',repository:repo,number}; } }, async (base) => {
     assert.equal((await fetch(`${base}/development-history/pull?repo=${REPO}&number=55`)).status, 200);
     for (const n of ['0', '-1', '1.5', '1e3', '55abc', '%2055', '', '12345678', '0x10', '55&number=56']) {
       const res = await fetch(`${base}/development-history/pull?repo=${REPO}&number=${n}`);
@@ -764,7 +768,11 @@ test('B1.4 server: ghApiPage refuses anything that is not a plain repos/ path', 
 test('B1.4 server: the history module has no filesystem, shell, process-spawn or agent capability (static inspection)', () => {
   const src = readFileSync(new URL('../server/githubDevelopmentHistory.mjs', import.meta.url), 'utf8');
   const imports = [...src.matchAll(/^import .* from '([^']+)';/gm)].map((m) => m[1]).sort();
-  assert.deepEqual(imports, ['./githubRepos.mjs', 'node:child_process']);
+  assert.deepEqual(imports, ['../src/v1/projectCatalog.mjs','../src/v1/projectStatusModel.mjs','../src/v1/zc08bStatusModel.mjs','./githubRepos.mjs','node:child_process']);
+  for(const name of ['projectCatalog','projectStatusModel','zc08bStatusModel']){
+    const pure=readFileSync(new URL(`../src/v1/${name}.mjs`,import.meta.url),'utf8');
+    assert.doesNotMatch(pure,/from ['"]node:|\bfetch\s*\(|process\.env|writeFile|execFile\s*\(/);
+  }
   assert.match(src, /import \{ execFile \} from 'node:child_process'/);
   assert.doesNotMatch(src, /\b(spawn|spawnSync|execSync|execFileSync|fork)\s*\(/);
   assert.doesNotMatch(src, /shell\s*:\s*true/);

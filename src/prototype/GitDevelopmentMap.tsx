@@ -135,9 +135,9 @@ export function GitDevelopmentMap({ identity, rail, selectIdentity }: { identity
         </button>
       </div>
       <div className="g-rail-list" id="g-rail-list">
-        {rail.map((entry) => {
+        {rail.map((entry, index) => {
           const active = identityKey(entry.identity) === key;
-          return <button key={identityKey(entry.identity)} type="button" aria-current={active ? 'page' : undefined} aria-label={`${entry.label} · ${entry.tag}`} title={`${entry.label} · ${entry.tag}`} onClick={() => selectIdentity(entry.identity)}>
+          return <button key={`${identityKey(entry.identity)}-${index}`} type="button" aria-current={active ? 'page' : undefined} aria-label={`${entry.label} · ${entry.tag}`} title={`${entry.label} · ${entry.tag}`} onClick={() => selectIdentity(entry.identity)}>
             <span className="g-rail-mark">{entry.label.slice(0, 1)}</span><span className="g-rail-text"><strong>{entry.label}</strong><small>{entry.tag}</small></span>
           </button>;
         })}
@@ -231,7 +231,7 @@ function LiveHistory({ identity, repo }: { identity: LiveIdentity; repo: string 
   return <>
     <header className="g-header">
       <div>
-        <p className="p-eyebrow">DEVELOPMENT MAP · PM DASHBOARD</p>
+        <p className="p-eyebrow">DEVELOPMENT MAP · {identity.displayName}</p>
         <h1>{identity.displayName}</h1>
         <p className="g-badges"><span className="g-badge">{identity.source}</span><span className={`g-badge ${sourceBadge.read ? 'is-live' : ''}`} data-testid="g-source-badge">{sourceBadge.text}</span><span className="g-badge">Project ID：{identity.projectId}</span></p>
       </div>

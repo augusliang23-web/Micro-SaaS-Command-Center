@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, LayoutGrid, Network, ShieldCheck } from 'lucide-react';
+import { Activity, AlertTriangle, LayoutGrid, Network, ShieldCheck } from 'lucide-react';
 import { isUsableSavedState } from '../savedState.mjs';
 import { isRealProject } from '../verdict.mjs';
 import { GitDevelopmentMap, type RailEntry } from '../prototype/GitDevelopmentMap';
+import { LiveDevelopmentMonitor } from './LiveDevelopmentMonitor';
 import { identityKey, liveRepositoryFor } from '../prototype/gitHistoryModel';
 import type { LiveIdentity } from '../prototype/gitHistoryTypes';
 import '../prototype/prototype.css';
 import './readOnly.css';
+import { MONITORED_PROJECTS, REPOSITORY_CATALOG, catalogIdentity } from './projectCatalog.mjs';
+import { ProjectWorkstreams } from './ProjectWorkstreams';
 
 /**
  * Command Center V1 runtime entry: a read-only project overview and the live GitHub Development Map.
@@ -32,7 +35,7 @@ type SavedLoad =
   | { status: 'ready'; projects: Registered[]; readAt: string }
   | { status: 'empty'; readAt: string }
   | { status: 'unavailable'; reason: string };
-type Page = 'overview' | 'map';
+type Page = 'overview' | 'map' | 'monitor';
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '');
 
@@ -138,8 +141,24 @@ export function ReadOnlyCommandCenter() {
   const [page, setPage] = useState<Page>('overview');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const projects = load.status === 'ready' ? load.projects : [];
-  const rail: RailEntry[] = useMemo(() => projects.map((p) => ({ identity: p.identity, label: p.identity.displayName, tag: tagFor(p) })), [projects]);
-  const selected = projects.find((p) => identityKey(p.identity) === selectedKey)?.identity ?? projects.find((p) => canQuery(p.identity))?.identity ?? projects[0]?.identity ?? null;
+  const catalog = useMemo(() => REPOSITORY_CATALOG.map(catalogIdentity) as LiveIdentity[], []);
+  const rail: RailEntry[] = useMemo(() => [
+    ...projects.map((p) => ({ identity:p.identity,label:p.identity.displayName,tag:tagFor(p) })),
+    ...MONITORED_PROJECTS.map(p=>({identity:catalog[REPOSITORY_CATALOG.findIndex(r=>r.project===p.id)],label:p.name,tag:'CATALOG · 尚未查詢'})),
+  ], [projects,catalog]);
+  const selected = [...projects.map(p=>p.identity),...catalog].find(identity=>identityKey(identity)===selectedKey)
+    ?? projects.find((p)=>canQuery(p.identity))?.identity ?? projects[0]?.identity ?? catalog[0];
+  const zeroCopy=REPOSITORY_CATALOG.some(r=>r.project==='zero-copy'&&r.repository===selected.repository);
+  const selectors = <section className="v1-project-switcher" aria-label="監控專案選擇">
+    <label>監控專案 <select aria-label="監控專案" value={REPOSITORY_CATALOG.find(r=>r.repository===selected.repository)?.project??''}
+      onChange={e=>{const index=REPOSITORY_CATALOG.findIndex(r=>r.project===e.target.value);if(index>=0)setSelectedKey(identityKey(catalog[index]));}}>
+      <option value="" disabled>本機已儲存專案</option>
+      {MONITORED_PROJECTS.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+    </select></label>
+    {zeroCopy&&<div role="group" aria-label="Zero-Copy repositories">{REPOSITORY_CATALOG.map((r,i)=>r.project==='zero-copy'&&
+      <button key={r.id} type="button" aria-pressed={selected.repository===r.repository} onClick={()=>setSelectedKey(identityKey(catalog[i]))}>{r.label}</button>)}</div>}
+    {zeroCopy&&<p>2 Repositories · 每次顯示一個 Repository 的真實 Git parent 關係；工作線分組不建立跨 Repository 連線。</p>}
+  </section>;
   const openMap = (identity?: LiveIdentity) => { if (identity) setSelectedKey(identityKey(identity)); setPage('map'); };
 
   return <div className="v1-shell">
@@ -148,19 +167,38 @@ export function ReadOnlyCommandCenter() {
       <nav aria-label="主要頁面">
         <button type="button" aria-current={page === 'overview' ? 'page' : undefined} onClick={() => setPage('overview')}><LayoutGrid size={15} />專案總覽</button>
         <button type="button" aria-current={page === 'map' ? 'page' : undefined} onClick={() => openMap()}><Network size={15} />開發地圖</button>
+        <button type="button" aria-current={page === 'monitor' ? 'page' : undefined} onClick={() => setPage('monitor')}><Activity size={15} />Live Monitor</button>
       </nav>
     </header>
     <div className="v1-bar"><strong>READ-ONLY</strong> 本畫面只讀取資料：不編輯、不建立任務、不推進 gate、不執行 agent、不呼叫 AI 供應商。後端舊有的寫入路由仍存在，但此畫面不會使用它們。</div>
     {page === 'overview'
       ? <main className="v1-main">
-          <div className="v1-title"><p className="p-eyebrow">PROJECT OVERVIEW</p><h1>已登記專案</h1>
-            <p className="v1-muted">專案資料來自本機 saved state，不等同 GitHub 即時事實；只有通過允許清單的專案可開啟 GitHub 開發地圖。{load.status === 'ready' && <> 讀取時間（瀏覽器時鐘）：{load.readAt}</>}</p></div>
+          <div className="v1-title"><p className="p-eyebrow">PROJECT OVERVIEW</p><h1>專案總覽</h1>
+            <p className="v1-muted">監控目標來自已核准的固定清單；下方已儲存專案來自本機 saved state。兩者均不代表 GitHub 即時狀態，開啟後才讀取並驗證來源。{load.status === 'ready' && <> 讀取時間（瀏覽器時鐘）：{load.readAt}</>}</p></div>
+          <section aria-label="已核准監控目標" className="v1-grid">
+            {MONITORED_PROJECTS.map(project=>{
+              const repos=REPOSITORY_CATALOG.filter(r=>r.project===project.id);
+              return <article className="v1-card" key={project.id} aria-label={`監控目標 ${project.name}`}>
+                <header><h2>{project.name}</h2><span className="v1-badge">{repos.length} {repos.length===1?'Repository':'Repositories'}</span></header>
+                <p>CATALOG · 已核准監控目標（Issue #103）</p>
+                <p>GitHub：尚未查詢 · Agent：NOT_CONNECTED</p>
+                {repos.map(r=><p className="v1-repo-name" key={r.id}>{r.repository}</p>)}
+                <button type="button" className="p-primary" onClick={()=>openMap(catalogIdentity(repos[0]) as LiveIdentity)}>開啟開發地圖</button>
+              </article>;
+            })}
+          </section>
+          <section aria-label="本機已儲存專案"><h2>本機已儲存專案</h2>
           {load.status !== 'ready' || projects.length === 0
             ? <Unavailable load={load.status === 'ready' ? { status: 'empty', readAt: load.readAt } : load} />
             : <div className="v1-grid">{projects.map((p, i) => <ProjectCard key={`${p.identity.projectId ?? 'no-id'}-${i}`} entry={p} open={() => openMap(p.identity)} />)}</div>}
+          </section>
         </main>
-      : <>
+      : page === 'monitor'
+        ? <>{selectors}{zeroCopy&&<ProjectWorkstreams/>}<LiveDevelopmentMonitor identity={selected} /></>
+        : <>
           <div className="p-live-bar"><span><strong>GitHub 唯讀</strong> 只有成功讀取後才會顯示來源與 Last checked；沒有 AI 對話、Prompt 或 agent 執行。</span></div>
+          {selectors}
+          {zeroCopy&&<ProjectWorkstreams/>}
           {selected
             ? <main className="p-main g-main"><GitDevelopmentMap identity={selected} rail={rail} selectIdentity={(identity) => setSelectedKey(identityKey(identity))} /></main>
             : <main className="v1-main"><Unavailable load={load} /></main>}
