@@ -1,0 +1,53 @@
+# ZC-08B1 issue #101 — isolated pure synthetic status parser only.
+name: ZC08B1 synthetic status model CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'src/v1/zc08bStatusModel.mjs'
+      - 'test/zc08b-status-model.test.mjs'
+      - 'docs/zc08b-status-model.md'
+      - '.github/workflows/zc08b-offline-status-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zc08b1-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pure-data-model:
+    if: >-
+      github.repository == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.event.pull_request.number == 102 &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.head_ref == 'zc/zc08b1-offline-status-model' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR HEAD without retained credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Setup Node 22 without npm install or cache
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Verify exact HEAD and module syntax
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          node --check src/v1/zc08bStatusModel.mjs
+          node --check test/zc08b-status-model.test.mjs
+      - name: Run deterministic, network-free status tests
+        run: node --test --test-reporter=spec test/zc08b-status-model.test.mjs
