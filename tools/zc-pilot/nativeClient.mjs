@@ -23,7 +23,10 @@ export function checkNativeEligibility({account,models,limits}){
   if(account?.account?.type!=='chatgpt')throw new Error('NATIVE_CHATGPT_REQUIRED');
   const model=models?.data?.find(x=>x.model==='gpt-6-luna');
   if(!model?.supportedReasoningEfforts?.some(x=>x.reasoningEffort==='low'))throw new Error('MODEL_UNAVAILABLE');
-  const windows=[limits?.rateLimits?.primary,limits?.rateLimits?.secondary];
+  if(limits?.ordinaryUsageAllowed!==true)throw new Error('INCLUDED_USAGE_NOT_CONFIRMED');
+  const buckets=[limits.rateLimits,...Object.values(limits.rateLimitsByLimitId??{})].filter(Boolean);
+  if(buckets.some(x=>x.spendControlReached===true||x.rateLimitReachedType!=null))throw new Error('SUBSCRIPTION_SPEND_OR_USAGE_DENIED');
+  const windows=buckets.flatMap(x=>[x.primary,x.secondary]);
   if(windows.some(x=>!x||typeof x.usedPercent!=='number'||x.usedPercent<0||x.usedPercent>=100))throw new Error('SUBSCRIPTION_QUOTA_UNAVAILABLE');
 }
 export const isToolItem=type=>!['userMessage','agentMessage','reasoning'].includes(type);
@@ -46,11 +49,13 @@ export class NativeSession{
       let m;try{m=JSON.parse(line);}catch{this.fail('NATIVE_PROTOCOL_ERROR');return;}
       if(m.id!==undefined&&!m.method){const p=this.pending.get(m.id);if(p){this.pending.delete(m.id);clearTimeout(p.timer);m.error?p.reject(new Error('NATIVE_RPC_FAILED')):p.resolve(m.result);}}
       else if(m.id!==undefined&&m.method){this.fail('NATIVE_PERMISSION_REQUEST');}
+      else if(m.method==='error')this.fail(m.params?.willRetry===true?'NATIVE_RETRY_BLOCKED':'NATIVE_TURN_ERROR');
       else this.onMessage(m);
     });
   }
   fail(code){
     if(!this.failure)this.failure=new Error(code);
+    if(this.child.pid){try{process.kill(-this.child.pid,'SIGTERM');}catch{}}
     for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(this.failure);}this.pending.clear();
     this.onFailure?.(this.failure);
   }
@@ -65,8 +70,10 @@ export class NativeSession{
   async close(){
     this.child.stdin.end();
     const kill=signal=>{try{process.kill(-this.child.pid,signal);}catch{}};
-    const term=setTimeout(()=>kill('SIGTERM'),500),hard=setTimeout(()=>kill('SIGKILL'),1500);
-    await Promise.race([this.exited,new Promise(resolve=>setTimeout(resolve,2500))]);clearTimeout(term);clearTimeout(hard);
+    await Promise.race([this.exited,new Promise(resolve=>setTimeout(resolve,300))]);
+    // The leader may exit while its descendants remain in our private group.
+    kill('SIGTERM');await new Promise(resolve=>setTimeout(resolve,150));kill('SIGKILL');
+    await Promise.race([this.exited,new Promise(resolve=>setTimeout(resolve,300))]);
   }
 }
 
@@ -86,13 +93,13 @@ export async function produceNativePatch({cwd,source,onProgress=()=>{}}){
     let output='',settle,reject;const itemTypes=[];const done=new Promise((yes,no)=>{settle=yes;reject=no;});done.catch(()=>{});
     session.onFailure=reject;
     session.onMessage=m=>{
-      if(m.method==='model/rerouted'){reject(new Error('MODEL_REROUTED'));return;}
+      if(m.method==='model/rerouted'){session.fail('MODEL_REROUTED');return;}
       if(m.method==='item/started'){
         const type=m.params?.item?.type;itemTypes.push(type??'UNKNOWN');
-        if(isToolItem(type)){reject(new Error('UNEXPECTED_NATIVE_TOOL'));return;}
+        if(isToolItem(type)){session.fail('UNEXPECTED_NATIVE_TOOL');return;}
       }
       if(m.method==='item/agentMessage/delta')output+=m.params?.delta??'';
-      if(output.length>16000){reject(new Error('PATCH_OUTPUT_LIMIT'));return;}
+      if(output.length>16000){session.fail('PATCH_OUTPUT_LIMIT');return;}
       if(m.method==='turn/completed')settle(m.params?.turn);
     };
     const prompt=`Agent: Codex\nModel: GPT-6 Luna\nReasoning/Effort: Low\n\nWhy this route:\nOne tiny deterministic CSS patch needs no tools.\n\nGoal:\n${TASK.scope.goal}\n\nScope / Constraints:\nReturn one JSON patch for index.html only. Expand the existing reduced-motion rule to include .spinner and .async-action-spinner; retain #productionWeekSyncSpinner. Preserve every other byte. No tool calls or side effects.\n\nTask data:\n${JSON.stringify(TASK)}\n\nExact existing CSS line:\n${BEFORE}\n\nAcceptance / Required validation:\nOnly propose the patch; controller runs browser tests and independent QA.\n\nSafety / Production Boundary:\nNo commands, GitHub, credentials, provider changes, merge or deploy.\n\nExpected output:\nJSON with path, oldText and newText.`;

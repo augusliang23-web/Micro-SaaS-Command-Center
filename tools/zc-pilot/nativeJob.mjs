@@ -13,7 +13,7 @@ export const PM_TREE='f421278d6eb5bdd12f0adbaaa9634a70e45f5104';
 const PM_SOURCE='/private/tmp/zc-pilot-pm-source';
 const DEPS='/Users/augusliang/Developer/worktrees/p1-hist-pr92-local-20261101/node_modules';
 const allowedFiles=['index.html','tests/zc-pilot-reduced-motion.test.mjs','tests/helpers/p1-bc-source-baseline.mjs'];
-export const GRANT=Object.freeze({schema:'zc.authorization/v1',grantId:'github-cc-issue-108-owner-native-pilot',taskId:TASK.taskId,repository:TASK.target.repository,baseSha:TASK.target.baseSha,capabilities:['native:patch-proposal','source:exact-css-apply','offline:browser-test','github:job-evidence','draft-pr:reuse-exact-tree'],maxJobs:1,maxFixAttempts:2,automaticProviderRetries:0});
+export const GRANT=Object.freeze({schema:'zc.authorization/v1',grantId:'github-cc-issue-108-owner-native-pilot',taskId:TASK.taskId,repository:TASK.target.repository,baseSha:TASK.target.baseSha,capabilities:['native:patch-proposal','source:exact-css-apply','offline:browser-test','github:job-evidence','draft-pr:reuse-exact-tree'],maxJobs:1,maxFixAttempts:2,automaticRedispatches:0});
 
 export async function createNativeJob({root,enabled=false,ops}){
   await mkdir(root,{recursive:true,mode:0o700});
@@ -65,7 +65,7 @@ export async function createNativeJob({root,enabled=false,ops}){
     if(work)return snapshot();
     if(reserved)throw new Error('EXISTING_RESERVATION');
     starting=(async()=>{
-      try{fd=await open(root+'/journal.jsonl','wx',0o600);}catch{throw new Error('EXISTING_RESERVATION');}
+      try{fd=await open(root+'/journal.jsonl','wx',0o600);}catch{reserved=true;state={...state,state:'HOLD',reason:'EXISTING_RESERVATION'};throw new Error('EXISTING_RESERVATION');}
       reserved=true;await record('LOCAL_RESERVATION_CREATED',{state:'VERIFYING'});work=execute().catch(()=>{state={...state,state:'HOLD',reason:'JOURNAL_WRITE_FAILED'};});return snapshot();
     })();return starting;
   }};

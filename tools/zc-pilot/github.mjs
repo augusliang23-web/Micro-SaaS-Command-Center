@@ -45,13 +45,15 @@ export function createGithubAdapter({request=ghRequest}={}) {
     if(!Number.isSafeInteger(result?.id)||result.id<1||result.user?.login!=='augusliang23-web'||result.body!==body||result.html_url!==`https://github.com/${EVIDENCE_REPO}/issues/107#issuecomment-${result.id}`)throw new Error('WRITE_UNCERTAIN');
     return {url:result.html_url};
   }
-  return {
-    async verifyNativeTarget(){
+  async function verifyNativeTarget(){
       await identity(TASK.target.repository,TASK.target.repositoryId);
       const main=await request('GET',`repos/${TASK.target.repository}/commits/main`);
       const pr=await request('GET',`repos/${TASK.target.repository}/pulls/96`);
       if(main?.sha!==TASK.target.baseSha||pr?.number!==96||pr.state!=='open'||pr.draft!==true||pr.merged!==false||pr.html_url!==`https://github.com/${TASK.target.repository}/pull/96`||pr.head?.sha!=='7953748dedc3c3381aacfe3b8e4f5407e280810b'||pr.head?.repo?.id!==TASK.target.repositoryId||pr.base?.sha!==TASK.target.baseSha)throw new Error('NATIVE_TARGET_DRIFT');
-    },
+      return {repository:TASK.target.repository,pr:96,headSha:pr.head.sha,baseSha:pr.base.sha,observedAt:new Date().toISOString()};
+  }
+  return {
+    verifyNativeTarget,
     async reserveNativeJob(jobId,grant){
       if(jobId!=='zc-native-pm-pilot-01'||grant?.grantId!=='github-cc-issue-108-owner-native-pilot')throw new Error('GRANT_MISMATCH');
       const rows=await nativeComments();
@@ -61,7 +63,8 @@ export function createGithubAdapter({request=ghRequest}={}) {
     async publishNativeJob(state){
       if(state?.jobId!=='zc-native-pm-pilot-01'||state?.taskId!==TASK.taskId||state?.result?.tree!=='f421278d6eb5bdd12f0adbaaa9634a70e45f5104')throw new Error('RESULT_SCOPE_MISMATCH');
       await nativeComments();
-      const evidence={schema:'zc.job/v1',jobId:state.jobId,taskId:state.taskId,grantId:state.grantId,state:'DELIVERED_FOR_REVIEW',native:state.native,result:state.result,events:state.events,ownerUat:'PENDING',mergeDeploy:'NOT_AUTHORIZED'};
+      const targetObservation=await verifyNativeTarget();
+      const evidence={schema:'zc.job/v1',jobId:state.jobId,taskId:state.taskId,grantId:state.grantId,state:'DELIVERED_FOR_REVIEW',native:state.native,result:state.result,targetObservation,events:state.events,ownerUat:'PENDING',mergeDeploy:'NOT_AUTHORIZED'};
       return nativeComment(`<!-- zc-job:${state.jobId} -->\n\n## Real native subscription pilot evidence\n\nNative coding agent produced a bounded CSS proposal; the controller applied it in an isolated branch and ran the existing offline tests. Exact source tree matches existing [PM Draft PR #96](https://github.com/${TASK.target.repository}/pull/96), reused without duplicate PR or push. This is one real foreground dispatch, not an arbitrary-task daemon. Independent adapter review and owner UAT remain separate.\n\n\`\`\`json\n${JSON.stringify(evidence,null,2)}\n\`\`\``);
     },
     async list() {
