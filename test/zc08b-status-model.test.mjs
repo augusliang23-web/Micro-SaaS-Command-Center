@@ -157,3 +157,16 @@ test('SM34 fixtures across each target produce its own static PR identity',()=>{
   assert.equal(r.status,'READY_FOR_REVIEW');
  }
 });
+
+test('SM35 timed_out exact-head CI is FAILED and summary is HOLD',()=>{
+ const r=basic(trial(x=>{x.workflows[0].conclusion='timed_out';}));
+ assert.equal(r.ci,'FAILED');
+ assert.equal(r.status,'HOLD');
+ assert.equal(r.agent,'NOT_CONNECTED');
+});
+test('SM36 action_required exact-head CI is BLOCKED and summary is HOLD',()=>{
+ const r=basic(trial(x=>{x.workflows[0].conclusion='action_required';}));
+ assert.equal(r.ci,'BLOCKED');
+ assert.equal(r.status,'HOLD');
+ assert.equal(r.review,'NO_NEW_MAJOR_FINDINGS');
+});
