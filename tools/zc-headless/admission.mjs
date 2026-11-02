@@ -1,4 +1,4 @@
-import {readFileSync, appendFileSync} from 'node:fs';
+import {readFileSync, appendFileSync, statSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import {TASK, EVIDENCE_REPO, EVIDENCE_REPO_ID, validateTask} from '../zc-pilot/contract.mjs';
 
@@ -63,6 +63,7 @@ export function runGithubAdmission(env=process.env){
   try{
     if(typeof env.GITHUB_EVENT_PATH!=='string'||!env.GITHUB_EVENT_PATH)
       throw Error('EVENT_PATH_MISSING');
+    if(statSync(env.GITHUB_EVENT_PATH).size>MAX_EVENT)throw Error('EVENT_TOO_LARGE');
     output=parseEventBytes(readFileSync(env.GITHUB_EVENT_PATH,'utf8'),{
       repository:env.GITHUB_REPOSITORY,eventName:env.GITHUB_EVENT_NAME
     });
