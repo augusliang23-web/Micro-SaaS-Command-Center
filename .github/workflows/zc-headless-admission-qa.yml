@@ -1,0 +1,44 @@
+name: ZC Pilot02 Headless Admission QA
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [codex/zc-pilot-github-intake]
+    paths:
+      - 'tools/zc-headless/**'
+      - 'test/zc-headless-admission.test.mjs'
+      - '.github/workflows/zc-headless-admission.yml'
+      - '.github/workflows/zc-headless-admission-qa.yml'
+      - 'docs/zc-headless-pilot02.md'
+permissions:
+  contents: read
+concurrency:
+  group: zc-pilot02-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  offline-gate:
+    if: >-
+      github.repository == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.head_ref == 'zc/zc-pilot02-headless-admission' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Exact HEAD, no installs, no models, no GitHub writes
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --check tools/zc-headless/admission.mjs
+          node --check test/zc-headless-admission.test.mjs
+          git diff --check
+          node --test test/zc-headless-admission.test.mjs
