@@ -4,12 +4,21 @@ import {assessAntiCli,formattedPreflight} from '../tools/zc-anti/cli-preflight.m
 
 const ver='Antigravity CLI v1.4.4\n';
 const help='  -p, --print <prompt>   --output-format [text|json|stream-json]   --sandbox\n';
-function fixture({version=ver,helpText=help,failAt=null}={}){
+function fixture({version=ver,helpText=help,failAt=null,versionToStderr=false,helpToStderr=false,nonzeroAt=null,signalAt=null}={}){
   const calls=[];
   const exec=(command,args,options)=>{
     calls.push({command,args,options});
     if(args[0]===failAt)throw new Error('secret local terminal trace');
-    return args[0]==='--version'?version:helpText;
+    const isVersion=args[0]==='--version',value=isVersion?version:helpText;
+    if(value===null)return {status:0,stdout:null,stderr:null};
+    const useStderr=isVersion?versionToStderr:helpToStderr;
+    return {
+      status:args[0]===nonzeroAt?2:0,
+      signal:args[0]===signalAt?'SIGTERM':null,
+      error:null,
+      stdout:useStderr?'':value,
+      stderr:useStderr?value:''
+    };
   };
   const env={PATH:'/usr/local/bin:/usr/bin',HOME:'/Users/private-owner',OPENAI_API_KEY:'private-token',GH_TOKEN:'secret',TMPDIR:'/private/tmp',LANG:'en_US.UTF-8'};
   return {calls,exec,env};
@@ -49,6 +58,34 @@ test('relative, empty or traversal PATH entries cannot select a local spoofed ag
     assert.equal(r.gate,'HOLD');
     assert.equal(r.reason,'UNSAFE_PATH');
     assert.deepEqual(f.calls,[]);
+  }
+});
+test('owner reproduced agy help on stderr: 0 stdout, 3048 stderr, all flags detect',()=>{
+  const f=fixture({helpToStderr:true,version:'agy version 1.4.12\n'});
+  const r=assessAntiCli({platform:'darwin',env:f.env,exec:f.exec});
+  assert.equal(r.gate,'CLI_INTERFACE_DETECTED');
+  assert.equal(r.version,'1.4.12');
+  assert.deepEqual(r.flags,{'--print':true,'--output-format':true,'--sandbox':true});
+  assert.equal(r.dispatch,'HOLD');
+  assert.equal(r.readyToCode,false);
+});
+test('version may also be printed to stderr without exposing its raw content',()=>{
+  const f=fixture({versionToStderr:true,helpToStderr:true,version:'agy v1.4.12 key=SECRET_123\n'});
+  const r=assessAntiCli({platform:'darwin',env:f.env,exec:f.exec});
+  assert.equal(r.gate,'CLI_INTERFACE_DETECTED');
+  assert.equal(r.version,'v1.4.12');
+  assert.ok(!formattedPreflight(r).includes('SECRET_123'));
+});
+test('nonzero process exit, terminated probe, and oversized stderr all fail closed',()=>{
+  for(const opts of [
+    {nonzeroAt:'--help'},
+    {signalAt:'--help'},
+    {helpToStderr:true,helpText:'x'.repeat(65536)}
+  ]){
+    const f=fixture(opts);
+    const r=assessAntiCli({platform:'darwin',env:f.env,exec:f.exec});
+    assert.equal(r.gate,'HOLD');
+    assert.equal(r.reason,'CLI_MISSING_OR_FAILED');
   }
 });
 test('missing CLI is fail-closed and no CLI error is exposed',()=>{
