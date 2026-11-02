@@ -1,0 +1,33 @@
+name: ZC Headless Issue Admission (READ ONLY)
+# Issue events only run this workflow once it exists on the default branch.
+# This Draft PR is not an authorization to merge, dispatch a model, or execute source changes.
+on:
+  issues:
+    types: [opened, edited, labeled]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: zc-headless-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  bounded-admission:
+    if: >-
+      github.repository == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.issue.title, '[ZC Task]') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'zc:headless-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Read authenticated GitHub issue event and decide HOLD (zero dispatch)
+        run: |
+          set -euo pipefail
+          node tools/zc-headless/admission.mjs
