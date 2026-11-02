@@ -22,6 +22,8 @@ GitHub does **not** trigger this workflow for issue events until the workflow is
 - `HOLD_UNSUPPORTED_TASK`: task not the specifically approved Pilot01 contract.
 - `HOLD_NOT_AUTHORIZED`: recognized fixed task, but **no trusted execution grant**, therefore `agent:NOT_CONNECTED`, `dispatch:HOLD`, `readyForWorker:false`.
 
+**This exact pilot only recognizes Issue #107.** A new Issue copying its existing idempotency key and payload is rejected as `DUPLICATE_OR_UNREGISTERED_TASK`. New Grok-created tasks need a separately audited, configurable task registration + trusted grant source; this first read-only Gate does not create such authorization or duplicate issues.
+
 An Issue label, comment, JSON body field, Grok instruction, workflow SUCCESS or `executionAuthorization:GRANTED` text cannot grant worker permissions. Do not create a duplicate of Task #107 to test this. The validation is stateless/read-only; do not mistake deterministic evaluation for durable cross-run worker reservation.
 
 ## How Grok Bot can fit, without a custom web page
