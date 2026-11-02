@@ -1,0 +1,43 @@
+name: ZC Pilot02C Antigravity CLI Readonly Preflight QA
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [zc/zc-pilot02-headless-admission]
+    paths:
+      - 'tools/zc-anti/**'
+      - 'test/zc-anti-cli-preflight.test.mjs'
+      - '.github/workflows/zc-anti-cli-preflight-qa.yml'
+      - 'docs/zc-anti-headless-preflight.md'
+permissions:
+  contents: read
+concurrency:
+  group: zc-anti-cli-preflight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  offline-preflight-tests:
+    if: >-
+      github.repository == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.head_ref == 'zc/zc-pilot02c-anti-cli-preflight' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Exact HEAD and no-model mocked capability tests
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --check tools/zc-anti/cli-preflight.mjs
+          node --check test/zc-anti-cli-preflight.test.mjs
+          git diff --check
+          node --test test/zc-anti-cli-preflight.test.mjs
