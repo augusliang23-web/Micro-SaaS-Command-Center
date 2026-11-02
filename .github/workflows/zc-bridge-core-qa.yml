@@ -1,8 +1,6 @@
 # ZC-MVP-B1 (Issue #119): offline QA for the mock-only Local Bridge core.
 # Draft PR only. No secrets, no npm, no provider, no deployment, no real worker.
-# The exact PR number guard is added in a follow-up commit once the Draft PR
-# exists; until that commit is pushed and this workflow reruns on it, no CI
-# result may be cited as passing.
+# Guarded to branch claude/zc-mvp-b1-bridge-core, Draft state and exact PR #120.
 name: ZC Bridge Core offline QA
 
 on:
@@ -26,6 +24,7 @@ jobs:
   bridge-core-offline:
     if: >-
       github.repository == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.event.pull_request.number == 120 &&
       github.event.pull_request.head.repo.full_name == 'augusliang23-web/Micro-SaaS-Command-Center' &&
       github.head_ref == 'claude/zc-mvp-b1-bridge-core' &&
       github.event.pull_request.draft == true
