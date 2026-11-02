@@ -1,0 +1,65 @@
+# ZC-MVP-B1 (Issue #119): offline QA for the mock-only Local Bridge core.
+# Draft PR only. No secrets, no npm, no provider, no deployment, no real worker.
+# The exact PR number guard is added in a follow-up commit once the Draft PR
+# exists; until that commit is pushed and this workflow reruns on it, no CI
+# result may be cited as passing.
+name: ZC Bridge Core offline QA
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'tools/zc-bridge-core/**'
+      - 'test/zc-bridge-core-*.test.mjs'
+      - 'docs/zc-bridge-core.md'
+      - '.github/workflows/zc-bridge-core-qa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zc-bridge-core-qa-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  bridge-core-offline:
+    if: >-
+      github.repository == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.head_ref == 'claude/zc-mvp-b1-bridge-core' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR HEAD without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Node 22 without npm packages or cache
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Verify exact HEAD and JavaScript syntax
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          echo "HEAD=$HEAD_SHA"
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find tools/zc-bridge-core -name '*.mjs' -print0)
+          for file in test/zc-bridge-core-*.test.mjs; do
+            node --check "$file"
+          done
+
+      - name: Offline mock-only tests (fake children in a temp fixture)
+        shell: bash
+        run: node --test --test-reporter=spec test/zc-bridge-core-*.test.mjs
