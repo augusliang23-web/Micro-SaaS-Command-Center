@@ -42,6 +42,15 @@ test('secrets and unrelated environment variables are not inherited by the probe
   assert.ok(!JSON.stringify(f.calls).includes('private-token'));
   assert.ok(!JSON.stringify(f.calls).includes('GH_TOKEN'));
 });
+test('relative, empty or traversal PATH entries cannot select a local spoofed agy',()=>{
+  for(const path of ['.:/usr/bin','/usr/bin:','/usr/bin::/bin','./node_modules/.bin:/usr/bin','../bin:/usr/bin','/usr/bin/../tmp','/','']){
+    const f=fixture();f.env.PATH=path;
+    const r=assessAntiCli({platform:'darwin',env:f.env,exec:f.exec});
+    assert.equal(r.gate,'HOLD');
+    assert.equal(r.reason,'UNSAFE_PATH');
+    assert.deepEqual(f.calls,[]);
+  }
+});
 test('missing CLI is fail-closed and no CLI error is exposed',()=>{
   const f=fixture({failAt:'--version'});const r=assessAntiCli({platform:'darwin',env:f.env,exec:f.exec});
   assert.equal(r.gate,'HOLD');assert.equal(r.reason,'CLI_MISSING_OR_FAILED');
