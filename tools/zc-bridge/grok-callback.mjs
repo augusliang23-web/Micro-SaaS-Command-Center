@@ -41,7 +41,8 @@ export function inspectReturnEvent(input){
   if(markers.length!==1)return result('PR_MARKER_INVALID',pr.number);
   const match=/^<!-- zc\.bridge-result\/v1 task=(zc-[a-z0-9-]+) issue=(\d+) -->$/.exec(markers[0]);
   if(!match||!jobId(match[1])||!positive(Number(match[2]))||
-     !pr.body.includes(`https://github.com/${BRIDGE_REPO}/issues/${match[2]}`))
+     !(new RegExp('https://github\\.com/'+BRIDGE_REPO.replaceAll('/','\\/')+
+       '/issues/'+match[2]+'(?![0-9])')).test(pr.body))
     return result('PR_MARKER_INVALID',pr.number);
   if(eventKind.startsWith('ci-')){
     if(!ci||ci.headSha!==pr.head.sha||ci.prNumber!==pr.number||
