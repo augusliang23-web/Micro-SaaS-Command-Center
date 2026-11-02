@@ -91,6 +91,24 @@ test('the result is machine-readable with one JSON line',()=>{
   const parsed=JSON.parse(out);assert.equal(parsed.schema,'zc.anti.preflight/v1');
   assert.equal(parsed.readyToCode,false);
 });
+test('serialized preflight evidence cannot be promoted to worker-ready by a consumer',()=>{
+  const x=assessAntiCli({platform:'darwin',env:fixture().env,exec:fixture().exec});
+  for(const change of [
+    y=>y.readyToCode=true,
+    y=>y.dispatch='RUN',
+    y=>y.worker='CONNECTED',
+    y=>y.isolation='PASS',
+    y=>y.authentication='PASS',
+    y=>y.subscriptionQuota='PASS',
+    y=>y.trustedGrant='GRANTED',
+    y=>y.modelCalls=1,
+    y=>y.gitHubWrites=1,
+    y=>y.reason='VERIFIED'
+  ]){
+    const altered=structuredClone(x);change(altered);
+    assert.throws(()=>formattedPreflight(altered),/INVALID_PREFLIGHT/);
+  }
+});
 test('an incorrectly shaped report cannot be serialized as authoritative',()=>{
   assert.throws(()=>formattedPreflight({gate:'CLI_INTERFACE_DETECTED'}),/INVALID_PREFLIGHT/);
 });
