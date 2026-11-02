@@ -60,6 +60,10 @@ test('concurrent native requests share one reserved job and truthful stage event
  const x=job.status();assert.equal(count(),1);assert.equal(x.jobId,JOB_ID);assert.equal(x.state,'DELIVERED');assert.equal(x.ownerUat,'PENDING');assert.equal(x.result.tests,'PASS');
  assert.ok(x.events.some(e=>e.kind==='SOURCE_EDITED_AND_TESTED'));assert.ok(!JSON.stringify(x).includes('threadId'));
 });
+test('a repeated request after delivery returns current evidence without another model call',async()=>{
+ const {job,count}=await fixture();await job.start();await job.wait();const repeated=await job.start();
+ assert.equal(repeated.state,'DELIVERED');assert.equal(repeated.result.tests,'PASS');assert.equal(count(),1);
+});
 test('restart from local reservation never re-invokes a provider',async()=>{
  const x=await fixture();await x.job.start();await x.job.wait();
  const restarted=await createNativeJob({root:x.root,enabled:true,ops:x.ops});await assert.rejects(restarted.start(),/EXISTING_RESERVATION/);assert.equal(x.count(),1);

@@ -61,8 +61,8 @@ export async function createNativeJob({root,enabled=false,ops}){
   return {status:snapshot,wait:()=>work??Promise.resolve(),async start(){
     if(!enabled)throw new Error('NATIVE_CAPABILITY_DISABLED');
     if(reserved&&state.state==='HOLD')throw new Error('EXISTING_RESERVATION');
-    if(starting)return starting;
     if(work)return snapshot();
+    if(starting){await starting;return snapshot();}
     if(reserved)throw new Error('EXISTING_RESERVATION');
     starting=(async()=>{
       try{fd=await open(root+'/journal.jsonl','wx',0o600);}catch{reserved=true;state={...state,state:'HOLD',reason:'EXISTING_RESERVATION'};throw new Error('EXISTING_RESERVATION');}
