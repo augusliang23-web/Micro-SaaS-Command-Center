@@ -1,0 +1,51 @@
+name: ZC Pilot02D Offline Grok Anti Bridge QA
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [zc/zc-pilot02c-anti-cli-preflight]
+    paths:
+      - 'tools/zc-bridge/**'
+      - 'test/zc-bridge-*.test.mjs'
+      - '.github/workflows/zc-bridge-offline-qa.yml'
+      - 'docs/zc-grok-anti-closed-loop.md'
+permissions:
+  contents: read
+concurrency:
+  group: zc-bridge-offline-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  bridge-offline-qa:
+    if: >-
+      github.repository == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.event.pull_request.head.repo.full_name == 'augusliang23-web/Micro-SaaS-Command-Center' &&
+      github.head_ref == 'zc/zc-pilot02d-offline-bridge' &&
+      github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Offline fail-closed task and callback validation (no provider)
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --check tools/zc-bridge/task-queue.mjs
+          node --check tools/zc-bridge/grok-callback.mjs
+          node --check tools/zc-bridge/grant-verifier.mjs
+          node --check tools/zc-bridge/poll-plan.mjs
+          node --check tools/zc-bridge/github-reader.mjs
+          node --check test/zc-bridge-task-queue.test.mjs
+          node --check test/zc-bridge-grok-callback.test.mjs
+          node --check test/zc-bridge-grant-verifier.test.mjs
+          node --check test/zc-bridge-poll-plan.test.mjs
+          node --check test/zc-bridge-github-reader.test.mjs
+          git diff --check
+          node --test test/zc-bridge-task-queue.test.mjs test/zc-bridge-grok-callback.test.mjs test/zc-bridge-grant-verifier.test.mjs test/zc-bridge-poll-plan.test.mjs test/zc-bridge-github-reader.test.mjs
