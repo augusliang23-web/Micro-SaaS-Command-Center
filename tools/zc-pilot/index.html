@@ -15,7 +15,7 @@
 <article><span class="step">01 / 任務建立</span><strong id="intake">尚未查詢</strong><p>GitHub 保存正式任務契約。</p></article>
 <article><span class="step">02 / Agent 開發</span><strong id="worker-status">尚未查詢</strong><p>僅顯示本次原生工作事件，不從 CI 推測 Agent 活動。</p></article>
 <article><span class="step">03 / 測試與 QA</span><strong id="qa-status">尚無本次完成證據</strong><p>測試與獨立複查分別保留證據；不代表發布核准。</p></article>
-<article><span class="step">04 / Owner 驗收</span><strong>待成果交付</strong><p>本頁不是 PM 功能的驗收通過證明。</p></article>
+<article><span class="step">04 / Owner 驗收</span><strong>尚未驗收</strong><p>本頁不是 PM 功能的驗收通過證明。</p></article>
 </section>
 <section class="task" aria-labelledby="delivery-heading"><h2 id="delivery-heading">既有受控試點成果</h2><p>較早的 Codex 受控試點已交付此 PM 小修正。下方原生派工會從原始來源獨立產生修改並驗證；只有來源完全相同時才重用既有 PR。</p><div class="actions"><a href="https://github.com/augusliang23-web/pm-dashboard/pull/96" target="_blank" rel="noopener noreferrer">查看 PM Draft PR 與 CI ↗</a><a href="https://github.com/augusliang23-web/Micro-SaaS-Command-Center/issues/107#issuecomment-6564506226" target="_blank" rel="noopener noreferrer">查看既有測試與獨立複查證據 ↗</a></div></section>
 <section class="task native" aria-labelledby="native-heading"><div class="eyebrow">已授權的單次原生派工 · ISSUE #108</div><h2 id="native-heading">驗證真正的 Coding Agent 交付</h2><p>使用現有 ChatGPT 訂閱，讓原生 Agent 提出限定修改，再於隔離分支套用、測試並核對既有 Draft PR。此操作會使用訂閱額度；不會使用付費 API 或合併部署。</p><div class="actions"><button id="dispatch" disabled>執行單次原生 PM 試點</button><button id="job-refresh" class="secondary" disabled>查詢派工結果</button></div><p id="job-message" role="status" aria-live="polite">尚未查詢原生執行器。</p><ol id="job-events"></ol><a id="job-evidence" hidden target="_blank" rel="noopener noreferrer">查看真實派工證據 ↗</a></section>

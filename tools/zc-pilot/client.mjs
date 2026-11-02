@@ -43,7 +43,7 @@ function render(data){
     $('issue').href=data.issue.url;$('issue').textContent=`查看 GitHub 任務 #${data.issue.number} ↗`;$('issue').hidden=false;
   }
   $('checked').textContent=data.checkedAt?`來源：GitHub · 本次查詢：${new Date(data.checkedAt).toLocaleString('zh-TW')}`:'GitHub 來源尚未確認；先前狀態不作為目前證據。';
-  $('message').textContent=data.error?(errors[data.error]??'目前無法確認 GitHub 來源，已暫停建立。'):data.intake==='RECORDED'?'任務已存入 GitHub；尚未派給 Agent。':data.intake==='WRITE_UNCERTAIN'?errors.WRITE_UNCERTAIN:session?.allowWrite?'可以建立這項固定任務，無需複製 Prompt。':'目前為唯讀入口，可查詢既有任務。';
+  $('message').textContent=data.error?(errors[data.error]??'目前無法確認 GitHub 來源，已暫停建立。'):data.intake==='RECORDED'?'任務已存入 GitHub；原生派工狀態見下方。':data.intake==='WRITE_UNCERTAIN'?errors.WRITE_UNCERTAIN:session?.allowWrite?'可以建立這項固定任務，無需複製 Prompt。':'目前為唯讀入口，可查詢既有任務。';
   controls();
 }
 async function query(create=false){
