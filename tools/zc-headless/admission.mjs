@@ -44,6 +44,8 @@ export function admitIssueEvent(event,{repository=EVIDENCE_REPO,eventName='issue
   catch{return result('HOLD_UNSUPPORTED_TASK','INVALID_TASK_JSON',issue.number);}
   if(issue.title!==TASK.title||!validateTask(task))
     return result('HOLD_UNSUPPORTED_TASK','TASK_NOT_IN_ALLOWLIST',issue.number);
+  // The original job was already delivered: another issue with identical task data is not a new authorization.
+  if(issue.number!==107)return result('HOLD_UNSUPPORTED_TASK','DUPLICATE_OR_UNREGISTERED_TASK',issue.number);
   // The existing Pilot01 task intentionally says NOT_GRANTED.
   // A GitHub label, issue edit or Grok text can NEVER upgrade this authorization.
   return result('HOLD_NOT_AUTHORIZED','TRUSTED_EXECUTION_GRANT_REQUIRED',issue.number);
