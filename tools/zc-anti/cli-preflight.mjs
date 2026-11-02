@@ -5,7 +5,7 @@ import {pathToFileURL} from 'node:url';
 // Only static CLI interface detection. It is not a sandbox or authentication proof.
 const SCHEMA='zc.anti.preflight/v1';
 const flags=['--print','--output-format','--sandbox'];
-const reasons=new Set(['UNSUPPORTED_HOST','CLI_MISSING_OR_FAILED','CLI_VERSION_UNRECOGNIZED','CLI_FLAGS_MISSING','CLI_INTERFACE_DETECTED']);
+const reasons=new Set(['UNSUPPORTED_HOST','UNSAFE_PATH','CLI_MISSING_OR_FAILED','CLI_VERSION_UNRECOGNIZED','CLI_FLAGS_MISSING','CLI_INTERFACE_DETECTED']);
 function report(reason,version=null,advertised=[]){
   if(!reasons.has(reason))throw new Error('INTERNAL_REASON_UNKNOWN');
   return Object.freeze({
@@ -27,6 +27,11 @@ function report(reason,version=null,advertised=[]){
 }
 export function assessAntiCli({platform=process.platform, env=process.env, exec=execFileSync}={}){
   if(platform!=='darwin')return report('UNSUPPORTED_HOST');
+  // Never resolve an executable from an empty/relative PATH entry, including CWD.
+  // This is not CLI binary attestation; operator must still trust installed agy.
+  const pathEntries=typeof env.PATH==='string'?env.PATH.split(':'):[];
+  if(!pathEntries.length||pathEntries.some(p=>!p.startsWith('/')||p==='/'||p.includes('/../')||p.endsWith('/..')||p.includes('/./')||p.endsWith('/.')))
+    return report('UNSAFE_PATH');
   const allowedEnv=Object.fromEntries(['PATH','HOME','TMPDIR','LANG'].filter(k=>typeof env[k]==='string').map(k=>[k,env[k]]));
   const run=arg=>exec('agy',[arg],{
     encoding:'utf8',shell:false,timeout:5000,maxBuffer:64*1024,
