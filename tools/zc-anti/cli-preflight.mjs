@@ -1,4 +1,4 @@
-import {execFileSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 
 // NO model invocation, token read, permission change, GitHub write, or task claim.
@@ -25,7 +25,7 @@ function report(reason,version=null,advertised=[]){
     readyToCode:false
   });
 }
-export function assessAntiCli({platform=process.platform, env=process.env, exec=execFileSync}={}){
+export function assessAntiCli({platform=process.platform, env=process.env, exec=spawnSync}={}){
   if(platform!=='darwin')return report('UNSUPPORTED_HOST');
   // Never resolve an executable from an empty/relative PATH entry, including CWD.
   // This is not CLI binary attestation; operator must still trust installed agy.
@@ -33,15 +33,25 @@ export function assessAntiCli({platform=process.platform, env=process.env, exec=
   if(!pathEntries.length||pathEntries.some(p=>!p.startsWith('/')||p==='/'||p.includes('/../')||p.endsWith('/..')||p.includes('/./')||p.endsWith('/.')))
     return report('UNSAFE_PATH');
   const allowedEnv=Object.fromEntries(['PATH','HOME','TMPDIR','LANG'].filter(k=>typeof env[k]==='string').map(k=>[k,env[k]]));
-  const run=arg=>exec('agy',[arg],{
-    encoding:'utf8',shell:false,timeout:5000,maxBuffer:64*1024,
-    windowsHide:true,env:allowedEnv,stdio:['ignore','pipe','pipe']
-  });
+  const run=arg=>{
+    const result=exec('agy',[arg],{
+      encoding:'utf8',shell:false,timeout:5000,maxBuffer:64*1024,
+      windowsHide:true,env:allowedEnv,stdio:['ignore','pipe','pipe']
+    });
+    if(result?.error||result?.signal||result?.status!==0||
+      typeof result.stdout!=='string'||typeof result.stderr!=='string')
+      throw new Error('CLI_PROBE_FAILED');
+    const combined=result.stdout+'\n'+result.stderr;
+    if(Buffer.byteLength(combined,'utf8')>64*1024)throw new Error('CLI_OUTPUT_TOO_LARGE');
+    // agy 1.4.12 on macOS prints --help to stderr (verified owner output:
+    // stdout 0 bytes, stderr 3048 bytes). Never echo raw streams.
+    return combined;
+  };
   let versionText,help;
   try{
     versionText=run('--version');
     help=run('--help');
-    if(typeof versionText!=='string'||typeof help!=='string'||help.length>64*1024)throw new Error('OUTPUT_INVALID');
+    if(!versionText.trim()||!help.trim())throw new Error('OUTPUT_INVALID');
   }catch{return report('CLI_MISSING_OR_FAILED');}
   // Do not echo CLI logs or absolute paths; only a bounded semantic version.
   const match=versionText.match(/\b(v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]{1,32})?)\b/);
