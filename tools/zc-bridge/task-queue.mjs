@@ -17,11 +17,11 @@ const isSafePath=x=>typeof x==='string'&&x.length<180&&
   !x.split('/').some(s=>s==='.'||s==='..'||s===''||s.startsWith('.'))&&
   !x.includes('//')&&!x.includes('\\');
 const digest=x=>createHash('sha256').update(x).digest('hex');
-function decision(reason,issue=null,hash=null){
+function decision(reason,issue=null,hash=null,id=null){
   return Object.freeze({
     schema:SCHEMA,reason,
     disposition:reason==='TASK_DATA_VALID'?'PENDING_TRUSTED_GRANT':'HOLD',
-    issueNumber:issue,taskDigest:hash,
+    issueNumber:issue,taskDigest:hash,taskId:id,
     taskAuthority:'UNTRUSTED_ISSUE_DATA',
     trustedGrant:'NOT_VERIFIED',identity:'NOT_ATTESTED',
     baseCommit:'NOT_VERIFIED',isolation:'UNVERIFIED',
@@ -50,6 +50,10 @@ export function inspectTaskIssue(issue,{repoId=BRIDGE_REPO_ID,repoName=BRIDGE_RE
   let task;
   try{task=JSON.parse(canonical.slice(prefix.length,-suffix.length));}
   catch{return decision('TASK_JSON_INVALID',issue.number);}
+  // Canonical minified JSON prevents duplicate JSON keys and ambiguous
+  // multiple serializations from becoming the same task authority.
+  if(canonical.slice(prefix.length,-suffix.length)!==JSON.stringify(task))
+    return decision('TASK_JSON_NONCANONICAL',issue.number);
   const fields=['schema','taskId','repositoryId','repository','baseSha','goal','paths','verificationSuite','limits'];
   if(!keysEqual(task,fields)||task.schema!=='zc.task/v1'||!validId(task.taskId)||
      task.repositoryId!==BRIDGE_REPO_ID||task.repository!==BRIDGE_REPO||
@@ -65,19 +69,21 @@ export function inspectTaskIssue(issue,{repoId=BRIDGE_REPO_ID,repoName=BRIDGE_RE
      task.limits.maxRetries!==0)
     return decision('TASK_SCHEMA_OR_SCOPE_INVALID',issue.number);
   // Task hash is ONLY an idempotency hint, NOT a trusted execution grant.
-  return decision('TASK_DATA_VALID',issue.number,digest(JSON.stringify(task)));
+  return decision('TASK_DATA_VALID',issue.number,digest(JSON.stringify(task)),task.taskId);
 }
 export function inspectQueue(issues,opts={}){
   if(!Array.isArray(issues)||issues.length>50)
     return {schema:'zc.bridge.queue/v1',gate:'HOLD',reason:'QUEUE_INVALID',items:[]};
-  const numbers=new Set(),hashes=new Set(),items=[];
+  const numbers=new Set(),hashes=new Set(),ids=new Set(),items=[];
   for(const issue of issues){
     const d=inspectTaskIssue(issue,opts);
     if(d.issueNumber!==null){
-      if(numbers.has(d.issueNumber)||d.taskDigest!==null&&hashes.has(d.taskDigest))
+      if(numbers.has(d.issueNumber)||d.taskDigest!==null&&hashes.has(d.taskDigest)||
+         d.taskId!==null&&ids.has(d.taskId))
         return {schema:'zc.bridge.queue/v1',gate:'HOLD',reason:'DUPLICATE_QUEUE_ENTRY',items:[]};
       numbers.add(d.issueNumber);
       if(d.taskDigest!==null)hashes.add(d.taskDigest);
+      if(d.taskId!==null)ids.add(d.taskId);
     }
     items.push(d);
   }
