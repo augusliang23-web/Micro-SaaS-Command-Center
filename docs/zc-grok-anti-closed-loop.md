@@ -31,11 +31,20 @@ Current artifacts are **OFFLINE PURE PARSERS ONLY**, with **zero** GitHub API re
 - CI terminal snapshots must agree on exact PR number, HEAD SHA and completion conclusion. This is still merely **unverified event data**; Grok must freshly read source, checks, review, changed files, grant and tests itself.
 - Produces a deterministic `wakeKey` for duplicate suppression per PR/HEAD/event stage. Actual dedupe requires durable receiver storage and remains unimplemented. `grokRoutine=NOT_CONNECTED`, `gitHubReFetch=REQUIRED`, `independentQA=NOT_VERIFIED`, `userNotified=false`.
 
-## C. Security / negative QA
+## C. Detached signed execution-grant scope primitive (`tools/zc-bridge/grant-verifier.mjs`)
 
-`node --test test/zc-bridge-task-queue.test.mjs test/zc-bridge-grok-callback.test.mjs`
+- A `zc.authorization/v1` object is **separate from the Issue body**. It binds the Issue number, `taskId`, canonical SHA-256 task digest, exact repo identity, HEAD/base SHA, sorted file paths, worker ID, max runtime, expiry and nonce.
+- `verifyDetachedGrant` checks a detached Ed25519 signature using a **caller-supplied public KeyObject** and verifies all bounds. It does **not** generate production private keys or commit secrets. Unit tests generate ephemeral key pairs in memory, only inside GitHub CI.
+- A cryptographically correct signature yields `CRYPTO_SIGNATURE_SCOPE_MATCH` but **still `dispatch:HOLD`, `ownerApproval:NOT_VERIFIED`, `nonceReservation:NOT_RESERVED`, `worker:NOT_CONNECTED`**. This is intentional: the public key has not been pinned out of band, no live owner authorization exists and the signed nonce has not been durably consumed.
+- A future runner must have a distinct trusted policy service, secure public-key enrollment, atomic one-time claim, host identity, effective sandbox and quota gates before interpreting any signature as actual permission. The GitHub Issue, PR marker or Grok Bot message must never supply its own trusted public key.
 
-- Wrong repository/ID/URL, forged or duplicate tasks, task-envelope extra text, invalid schema/paths/limits, PR/source drift, invalid marker, forged CI SHA/conclusion and untrusted secret echo all fail closed.
+Task JSON currently must match exact `JSON.stringify(task)` canonical minified serialization to prevent duplicate-key ambiguity. Two tasks with the same `taskId`, even if goal/digest differs, cannot share a dry-run queue without a HOLD.
+
+## D. Security / negative QA
+
+`node --test test/zc-bridge-task-queue.test.mjs test/zc-bridge-grok-callback.test.mjs test/zc-bridge-grant-verifier.test.mjs`
+
+- Wrong repository/ID/URL, forged or duplicate task IDs, duplicated/noncanonical JSON keys, task-envelope extra text, invalid schema/paths/limits, spoofed Issue URL suffixes, PR/source drift, invalid marker, forged CI SHA/conclusion, changed/expired Ed25519 grants, untrusted signers and untrusted secret echo all fail closed.
 - GitHub exact-head CI uses only no-install Node22 + mocked payloads on GitHub-hosted runner with read-only `contents`; **no real Anti, Grok, network provider, authentication, model or new GitHub writes**.
 
 ## Next gated development
