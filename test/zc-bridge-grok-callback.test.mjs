@@ -43,13 +43,15 @@ test('PR push generates same review stage for same SHA, different SHA changes wa
   y.pr.head.sha='c'.repeat(40);
   assert.notEqual(inspectReturnEvent(y).wakeKey,a.wakeKey);
 });
-test('CI passed/failed wake with same terminal stage are deduped per SHA',()=>{
+test('CI failure and subsequent success must both reach Grok for the same SHA',()=>{
   const success=inspectReturnEvent(fixture('ci-passed'));
   const failed=inspectReturnEvent(fixture('ci-failed'));
   assert.equal(success.reason,'CANDIDATE_FOR_GROK_REVIEW');
   assert.equal(failed.reason,'CANDIDATE_FOR_GROK_REVIEW');
-  assert.equal(success.wakeKey,failed.wakeKey);
+  assert.notEqual(success.wakeKey,failed.wakeKey);
   assert.notEqual(success.wakeKey,inspectReturnEvent(fixture('pr-opened')).wakeKey);
+  assert.equal(success.wakeKey,inspectReturnEvent(fixture('ci-passed')).wakeKey);
+  assert.equal(failed.wakeKey,inspectReturnEvent(fixture('ci-failed')).wakeKey);
 });
 test('wrong event name, repo numeric identity and lookalike URL blocked',()=>{
   assert.equal(inspectReturnEvent(fixture('issue-opened')).reason,'UNSUPPORTED_EVENT_KIND');
