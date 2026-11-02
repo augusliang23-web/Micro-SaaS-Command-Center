@@ -39,7 +39,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           node --check tools/zc-bridge/task-queue.mjs
           node --check tools/zc-bridge/grok-callback.mjs
+          node --check tools/zc-bridge/grant-verifier.mjs
           node --check test/zc-bridge-task-queue.test.mjs
           node --check test/zc-bridge-grok-callback.test.mjs
+          node --check test/zc-bridge-grant-verifier.test.mjs
           git diff --check
-          node --test test/zc-bridge-task-queue.test.mjs test/zc-bridge-grok-callback.test.mjs
+          node --test test/zc-bridge-task-queue.test.mjs test/zc-bridge-grok-callback.test.mjs test/zc-bridge-grant-verifier.test.mjs
