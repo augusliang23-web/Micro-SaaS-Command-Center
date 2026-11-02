@@ -53,7 +53,10 @@ export function inspectReturnEvent(input){
     // CI is not evidence in an opened/pushed event. Reject ambiguous payloads.
     return result('UNEXPECTED_CI_SNAPSHOT',pr.number);
   }
-  const stage=eventKind.startsWith('ci-')?'CI_TERMINAL':'PR_RECEIVED';
+  // Preserve a later CI success after an earlier failed run for the same SHA.
+  // Both are terminal facts, but MUST NOT share a wake dedupe key.
+  const stage=eventKind==='ci-passed'?'CI_SUCCESS':
+    eventKind==='ci-failed'?'CI_FAILURE':'PR_RECEIVED';
   const wakeKey=createHash('sha256')
     .update(`${BRIDGE_REPO_ID}:${pr.number}:${pr.head.sha}:${stage}`)
     .digest('hex');
