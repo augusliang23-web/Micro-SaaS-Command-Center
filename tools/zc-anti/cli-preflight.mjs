@@ -51,7 +51,13 @@ export function assessAntiCli({platform=process.platform, env=process.env, exec=
   return report('CLI_INTERFACE_DETECTED',match[1],advertised);
 }
 export function formattedPreflight(value){
-  if(!value||value.schema!==SCHEMA)throw new Error('INVALID_PREFLIGHT');
+  // A future bridge must never serialize a forged ready/authorized result.
+  if(!value||value.schema!==SCHEMA||!reasons.has(value.reason)||
+    value.readyToCode!==false||value.dispatch!=='HOLD'||value.worker!=='NOT_CONNECTED'||
+    value.isolation!=='UNVERIFIED'||value.authentication!=='UNVERIFIED'||
+    value.subscriptionQuota!=='UNVERIFIED'||value.trustedGrant!=='NOT_GRANTED'||
+    value.modelCalls!==0||value.gitHubWrites!==0)
+    throw new Error('INVALID_PREFLIGHT');
   return JSON.stringify(value)+'\n';
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
