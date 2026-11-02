@@ -106,6 +106,13 @@ test('arbitrary file or command expansion is never treated as authorized',()=>{
     t=>{t.maxFixAttempts=1000;}
   ])assert.equal(disposition(swapTask(fixture(),mutate)),'HOLD_UNSUPPORTED_TASK');
 });
+test('recreating the same task under a new issue number is never admitted',()=>{
+  const x=fixture();x.issue.number=109;
+  x.issue.html_url='https://github.com/'+EVIDENCE_REPO+'/issues/109';
+  const out=admitIssueEvent(x);
+  assert.equal(out.disposition,'HOLD_UNSUPPORTED_TASK');
+  assert.equal(out.reason,'DUPLICATE_OR_UNREGISTERED_TASK');
+});
 test('changing title cannot impersonate approved fixed task',()=>{
   const x=fixture();x.issue.title='different';assert.equal(disposition(x),'HOLD_UNSUPPORTED_TASK');
 });
