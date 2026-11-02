@@ -130,6 +130,15 @@ test('malformed raw event is fail-closed',()=>{
 test('missing event path does not become success',()=>{
   assert.equal(runGithubAdmission({GITHUB_REPOSITORY:EVIDENCE_REPO,GITHUB_EVENT_NAME:'issues'}).disposition,'HOLD_INVALID_SOURCE');
 });
+test('oversized on-disk GitHub event is rejected before parsing',()=>{
+  const root=mkdtempSync(path.join(tmpdir(),'zc-headless-oversize-'));
+  const eventFile=path.join(root,'event.json');
+  writeFileSync(eventFile,'a'.repeat(128*1024+1));
+  const x=runGithubAdmission({
+    GITHUB_EVENT_PATH:eventFile,GITHUB_REPOSITORY:EVIDENCE_REPO,GITHUB_EVENT_NAME:'issues'
+  });
+  assert.equal(x.disposition,'HOLD_INVALID_SOURCE');
+});
 test('real CLI-like read writes a bounded summary and machine disposition only',()=>{
   const root=mkdtempSync(path.join(tmpdir(),'zc-headless-test-'));
   const eventFile=path.join(root,'event.json'),summary=path.join(root,'summary.md'),output=path.join(root,'output');
