@@ -27,7 +27,7 @@ This is **not** a sandbox penetration test. Effective terminal isolation and sam
 ## Verification B — Grok Bot GitHub connection (read-only)
 Within the user's Grok Bot app, authorize only the chosen GitHub repo with least permission available. If the provider requests broader repository/organization access, extra purchases or unknown write scopes, stop and report the exact permission dialog **without approval**.
 
-Ask Grok to confirm the canonical repository `augusliang23-web/Micro-SaaS-Command-Center` numeric ID `1352468489`, read current main SHA, PR #106/#110/#113 and Issue #111/#112, then report whether GitHub event-triggered Routines and repository-scoped Issue write **are actually available** on this account. No new issues, workflows, routine, Cloud Agent, code, model quota spend, or API/hosting changes in this test. Distinguish supported product feature from account-verified entitlement.
+Ask Grok to confirm the canonical repository `augusliang23-web/Micro-SaaS-Command-Center` numeric ID `1352468489`, read current main SHA, PR #106/#110/#113 and Issue #111/#112, then report whether GitHub event-triggered Routines and repository-scoped Issue write **are actually available** on this account. No new issues, workflows, routines, Cloud Agents, source edits, additional paid API calls, or hosting changes in this test. A normal Grok Bot read-only conversation may consume the subscription's usage allowance; inspect usage before proceeding. Distinguish supported product feature from account-verified entitlement.
 
 Return a short verdict:
 - `GROK_GITHUB_READ_PASS`: real read with matching repo identity and links;
