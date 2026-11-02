@@ -51,9 +51,19 @@ After the actual Grok/Cursor G0 write-readback Issue #116 (2026-11-02), the next
 
 **Callback dedupe correction:** A failed CI run followed by a successful CI run for the same exact SHA must produce **distinct** wake keys (`CI_FAILURE` and `CI_SUCCESS`), otherwise the success can be swallowed. Repeated identical stage/HEAD remains idempotent. This still does not establish a real Grok Routine or durable delivery log.
 
-## E. Security / negative QA
+## E. Injected GitHub read-only transport (`tools/zc-bridge/github-reader.mjs`)
 
-`node --test test/zc-bridge-task-queue.test.mjs test/zc-bridge-grok-callback.test.mjs test/zc-bridge-grant-verifier.test.mjs test/zc-bridge-poll-plan.test.mjs`
+This module accepts a **caller-provided** `request({url,method,redirect,headers})` function. It does not import the GitHub connector, read tokens/environment variables, start a poller, or provide an actual network request function. It is tested with fake `Response` objects in CI only.
+
+- All requests are **GET** to synthesized exact `https://api.github.com/repos/augusliang23-web/Micro-SaaS-Command-Center` or its bounded `/issues?state=open&per_page=20&page=N` endpoint (max 3 pages).
+- Repository numeric ID/name/URL verified first. HTTP success, JSON content-type, no redirects and maximum 256 KiB response streaming enforced.
+- Page navigation is generated from our fixed URL, **never** from a potentially malicious GitHub `Link` URL. The `Link` header supplies only the boolean presence of another page; incomplete or spoofed pagination yields HOLD.
+- Only then do the issue snapshots pass through `planReadOnlyPoll`; G0 Issue #116 is excluded. Output still `transport:NOT_AUTHENTICATED_BY_THIS_MODULE`, `dispatch:HOLD`, `worker:NOT_CONNECTED`, `readyToCode:false`.
+- The missing trusted adapter would have to obtain a **repository-scoped** identity and credentials, provide fresh audited snapshots, obey rate limits and store durable claim state. It is **not** authorized or connected by this PR.
+
+## F. Security / negative QA
+
+`node --test test/zc-bridge-task-queue.test.mjs test/zc-bridge-grok-callback.test.mjs test/zc-bridge-grant-verifier.test.mjs test/zc-bridge-poll-plan.test.mjs test/zc-bridge-github-reader.test.mjs`
 
 - Wrong repository/ID/URL, forged or duplicate task IDs, duplicated/noncanonical JSON keys, task-envelope extra text, invalid schema/paths/limits, spoofed Issue URL suffixes, PR/source drift, invalid marker, forged CI SHA/conclusion, changed/expired Ed25519 grants, untrusted signers and untrusted secret echo all fail closed.
 - GitHub exact-head CI uses only no-install Node22 + mocked payloads on GitHub-hosted runner with read-only `contents`; **no real Anti, Grok, network provider, authentication, model or new GitHub writes**. The Grok G0 Issue #116 is already a separate successful live write/read-back test; its creation is not repeated by CI.
