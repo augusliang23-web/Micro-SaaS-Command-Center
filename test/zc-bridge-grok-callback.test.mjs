@@ -88,6 +88,11 @@ test('missing, duplicate, spoofed or malformed PR markers blocked',()=>{
     assert.equal(inspectReturnEvent(x).reason,'PR_MARKER_INVALID');
   }
 });
+test('similar issue URL with numeric suffix does not authenticate task linkage',()=>{
+  const x=fixture();
+  x.pr.body=x.pr.body.replace('/issues/123','/issues/1234');
+  assert.equal(inspectReturnEvent(x).reason,'PR_MARKER_INVALID');
+});
 test('CI event must match PR exact SHA/number and successful terminal state',()=>{
   for(const mutate of [
     x=>x.ci.headSha='c'.repeat(40),
