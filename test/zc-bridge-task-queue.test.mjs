@@ -111,6 +111,16 @@ test('body size and malicious control characters fail closed',()=>{
   assert.equal(assess(t).reason,'TASK_SCHEMA_OR_SCOPE_INVALID');
   assert.equal(inspectTaskIssue({...issue(),body:'X'.repeat(17*1024)}).reason,'TASK_BODY_INVALID');
 });
+test('noncanonical or duplicate JSON keys are not admitted as a unique task',()=>{
+  const i=issue(),pretty={...i,body:i.body.replace('"schema":','\n  "schema":')};
+  assert.equal(inspectTaskIssue(pretty).reason,'TASK_JSON_NONCANONICAL');
+  const duplicate={...i,body:i.body.replace('"schema":"zc.task/v1",','"schema":"zc.task/v2","schema":"zc.task/v1",')};
+  assert.equal(inspectTaskIssue(duplicate).reason,'TASK_JSON_NONCANONICAL');
+});
+test('two different payloads cannot reuse same taskId in queue',()=>{
+  const a=task(),b=task();b.goal='Another legitimate bounded source refactor but duplicated task id';
+  assert.equal(inspectQueue([issue(a,20),issue(b,21)]).reason,'DUPLICATE_QUEUE_ENTRY');
+});
 test('duplicate queue task digest and duplicate issue number are blocked',()=>{
   const a=issue(task(),123),b=issue(task(),124);
   assert.equal(inspectQueue([a,b]).reason,'DUPLICATE_QUEUE_ENTRY');
